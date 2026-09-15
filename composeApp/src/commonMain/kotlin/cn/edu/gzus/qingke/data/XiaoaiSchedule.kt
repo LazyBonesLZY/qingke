@@ -77,6 +77,7 @@ data class XiaoaiToken(
     val ctId: Long,
     val fromUserInfo: Boolean = false,
     val tableName: String = "",
+    val authorization: String = "",
 ) {
     fun expired(now: Long = nowMillis()): Boolean =
         expireAt in 1 until now
@@ -190,6 +191,7 @@ fun encodeXiaoaiOfficial(bundle: XiaoaiOfficialBundle): String =
 
 fun XiaoaiToken.authSummary(now: Long = nowMillis()): String = when {
     expired(now) -> "授权已过期，重新复制 UserInfo"
+    fromUserInfo && authorization.isBlank() -> "这份 UserInfo 没有 authorization，导入会失败"
     fromUserInfo && tableName.isNotBlank() -> "已用 UserInfo · $tableName"
     fromUserInfo -> "已用 UserInfo 授权"
     expireAt <= 0L -> "已授权"
@@ -243,6 +245,7 @@ private fun tokenFromUserInfo(obj: JsonObject): XiaoaiToken? {
     val tableName = obj.stringOf("tableName", "name").orEmpty().ifBlank {
         table?.stringOf("name").orEmpty()
     }
+    val authorization = obj.stringOf("authorization", "Authorization").orEmpty()
     return XiaoaiToken(
         userId = userId,
         deviceId = deviceId,
@@ -250,6 +253,7 @@ private fun tokenFromUserInfo(obj: JsonObject): XiaoaiToken? {
         ctId = ctId,
         fromUserInfo = true,
         tableName = tableName,
+        authorization = authorization,
     )
 }
 
@@ -261,7 +265,9 @@ private fun parseUserInfoLoose(text: String): XiaoaiToken? {
     if (deviceId.isBlank() || isFakeXiaoaiDevice(deviceId)) return null
     val ctId = Regex("""(?:ctId|ct_id|tableId)\s*[:=]\s*["']?(\d+)""", RegexOption.IGNORE_CASE)
         .find(text)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
-    return XiaoaiToken(userId, deviceId, 0L, ctId, fromUserInfo = true)
+    val authorization = Regex("""(?:authorization|Authorization)\s*[:=]\s*["']([^"']+)["']""")
+        .find(text)?.groupValues?.get(1).orEmpty()
+    return XiaoaiToken(userId, deviceId, 0L, ctId, fromUserInfo = true, authorization = authorization)
 }
 
 private fun unwrapQuotedJson(text: String): String {

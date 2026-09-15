@@ -15,7 +15,7 @@
 
 ## 更新
 
-当前版本 **1.3.0**（versionCode 19）。
+当前版本 **1.3.1**（versionCode 20）。
 
 - GitHub Release：应用里检查 `LazyBonesLZY/qingke` 最新版，再跳到 Release / APK
 - 网盘：浏览器打开 [https://storage.lazzyy.cn/@s/KB](https://storage.lazzyy.cn/@s/KB)

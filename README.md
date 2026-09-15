@@ -20,8 +20,6 @@
 - GitHub Release：应用里检查 `LazyBonesLZY/qingke` 最新版，再跳到 Release / APK
 - 网盘：浏览器打开 [https://storage.lazzyy.cn/@s/KB](https://storage.lazzyy.cn/@s/KB)
 
-仓库只放源码。APK 只挂在 Release 和网盘，不进 git。
-
 ## 构建
 
 JDK 17。签名用本地 `keystore.properties` 和 `*.jks`，这两项已忽略。

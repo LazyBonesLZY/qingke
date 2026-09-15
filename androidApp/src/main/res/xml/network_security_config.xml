@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- 理工门户 CAS 的 service 必须是 http://jw.gzist.edu.cn/sso/lyiotlogin -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">jw.gzist.edu.cn</domain>
+    </domain-config>
+</network-security-config>

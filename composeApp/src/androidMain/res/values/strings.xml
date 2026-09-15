@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">青课</string>
+    <string name="widget_day_name">今日课表</string>
+    <string name="widget_day_desc">今天有哪几节，可拉大小</string>
+    <string name="widget_week_name">本周课表</string>
+    <string name="widget_week_desc">一周网格，可拉大小</string>
+    <string name="widget_month_name">本月课表</string>
+    <string name="widget_month_desc">月历加点，可拉大小</string>
+</resources>

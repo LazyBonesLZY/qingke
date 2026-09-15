@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/qingke_primary" />
+    <foreground android:drawable="@drawable/ic_qingke_fg" />
+    <monochrome android:drawable="@drawable/ic_qingke_fg" />
+</adaptive-icon>

@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>澄课 · 初步 UI</title>
+  <style>
+    :root {
+      --bg: #eef1f6;
+      --card: #ffffff;
+      --text: rgba(0, 0, 0, 0.9);
+      --sub: rgba(0, 0, 0, 0.5);
+      --mute: rgba(0, 0, 0, 0.34);
+      --line: rgba(0, 0, 0, 0.06);
+      --blue: #3482ff;
+      --blue-soft: #e4eeff;
+      --radius: 16px;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; }
+    body {
+      font-family: "MiSans", "PingFang SC", "Noto Sans SC", "HarmonyOS Sans SC", system-ui, sans-serif;
+      background: #dfe3eb;
+      color: var(--text);
+    }
+    .page { max-width: 1480px; margin: 0 auto; padding: 28px 24px 64px; }
+    h1 { font-size: 28px; font-weight: 650; margin: 0 0 6px; letter-spacing: -0.03em; }
+    .lead { color: var(--sub); margin: 0 0 22px; font-size: 14px; line-height: 1.65; max-width: 880px; }
+    .lead a { color: var(--blue); text-decoration: none; }
+    .gallery {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 28px;
+    }
+    .shot { text-align: center; }
+    .shot figcaption { margin-top: 10px; font-size: 13px; color: var(--sub); }
+    .phone {
+      width: 280px;
+      height: 618px;
+      margin: 0 auto;
+      border-radius: 30px;
+      background: #111;
+      padding: 8px;
+      box-shadow: 0 20px 44px rgba(20, 28, 45, 0.2);
+    }
+    .screen {
+      width: 100%;
+      height: 100%;
+      border-radius: 24px;
+      background: var(--bg);
+      overflow: hidden;
+      position: relative;
+      text-align: left;
+    }
+    .wash {
+      position: absolute;
+      inset: 0 0 auto;
+      height: 210px;
+      background:
+        radial-gradient(ellipse at 12% -10%, #b8d2ff 0%, transparent 52%),
+        radial-gradient(ellipse at 92% 8%, #c8f0ea 0%, transparent 42%),
+        radial-gradient(ellipse at 60% 0%, #ffe7c8 0%, transparent 36%);
+      pointer-events: none;
+    }
+    .wash.cool {
+      background:
+        radial-gradient(ellipse at 20% -10%, #c5d8ff 0%, transparent 50%),
+        radial-gradient(ellipse at 100% 10%, #d9e4ff 0%, transparent 40%);
+    }
+    .status {
+      position: relative;
+      z-index: 2;
+      height: 22px;
+      padding: 6px 16px 0;
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      font-weight: 650;
+    }
+    .app { position: absolute; inset: 22px 0 0; display: flex; flex-direction: column; }
+    .scroll { flex: 1; overflow: hidden; padding: 0 11px 62px; position: relative; z-index: 1; }
+    .hello { font-size: 11px; color: var(--sub); padding: 4px 4px 0; }
+    .title { font-size: 22px; font-weight: 680; padding: 1px 4px 2px; letter-spacing: -0.03em; }
+    .title.small { font-size: 17px; padding-top: 8px; }
+    .sub { font-size: 11px; color: var(--sub); padding: 0 4px 8px; }
+    .hero {
+      background: linear-gradient(160deg, #2f74ff 0%, #5aa0ff 58%, #7ec8ff 100%);
+      color: #fff;
+      border-radius: 18px;
+      padding: 12px 12px 11px;
+      margin-bottom: 8px;
+      box-shadow: 0 10px 22px rgba(52, 130, 255, 0.28);
+    }
+    .hero .k { font-size: 10px; opacity: 0.82; }
+    .hero .n { font-size: 18px; font-weight: 700; margin: 3px 0 2px; }
+    .hero .s { font-size: 11px; opacity: 0.9; line-height: 1.4; }
+    .hero .bar { height: 4px; background: rgba(255,255,255,0.28); border-radius: 99px; margin-top: 8px; overflow: hidden; }
+    .hero .bar i { display: block; width: 62%; height: 100%; background: #fff; border-radius: 99px; }
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin-bottom: 8px; }
+    .stat {
+      background: var(--card);
+      border-radius: 12px;
+      padding: 7px 5px 6px;
+      text-align: center;
+    }
+    .stat b { display: block; font-size: 13px; font-weight: 700; }
+    .stat span { font-size: 8.5px; color: var(--sub); }
+    .sec { font-size: 11px; color: var(--sub); padding: 5px 4px 5px; font-weight: 620; }
+    .card {
+      background: var(--card);
+      border-radius: 14px;
+      padding: 10px 11px;
+      margin-bottom: 6px;
+    }
+    .card .n { font-size: 13px; font-weight: 650; }
+    .card .s { font-size: 10.5px; color: var(--sub); margin-top: 3px; line-height: 1.4; }
+    .line {
+      display: flex; gap: 8px; align-items: flex-start;
+    }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #ff7a6e; margin-top: 4px; flex: none;
+      box-shadow: 0 0 0 3px #ffd9d6;
+    }
+    .quick { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+    .q {
+      background: var(--card);
+      border-radius: 13px;
+      padding: 9px 6px 8px;
+      text-align: center;
+      font-size: 10px;
+      font-weight: 620;
+    }
+    .q i {
+      display: block; width: 22px; height: 22px; margin: 0 auto 5px;
+      border-radius: 8px;
+    }
+    .q.a i { background: #dce9ff; }
+    .q.b i { background: #d8f3e4; }
+    .q.c i { background: #ffe6cc; }
+    .fnav {
+      position: absolute;
+      left: 10px; right: 10px; bottom: 8px;
+      height: 46px;
+      border-radius: 23px;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      align-items: center;
+      background: rgba(255, 255, 255, 0.52);
+      backdrop-filter: blur(22px) saturate(1.6);
+      -webkit-backdrop-filter: blur(22px) saturate(1.6);
+      border: 1px solid rgba(255, 255, 255, 0.72);
+      box-shadow: 0 10px 24px rgba(28, 40, 62, 0.14);
+      z-index: 3;
+    }
+    .fnav span {
+      display: flex; flex-direction: column; align-items: center; gap: 2px;
+      font-size: 8.5px; color: var(--mute); font-weight: 620;
+    }
+    .fnav span.on { color: var(--blue); }
+    .fnav i {
+      width: 15px; height: 15px; border-radius: 5px;
+      background: currentColor; opacity: 0.9;
+    }
+    .field {
+      background: #f4f5f8;
+      border-radius: 12px;
+      padding: 10px 11px;
+      margin-bottom: 6px;
+      color: var(--mute);
+      font-size: 12px;
+    }
+    .btn {
+      height: 34px; border-radius: 17px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 650;
+    }
+    .btn.primary { background: var(--blue); color: #fff; }
+    .btn.ghost { background: #e6e8ee; color: var(--text); }
+    .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
+    .pref { background: var(--card); overflow: hidden; border-radius: 14px; margin-bottom: 6px; }
+    .pref .item {
+      padding: 9px 11px;
+      display: flex; justify-content: space-between; align-items: center;
+      border-top: 1px solid var(--line); gap: 8px;
+    }
+    .pref .item:first-child { border-top: 0; }
+    .pref .l { font-size: 12px; }
+    .pref .r { font-size: 11px; color: var(--sub); text-align: right; }
+    .sw { width: 30px; height: 17px; border-radius: 99px; background: #3482ff; position: relative; }
+    .sw::after {
+      content: ""; position: absolute; right: 2px; top: 2px;
+      width: 13px; height: 13px; border-radius: 50%; background: #fff;
+    }
+    .sw.off { background: #c8c9ce; }
+    .sw.off::after { left: 2px; right: auto; }
+    .who { display: flex; gap: 9px; align-items: center; }
+    .avatar {
+      width: 38px; height: 38px; border-radius: 50%; flex: none;
+      background: linear-gradient(180deg, #9db6d8, #6e84a6);
+    }
+    .avatar.empty { background: linear-gradient(180deg, #d5dae3, #b7becb); }
+    table.kb {
+      width: 100%; border-collapse: separate; border-spacing: 2px;
+      table-layout: fixed; font-size: 8px; line-height: 1.15;
+    }
+    table.kb th { font-weight: 650; color: var(--sub); padding: 2px 0 3px; }
+    table.kb th.on { color: var(--blue); }
+    table.kb td {
+      background: rgba(255,255,255,0.72);
+      border-radius: 5px; height: 40px; vertical-align: top; padding: 2px 1px;
+    }
+    table.kb td.slot { background: transparent; color: var(--mute); width: 17px; text-align: center; padding-top: 12px; }
+    .blk { border-radius: 5px; padding: 2px 2px 0; height: 100%; }
+    .blk b { display: block; font-size: 8.5px; }
+    .dim { opacity: 0.4; }
+    .c-ai { background: #dce9ff; } .c-math { background: #d8f3e4; }
+    .c-pol { background: #ffe6cc; } .c-off { background: #eadbff; }
+    .c-mil { background: #ffd9d6; } .c-ee { background: #d4f1f6; }
+    .c-c { background: #dde1ff; } .c-en { background: #fff1c7; }
+    .c-his { background: #ffdcea; } .c-pe { background: #d8f0d4; }
+    .c-fit { background: #e4f3d8; } .c-web { background: #d9e4ff; }
+    .c-car { background: #ffe4d2; }
+    .pills { display: flex; gap: 4px; overflow: hidden; margin: 0 0 6px; }
+    .pill {
+      flex: none; font-size: 9px; padding: 3px 7px; border-radius: 99px;
+      background: rgba(255,255,255,0.7); color: var(--sub);
+    }
+    .pill.on { background: #3482ff; color: #fff; }
+    .ring-row { display: grid; grid-template-columns: 64px 1fr; gap: 8px; align-items: center; }
+    .ring {
+      width: 56px; height: 56px; border-radius: 50%;
+      background: conic-gradient(#3482ff 0 8%, #e6e8ee 0);
+      display: grid; place-items: center;
+    }
+    .ring span {
+      width: 40px; height: 40px; border-radius: 50%; background: #fff;
+      display: grid; place-items: center; font-size: 10px; font-weight: 700; color: var(--blue);
+    }
+    .tag {
+      display: inline-block; font-size: 9px; padding: 1px 6px; border-radius: 99px;
+      background: var(--blue-soft); color: var(--blue); font-weight: 650; margin-right: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>澄课</h1>
+    <p class="lead">
+      打开先进今日，不挡登录。教务账号放在「我的」里同步。底栏是悬浮玻璃。
+      今日加了下一节主卡、本周数字和快捷入口；课表仍是整学期网格。
+      Canvas：<code>ui/gzus-timetable.miuix.json</code> ·
+      <a id="share" href="https://lazyboneslzy.github.io/miuix-canvas/#dz=7Vxbb9tWtv4rhM5Li4kTkaJkJcA8tJ2TM8VcTtEWmIeZYkBLtC1bEnUoOk6mKKA4cSz5Jjtx4mtiu-MkbhpbiaeJZUm2gZl_MtUmpSf_hbM2NyVx0yJpi3KaKYoWsURSm99ea-21vrX25WvfDVFOx6Sk71rgkk-JKXHRd82nHt2tFY58l3x9ckzsb144qaygg2O0_wQ9vId2ntWXv4V_tYV1uFXb3GY-SqVOKtNobgbtLKL8ox8z0-rkZH3lSFub0lbuqjt_Vx8dkEehObU4rj5d-TEz82NmTM09QJUMGs_Wjler5Ul18Sm0Uy3O1HaPtOUyOnyIvl3Gj-ktwCtRfh8V7mkbt1H-BZooabOv0No2fl12Hl4EbcLPjR_OzaK5aXXnKXnvj5nbanZOK38HH2qZO7XCQ2gWlR6qG3ltYZu5HpcEJZYc-KNwIzYAn6Tkx4IMbd0Q5JiQVH4dk9K_jw2LcOUPUjTWHxPly4p4UxmRxY_jIzKjvt1TM7e12bJ2_4469lJ9swutk_7Unt2uFl-hwjSIsFqcqhYztcmxarGMZja13ASGtfYSzW-rD1-B7OAr-ZW6-La--INWOsZXDqZwZyY24LH6t3fR_CRc1L4rqQ-X0e7WFdKbK6Sz6Ph7dWYfjT9F-b8DBEPmSwWml0Fb3_1rMQx_ngMA7XBe3ahgnR0-QLkZaBntPqnl9uCKuvYCVAK_xKhebtaXZ6qHs_VMXl2aRaVnWBm6HNW1HNZH9p42W0D3p0ENtUIZfqVtT6HsIrz1pLJKtALPQJtEKyeVLNxCMw_Rq9fwk_rmG3Rv_KSSwy3s75FnqsUt7fmMNvkWRAqv07ZK1aMpeJe6ts5wfi7UA__09rBY0y9fBjD0-e1qCaymDLKGvqJ7q9XSlDZ3r7ZbwkrefQJmgpX8h9hI7Caooa2yPzBU_CEI9xNBjsKfL0HD8OeLhBCPf4nHh3HtekyM4_sfjyiKlMRPjMaUyOBnstgvymIygp_7SJalUerKl0Lf59IofPhMlgZkMZ3-NBmNRQRFkgEkDLhUXFD6JTkBYy6SSMEFZVBMwJD82peQonhoxmMDgwpcT4tiFL7-V4APc9evw4WElBQV37V-IZ4Wv4H7EVkUk2nftT9_7YvhJxUpKtyC55ICbs9HLAy-3_Rd81_y3dL_TQEi3IgvNQit4YclBT-M5gpoEusJGzSMy2e3zePSYtDMrxi0ulotviDWDF-bdgyfie3iZ3QjbY4_xpA8Yxk_ACKmiAlzR6I9gzG4PBxL6l9BF6QbbEjvB_4zCu4sDB0a9F3j-Eu-uNAnxnGni1NoJoueHjL_3GfwkFt7RQYHNCAmhb44lqkij4ggv0FptPk5LmGhRKSkIibxy_A7v1Bu6b6yX5IULCbW982lFkLiSe1B8n4KZCDUAnlVXcuyQVAOQ0zaAzYdBUcBS4_0OcDqtZddc9AxMOBYYySCGI3hp0v09Xp9cVvd2ETTJQ-o-6ToLRr0oChLLdQRGJi0xlmOgs1y_hZusyM4J6j0SColydhJENshVo57Cv5TKz1jeAa9yoN1g2f-S5Jle1iucV-Piyg_j16DJ9tBx3dCfvYDkM-H-t1iEe2-1ebf4i_gudV1PBAVCd4SFRUhFu8ZGknGsY0rspBMxxQ9PgO-WBTbVESKS7Jp7Jsl1SfILUGlDB9DhBXgdGFxDdPjw7qwTJZ3TvEYYVF3SklRf_ENIT4CKvRfDnGU0bEO2uNCBFCY4OnlWoBYTwojkVcPRvQQ4NqiYTk3OEEvcEiEB2sEU6ThBNrB4fxhV-kEvOAhI7idePh2eAJ-3hVP2JN8gMgAlZjfpsGIEZPtpJtB2By4AjyvQ-KxBgeJb216fN0I0G5Onb1_LnRmEBDEHew3EOYp74Ml0xRJwycw3XJD5_Ashmc-u2uxCJ5zEzwf9tsL3sRXq5A35JfU8mbHGgBWJMoOOghyflsdgBh6jQBV_34JSAlzhdEW3qCdOfjwSa2wU9vOeNEIDod-fWjPoMkNVKjojPM2mnyCxl_WDgvV8lvM3w8f1Mb2gOEyfxL7GioZFcVhqyr6hdOaCLhpImSQnnaaIESrY9H_n5PvDgXJe_WIa3EHzeTEk1dYBw_-LTRVX9wzWqPAtXflvDs6kjB5grYypi5uGK6FAtXeofe6gyLpmyf3MFsm-RYh6A1DS4iuZpYUbrRg97eSI7OZ9V7lKDNj_SY7I5Qd23_2xZm60CdB5pT42CAODS5h5AG4hf5-MaIYNNVIsnFNAv58LkRjI5ATcDDOFaHPyA4ies8GJb23dARoCKKRBdnIgrQQBW_zV3hgwNxOM1E4w8glzaQjg5IUNzVBcuZGEwMyPJ92ayQlymn4YG4Eq9dNsV_hDDEO4sMa8OtfR2MpPZGMi_1KowffNC3A6JCRHTY7C6oPGkzEKT-c324UWMZIwYCBRBdnfkvrOE0gX3CVYes7ozpgFD7GzOkeyQTbJn2jw64plSXvM6dUnpM8ayIFcJwTqSBnm0i1Siv7e-o-5EqP9GA9dkAko61N1QrP1Dvj3cugAC1Wb9qEVy9DUIgtLIY3uyVdpR1nB_iapA_dlklyp8etycbZJg08dYuzvxWwv9Vrf0uP3Tb30Ph2_Q7c_MosSnAgzpJkAyFbUZIB0bEoo2K_MBJXKFGyjqKEnNWmc7i0YHOnmLMTyOqqbWsLtkLcsbmD_TIt24gT2WAxq7Mj2j2EZgPD03ZyeuXp2acfAN3-0CO16-1hwwZ7_C3XE2T9J5UssO2TSk7n25WN6sGcmtlsFJRgpOjDGz2fsvDuhKAMutBuLADOKVO2jFEq_HY_1TBVds6RdUC8BS__lyTmMhuVBjmuvdlXlwq13U1td1FdK1WLs9VSCe0_VZdLtTuHhDR3VAO5fv03V38TomUYcMrWrnJnyNZcgXrLFkw2Fejh_MGmJLXlQ3X5B3djEmJnMCXeQQy801gK9rAhXQwkTVInM-paAa2XtM2M99EUbPWc9YdaNpRdUpcfqEuz7p0XRffO68TEITxbus-b4nMvniCp5fbQ40UyQYLWthlgPjdi4ujlQSURB4LyiZC8IaRBPtvqdA7MndAZ9dFB9egYInk9kyMsxntR-ZIvAQ4_hits5JdUL3_h7D9Xzs5SnF3WZ31aojA4vAGnxeLpWGOQeVL1aJJKPAr8xjhw4PTk-frmG5zk6sQcT8oeP9YeLteOF9Dqk7Y8PZqgS9CKlPoolSL2Yp5pMhkklZXrFPgc_BfatxqjXiFx0rnuLX6PJdiSW8I1vbB4DHN64Zl0OKUaAC0yGEulnTIfjsbGhc1c7kG1uIKOx6vHu9i18gyZsDWmHs5fA3HIMwBqeiThxOBCNFCz6oGo4lJhMXf-VONUHXl3C_vs3wIp9IcZXHNrULdpoxhI4gq2YAr8GYrNXJCzr3kWJ3Fa56HYjO2whUBoTB_TLNDKYMz-HDpfzHoqIDUYLQVKdgMV6HUG5a0KqBtGpqFQzBb0mdErxGAM7VpGc0J0w8wHHTDrU9be5gszTKCH1ylxaZoB6PpHgHu1xwJ21A1pMGCPtKPknEJqpDjWoeBa_g9x9uV_4sirx5vq7ULHQ2E4MugmmVCILvwHQ1YMKL_vRTj_89-sP8BSsIZu9rnB6rUUo6zDAdKp_I4XWB-Y1sB82ENAwlcKZ58QGW4B7dPXqdAhzZg3Z8NEgUGzAvUY3yRinZUrwIqkZFSQb9FUjrJ9EqDbgORY3hWltjbVrD12jDIlxxImjKQw-pWVUzXSUYNUkYlcilQFOd6NVLUhTEPvF2GyamjICzHyUIlwpERDXaVEHE2JyGqMblGioXNSIsvMpb6ybQJC8qxayEOiyTRqFF2hSG3LOrgo__JlkBRtyHo6Pdwu4GWB-i_VhQPmCwhiLE2ghs5GoIwOXxCBGnInUAF_-CIJVKMYRoFyJ1Dh8AUSKK5Hr-RZNI0NPtjD8o3VkwtEq5bRfwYiFQpfIJEyRoHV_s0g3QkUH75AAkWkC8PDECYtQCNltw_DIQPcTxeGh84Qhp1QvsMwLJhjsF6NNcdgzm-scjtfDBbew6JFq-OClxDc1Uq2Y1AWLjIod7dOIbgHCbY3dIFBgtT5KUSuEYILht5Bio2r8nwrxTYmKCzW6B4SAoHQBYYEA6wx6dcC2yY4CO7BgXdI1rwHh8ZsD4XJNTULWjCdjgkeve2pmGDjb_XJFsPfkukgyt8GeX8H_lZ8r_2t6MXfep4yc_SxYld9bOAifaz4U_vY5owiBeondrNk1rPhsoo5dXkFSDfn5y329z54WOxQ8VRwC61exbxCrlKAf2Ifa0wrU5D-A1xsczbR8K_NuUay3t512R1eYav_pHqwjne9reW08gP1yV28T7OxKw-vRDbtxsJfT23SazuTN-BlwV2zJ93yfAOdr7dDEyUQBZqbxVP1-qYHdeFt7Xi1drxcn5junscb6JGxNdqXeixRg5qIR_t74JQNd8z4vW40IXs7djdR9j7ep8SFDU-P12fqhUuwAzItjHfCTr2uFXbwIv3xLBEWVdcZOMOmIvZq6B1sKvLzZntw3FNk2GabXSr_zix4cowH_0CPJ4zhBSZuRuS8r8gekid1g-WA0owBZ0bjvK3ogtAQGmFdFD_gtqnIHo3HTU4mX0fBESOuu4r89rNbzSHWWZESPAXrGt4tO0TNAbO7ixzxMit91JuXB1BgOdfoztmDRVvPoUniYz49qWS1cgXNZQk1PqnkLhZ5wLUw6HdA3qV1lGROwVzUoDDyrhjD9hi7u0KPEmigDdhfFpz9bBeccW0XnBldMNabQUOttWYJ0cxcjfdhpx4Mui4uM44PyL9QF47ARzcO7hgjR0GYj_hgfsUYDx-8Jduj8OETjZMkMPG9cwi8RVubMu_nb8toE6I3Smt0sVuUFuB0zGlJL1G-UC0_Nff-9MEnOGWd3OweywXURvw-I801T2g29ebJSenHwJB-YT81NHpTuTzwt5H0ZTE6cjmSpLDGorSA9VM7HHcVhMypg26InQV5eHlq1O3lnGX5CvVy3f47fvmA5Jj9WssH1HQOPeC6NaMDoCSX7a54TJxhDpl34GYt-88XtIXtjuXnuO-VN9jZhe17_SPHBoM0Hsetrk6A6pkcOc2pcwYz8aJaLBvtUKAct7o6gerW_lur7biuWtNX6divWjtvwcf8eiEuyqaiZ7p5IBDt1kO8LZ0jCyDU_Fz93n1PCiscodwMwwYZIHD1-zhPiQyKkeFGW2bUOMSLyagr7hBvj1tdOtK2Svqeje89zvVzzVMyqpUVyCJR9hW-Mr5DCJptN36hpj9bahpoS01PbX5oxBeKkzYPFCN2wPtD_NnIKXQWTa5DHMFn1-lNnVRWam_uqo-WT9dUCRtpnLh2Gx9cd7iLa2yZDE6oVp-AFTfJT1tyKg2_V-QU4LjQPAtzoYfS49naxA-14zVPvuD7QvXo-UefVkvPq8UVLb_DsPgfnEaHeD8bDLB-lmwz3HlaLc2i7Ar8T_XAsUTIGivWu15zslabMBDHyqADEm_Fr8apfjQWx7qgAxb19bqncE2OBaOgOBYFHaD87-88rcyHcVx4TCM5084P-zNWOsiyzK935Jrc1Xd4xgoNy5FyOuG6KMqJQTlSTidQaP0AjZdx7riZ9baz40W1VDLasViRK_0MOJyZRMJGx1Z0NvrpVKt95_RTwscpyMPunNmhTKvuv67l9tTtTVTJewK9v15fyWv_KGtlCrBxoqYpTouyaUV3VJZSUWk0ea6yreGazz-HYF152uZQRoqNSjdEOa4zRtNxMI4HRrRt0jRpDQKQRpTz7suhpi90UtSFQlBxvL68ZXjzMx50JP2yafo_NVGwLR5ZcwX47_8B">用 Miuix Canvas 打开</a>
+    </p>
+    <div class="gallery">
+      <figure class="shot"><div class="phone"><div class="screen" id="s-today"></div></div><figcaption>今日 · 打开就是这里</figcaption></figure>
+      <figure class="shot"><div class="phone"><div class="screen" id="s-week"></div></div><figcaption>课表</figcaption></figure>
+      <figure class="shot"><div class="phone"><div class="screen" id="s-detail"></div></div><figcaption>课程详情</figcaption></figure>
+      <figure class="shot"><div class="phone"><div class="screen" id="s-grades"></div></div><figcaption>成绩</figcaption></figure>
+      <figure class="shot"><div class="phone"><div class="screen" id="s-me"></div></div><figcaption>我的 · 在这里登录</figcaption></figure>
+      <figure class="shot"><div class="phone"><div class="screen" id="s-in"></div></div><figcaption>我的 · 已登录</figcaption></figure>
+    </div>
+  </div>
+  <script>
+    const status = `<div class="status"><span>9:41</span><span>5G  88</span></div>`;
+    const nav = (on) => `
+      <div class="fnav">
+        <span class="${on===0?"on":""}"><i></i>今日</span>
+        <span class="${on===1?"on":""}"><i></i>课表</span>
+        <span class="${on===2?"on":""}"><i></i>成绩</span>
+        <span class="${on===3?"on":""}"><i></i>我的</span>
+      </div>`;
+    const cell = (cls, title, room, dim=true) =>
+      `<td><div class="blk ${cls} ${dim?"dim":""}"><b>${title}</b>${room||""}</div></td>`;
+    const empty = `<td></td>`;
+
+    document.getElementById("s-today").innerHTML = `
+      <div class="wash"></div>${status}
+      <div class="app"><div class="scroll">
+        <div class="hello">下午好 · 本地课表</div>
+        <div class="title">9月15日 周二</div>
+        <div class="sub">2026-2027 第1学期 · 第3周 · 江门校区</div>
+        <div class="hero">
+          <div class="k">下一节 · 大约 4 小时后</div>
+          <div class="n">军事理论</div>
+          <div class="s">11-12节 · 学生发展中心601(江)<br>常家瑶 · 考查 · 第3周每天这一节</div>
+          <div class="bar"><i></i></div>
+        </div>
+        <div class="stats">
+          <div class="stat"><b>1</b><span>今日课程</span></div>
+          <div class="stat"><b>5</b><span>本周军理</span></div>
+          <div class="stat"><b>13</b><span>学期课程</span></div>
+          <div class="stat"><b>18</b><span>教学周</span></div>
+        </div>
+        <div class="sec">今日安排</div>
+        <div class="card">
+          <div class="line">
+            <div class="dot"></div>
+            <div>
+              <div class="n">11-12节  军事理论</div>
+              <div class="s">学生发展中心601(江) · 常家瑶 · 第3周</div>
+            </div>
+          </div>
+        </div>
+        <div class="sec">之后几周会变满</div>
+        <div class="card">
+          <div class="n">第7周 · 高数 / 电子 / C语言</div>
+          <div class="s">第10周再加导论、办公软件、体育和 Web</div>
+        </div>
+        <div class="quick">
+          <div class="q a"><i></i>空教室</div>
+          <div class="q b"><i></i>考试</div>
+          <div class="q c"><i></i>同步</div>
+        </div>
+      </div>${nav(0)}</div>`;
+
+    document.getElementById("s-week").innerHTML = `
+      <div class="wash cool"></div>${status}
+      <div class="app"><div class="scroll">
+        <div class="title small">课表</div>
+        <div class="sub">未开课已淡化 · 点格子看详情</div>
+        <div class="pills">
+          <div class="pill">第1周</div><div class="pill">第2周</div>
+          <div class="pill on">第3周</div><div class="pill">第7周</div>
+          <div class="pill">第10周</div><div class="pill">全部</div>
+        </div>
+        <table class="kb">
+          <tr><th></th><th>一</th><th class="on">二</th><th>三</th><th>四</th><th>五</th><th>六</th><th>日</th></tr>
+          <tr><td class="slot">1-2</td>${cell("c-ai","计导","H3-104")}${cell("c-math","高数","H2-510")}${cell("c-ee","电子","H3-106")}${cell("c-his","史纲","H4-311")}${cell("c-his","史纲","H4-612")}${empty}${empty}</tr>
+          <tr><td class="slot">3-4</td>${cell("c-math","高数","H1-208")}${empty}${cell("c-c","C语言","H3-104")}${cell("c-pe","体育","TY105")}${cell("c-web","Web","H1-302")}${empty}${empty}</tr>
+          <tr><td class="slot">5-6</td>${empty}${empty}${empty}${cell("c-fit","体能","TY104")}${empty}${empty}${empty}</tr>
+          <tr><td class="slot">7-8</td>${empty}${empty}${cell("c-en","英语","H3-508")}${empty}${cell("c-web","Web","H4-402")}${empty}${empty}</tr>
+          <tr><td class="slot">9-10</td>${cell("c-pol","形策","H4-411")}${empty}${cell("c-math","高数","H2-510")}${empty}${cell("c-car","生涯","H2-204")}${empty}${empty}</tr>
+          <tr><td class="slot">11-12</td>${cell("c-mil","军理","发展601",false)}${cell("c-mil","军理","发展601",false)}${cell("c-mil","军理","发展601",false)}${cell("c-en","英语","H3-407")}${cell("c-mil","军理","发展601",false)}${cell("c-mil","军理","2周")}${cell("c-mil","军理","2周")}</tr>
+          <tr><td class="slot">13-14</td>${cell("c-off","办公","H1-303")}${empty}${cell("c-c","C语言","H4-402")}${empty}${cell("c-en","英语","5-6周")}${empty}${empty}</tr>
+          <tr><td class="slot">15-16</td>${empty}${cell("c-ee","电子","H3-106")}${cell("c-ee","电子","S-204")}${empty}${cell("c-en","英语","H4-307")}${empty}${empty}</tr>
+        </table>
+      </div>${nav(1)}</div>`;
+
+    document.getElementById("s-detail").innerHTML = `
+      <div class="wash cool"></div>${status}
+      <div class="app"><div class="scroll">
+        <div class="title small">课程详情</div>
+        <div class="card">
+          <div class="n">高等数学I(理)</div>
+          <div class="s"><span class="tag">专业必修</span><span class="tag">4 学分</span><span class="tag">考试</span></div>
+          <div class="s" style="margin-top:6px">一周三次，教室在 H1 / H2，第7周才开始。</div>
+        </div>
+        <div class="sec">上课安排</div>
+        <div class="pref">
+          <div class="item"><span class="l">教师</span><span class="r">张乐怡</span></div>
+          <div class="item"><span class="l">教室</span><span class="r">周一 H1-208<br>周二/周三 H2-510</span></div>
+          <div class="item"><span class="l">时间</span><span class="r">一 3-4 · 二 1-2 · 三 9-10</span></div>
+          <div class="item"><span class="l">周次</span><span class="r">7-18周</span></div>
+        </div>
+        <div class="sec">课程信息</div>
+        <div class="pref">
+          <div class="item"><span class="l">课程号</span><span class="r">GE1031</span></div>
+          <div class="item"><span class="l">教学班</span><span class="r">(2026-2027-1)-GE1031-20</span></div>
+        </div>
+        <div class="btns"><div class="btn ghost">返回今日</div><div class="btn primary">看周课表</div></div>
+      </div></div>`;
+
+    document.getElementById("s-grades").innerHTML = `
+      <div class="wash cool"></div>${status}
+      <div class="app"><div class="scroll">
+        <div class="title">成绩</div>
+        <div class="sub">出分后按学期收进这里</div>
+        <div class="card">
+          <div class="ring-row">
+            <div class="ring"><span>0</span></div>
+            <div>
+              <div class="n">已修学分</div>
+              <div class="s">本学期计划约 28 学分<br>军理、高数、英语会先出分</div>
+            </div>
+          </div>
+        </div>
+        <div class="stats">
+          <div class="stat"><b>—</b><span>平均学分绩</span></div>
+          <div class="stat"><b>0</b><span>已出成绩</span></div>
+          <div class="stat"><b>0</b><span>考试安排</span></div>
+          <div class="stat"><b>13</b><span>在读课程</span></div>
+        </div>
+        <div class="sec">本学期</div>
+        <div class="pref">
+          <div class="item"><span class="l">高等数学I(理)</span><span class="r">未出分</span></div>
+          <div class="item"><span class="l">大学英语I</span><span class="r">未出分</span></div>
+          <div class="item"><span class="l">军事理论</span><span class="r">考查</span></div>
+        </div>
+      </div>${nav(2)}</div>`;
+
+    document.getElementById("s-me").innerHTML = `
+      <div class="wash cool"></div>${status}
+      <div class="app"><div class="scroll">
+        <div class="title">我的</div>
+        <div class="sub">课表可以先看本地，登录后同步教务</div>
+        <div class="card">
+          <div class="who">
+            <div class="avatar empty"></div>
+            <div>
+              <div class="n">未登录</div>
+              <div class="s">正方教务 · jwxt.gzus.edu.cn</div>
+            </div>
+          </div>
+        </div>
+        <div class="field">学号</div>
+        <div class="field">密码</div>
+        <div class="btn primary">登录并同步</div>
+        <div class="sec">登录后可用</div>
+        <div class="quick">
+          <div class="q a"><i></i>空教室</div>
+          <div class="q b"><i></i>选课</div>
+          <div class="q c"><i></i>考试</div>
+        </div>
+        <div class="sec">课表</div>
+        <div class="pref">
+          <div class="item"><span class="l">上课提醒</span><span class="sw"></span></div>
+          <div class="item"><span class="l">显示周末</span><span class="sw"></span></div>
+        </div>
+      </div>${nav(3)}</div>`;
+
+    document.getElementById("s-in").innerHTML = `
+      <div class="wash cool"></div>${status}
+      <div class="app"><div class="scroll">
+        <div class="title">我的</div>
+        <div class="card">
+          <div class="who">
+            <div class="avatar"></div>
+            <div>
+              <div class="n">李致远</div>
+              <div class="s">端侧AI产业班 1班 · 2640153101<br>同步于刚刚</div>
+            </div>
+          </div>
+        </div>
+        <div class="stats">
+          <div class="stat"><b>13</b><span>课程</span></div>
+          <div class="stat"><b>3</b><span>当前周</span></div>
+          <div class="stat"><b>江</b><span>校区</span></div>
+          <div class="stat"><b>OK</b><span>会话</span></div>
+        </div>
+        <div class="sec">教务</div>
+        <div class="quick">
+          <div class="q a"><i></i>空教室</div>
+          <div class="q b"><i></i>选课</div>
+          <div class="q c"><i></i>培养方案</div>
+        </div>
+        <div class="sec">设置</div>
+        <div class="pref">
+          <div class="item"><span class="l">上课提醒</span><span class="sw"></span></div>
+          <div class="item"><span class="l">深色模式</span><span class="sw off"></span></div>
+          <div class="item"><span class="l">当前学期</span><span class="r">2026-2027-1</span></div>
+          <div class="item"><span class="l">退出登录</span><span class="r">清除会话</span></div>
+        </div>
+      </div>${nav(3)}</div>`;
+  </script>
+</body>
+</html>

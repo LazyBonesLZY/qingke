@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="qingke_primary">#3482FF</color>
+    <color name="qingke_surface">#F7F7F7</color>
+    <color name="qingke_on_primary">#FFFFFF</color>
+</resources>

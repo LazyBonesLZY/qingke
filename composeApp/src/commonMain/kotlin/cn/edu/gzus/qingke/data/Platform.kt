@@ -9,6 +9,8 @@ expect fun rsaEncrypt(password: String, modulusB64: String, exponentB64: String)
 
 expect fun lyuapEncrypt(password: String, modulusHex: String, exponentHex: String): String
 
+expect fun md5Hex(text: String): String
+
 expect fun decodeImageBytes(bytes: ByteArray): ImageBitmap
 
 expect fun readStore(name: String): String?

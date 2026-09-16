@@ -99,6 +99,10 @@ data class TermCalendar(
 
 val RemindLeadMinutes = listOf(5, 10, 15, 20, 30, 45, 60)
 const val DefaultRemindLeadMinutes = 20
+const val GZUS_LOGIN_JWXT = "jwxt"
+const val GZUS_LOGIN_CAS = "cas"
+const val JIANGMEN_WATER_PRICE = 1.7
+const val JIANGMEN_ELECTRIC_PRICE = 0.629
 
 @Serializable
 data class AppSettings(
@@ -112,8 +116,15 @@ data class AppSettings(
     val courseAliases: Map<String, String> = emptyMap(),
     val xiaoaiEditUrl: String = "",
     val schoolId: String = School.Default.id,
+    val gzusLoginChannel: String = GZUS_LOGIN_CAS,
     val remindLeadMinutes: Int = DefaultRemindLeadMinutes,
     val customJwxt: CustomJwxt = CustomJwxt(),
+    val utilityUseCustomPrice: Boolean = false,
+    val utilityWaterPrice: Double = JIANGMEN_WATER_PRICE,
+    val utilityElectricPrice: Double = JIANGMEN_ELECTRIC_PRICE,
+    val utilityBuilding: String = "",
+    val utilityRoom: String = "",
+    val utilityBind: UtilityBind = UtilityBind(),
 )
 
 @Serializable
@@ -185,6 +196,8 @@ data class AppSnapshot(
     val grades: List<GradeItem> = emptyList(),
     val exams: List<ExamItem> = emptyList(),
     val notices: List<NoticeItem> = emptyList(),
+    val hall: HallSnapshot = HallSnapshot(),
+    val utility: UtilitySnapshot = UtilitySnapshot(),
     val rooms: List<FreeRoom> = emptyList(),
     val settings: AppSettings = AppSettings(),
     val holidays: HolidayCalendar = HolidayCalendar(),
@@ -193,6 +206,178 @@ data class AppSnapshot(
 ) {
     val hasTimetable: Boolean get() = slots.isNotEmpty() || practices.isNotEmpty()
 }
+
+@Serializable
+data class HallTodo(
+    val id: String,
+    val title: String,
+    val time: String = "",
+    val status: String = "",
+    val url: String = "",
+)
+
+@Serializable
+data class HallMessage(
+    val id: String,
+    val title: String,
+    val time: String = "",
+    val content: String = "",
+)
+
+@Serializable
+data class HallAffair(
+    val id: String,
+    val name: String,
+    val type: String = "",
+    val url: String = "",
+    val kind: String = "",
+)
+
+fun HallAffair.isLeave(): Boolean =
+    kind == "leave" || name.contains("请假") || name.contains("销假") || type.contains("请假")
+
+fun HallTodo.isLeave(): Boolean =
+    title.contains("请假") || title.contains("销假") || status.contains("请假")
+
+fun HallSnapshot.leaveAffairs(): List<HallAffair> = affairs.filter { it.isLeave() }
+
+fun HallSnapshot.leaveSummary(): String {
+    if (leaves.isNotEmpty()) {
+        val latest = leaves.first()
+        val line = listOf(latest.status, latest.title).filter { it.isNotBlank() }.joinToString(" · ")
+        return if (leaves.size > 1) "$line · 共 ${leaves.size} 条" else line
+    }
+    if (leaveAffairs().isNotEmpty()) return "发起请假、看申请进度"
+    if (error.isNotBlank() && !ready) return error
+    return "办事大厅请假接口"
+}
+
+@Serializable
+data class LeaveApplication(
+    val id: String,
+    val title: String,
+    val status: String = "",
+    val time: String = "",
+    val start: String = "",
+    val end: String = "",
+    val reason: String = "",
+    val node: String = "",
+)
+
+@Serializable
+data class LeaveField(
+    val key: String,
+    val label: String,
+    val type: String = "text",
+    val required: Boolean = false,
+    val value: String = "",
+    val options: List<String> = emptyList(),
+)
+
+@Serializable
+data class LeaveForm(
+    val affairId: String = "",
+    val affairName: String = "",
+    val processId: String = "",
+    val taskId: String = "",
+    val cardId: String = "",
+    val fields: List<LeaveField> = emptyList(),
+)
+
+fun defaultLeaveFields(): List<LeaveField> = listOf(
+    LeaveField("QJLX", "请假类型", type = "choice", required = true, value = "事假", options = listOf("事假", "病假", "公假", "其他")),
+    LeaveField("KSSJ", "开始时间", type = "datetime", required = true),
+    LeaveField("JSSJ", "结束时间", type = "datetime", required = true),
+    LeaveField("QJLY", "请假事由", type = "textarea", required = true),
+)
+
+@Serializable
+data class UtilityBind(
+    val areaId: String = "",
+    val areaName: String = "",
+    val buildingId: String = "",
+    val buildingName: String = "",
+    val floorId: String = "",
+    val floorName: String = "",
+    val roomId: String = "",
+    val roomName: String = "",
+) {
+    val label: String
+        get() = listOf(areaName, buildingName, floorName, roomName).filter { it.isNotBlank() }.joinToString(" · ")
+}
+
+@Serializable
+data class UtilityOption(
+    val id: String,
+    val name: String,
+)
+
+fun AppSettings.resolvedUtilityBind(): UtilityBind {
+    if (utilityBind.roomId.isNotBlank() || utilityBind.roomName.isNotBlank() || utilityBind.buildingName.isNotBlank()) {
+        return utilityBind
+    }
+    return UtilityBind(buildingName = utilityBuilding, roomName = utilityRoom)
+}
+
+@Serializable
+data class UtilitySnapshot(
+    val ready: Boolean = false,
+    val building: String = "",
+    val room: String = "",
+    val power: String = "",
+    val coldWater: String = "",
+    val hotWater: String = "",
+    val error: String = "",
+)
+
+fun AppSettings.resolvedWaterPrice(): Double =
+    if (utilityUseCustomPrice && utilityWaterPrice > 0) utilityWaterPrice else JIANGMEN_WATER_PRICE
+
+fun AppSettings.resolvedElectricPrice(): Double =
+    if (utilityUseCustomPrice && utilityElectricPrice > 0) utilityElectricPrice else JIANGMEN_ELECTRIC_PRICE
+
+fun formatMoney(value: Double): String {
+    val cents = kotlin.math.round(value * 100.0).toLong()
+    val neg = cents < 0
+    val abs = if (neg) -cents else cents
+    val text = "${abs / 100}.${(abs % 100).toString().padStart(2, '0')}"
+    return if (neg) "-$text" else text
+}
+
+fun parseAmount(text: String): Double? {
+    val compact = text.trim().replace(",", "")
+    val match = Regex("""-?\d+(?:\.\d+)?""").find(compact) ?: return null
+    return match.value.toDoubleOrNull()
+}
+
+fun UtilitySnapshot.powerYuan(price: Double): Double? = parseAmount(power)?.times(price)
+
+fun UtilitySnapshot.waterYuan(price: Double): Double? {
+    val cold = parseAmount(coldWater)
+    val hot = parseAmount(hotWater)
+    if (cold == null && hot == null) return null
+    return ((cold ?: 0.0) + (hot ?: 0.0)) * price
+}
+
+@Serializable
+data class HallEvent(
+    val id: String,
+    val title: String,
+    val time: String = "",
+    val place: String = "",
+)
+
+@Serializable
+data class HallSnapshot(
+    val ready: Boolean = false,
+    val userName: String = "",
+    val todos: List<HallTodo> = emptyList(),
+    val messages: List<HallMessage> = emptyList(),
+    val affairs: List<HallAffair> = emptyList(),
+    val events: List<HallEvent> = emptyList(),
+    val leaves: List<LeaveApplication> = emptyList(),
+    val error: String = "",
+)
 
 data class CourseDetail(
     val courseId: String,

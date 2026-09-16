@@ -60,6 +60,11 @@ actual fun createHttpClient(): HttpClient = HttpClient(OkHttp) {
 actual fun lyuapEncrypt(password: String, modulusHex: String, exponentHex: String): String =
     lyuapEncryptJvm(password, modulusHex, exponentHex)
 
+actual fun md5Hex(text: String): String {
+    val digest = java.security.MessageDigest.getInstance("MD5").digest(text.toByteArray())
+    return digest.joinToString("") { byte -> "%02x".format(byte) }
+}
+
 actual fun decodeImageBytes(bytes: ByteArray): ImageBitmap =
     BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
         ?: error("验证码图片坏了，点一下换一张")

@@ -34,6 +34,11 @@ actual fun createHttpClient(): HttpClient = HttpClient(CIO) {
 actual fun lyuapEncrypt(password: String, modulusHex: String, exponentHex: String): String =
     lyuapEncryptJvm(password, modulusHex, exponentHex)
 
+actual fun md5Hex(text: String): String {
+    val digest = java.security.MessageDigest.getInstance("MD5").digest(text.toByteArray())
+    return digest.joinToString("") { byte -> "%02x".format(byte) }
+}
+
 actual fun decodeImageBytes(bytes: ByteArray): ImageBitmap =
     Image.makeFromEncoded(bytes).toComposeImageBitmap()
 

@@ -85,6 +85,10 @@ fun AppSettings.school(): School = School.of(schoolId)
 
 fun AppSnapshot.school(): School = settings.school()
 
+fun AppSettings.gzusUsesCas(): Boolean = school() == School.Gzus && gzusLoginChannel == GZUS_LOGIN_CAS
+
+fun AppSnapshot.showsGzusHall(): Boolean = settings.school() == School.Gzus
+
 data class ResolvedSchool(
     val id: String,
     val enum: School,
@@ -100,10 +104,30 @@ data class ResolvedSchool(
     val periodBlocks: List<PeriodBlock>,
     val kind: String,
     val origin: String,
+    val loginName: String,
 )
 
 fun AppSettings.resolved(): ResolvedSchool {
     val item = school()
+    if (item == School.Gzus && gzusUsesCas()) {
+        return ResolvedSchool(
+            id = item.id,
+            enum = item,
+            label = item.label,
+            jwxtName = item.jwxtName,
+            loginUrl = GZUS_CAS_LOGIN_URL,
+            changePasswordUrl = GZUS_CAS_PASSWORD_URL,
+            supportsFreeRooms = item.supportsFreeRooms,
+            hasPeriodClock = item.hasPeriodClock,
+            showsCaptcha = true,
+            requiresCaptcha = true,
+            captchaHint = "门户算术验证码，填得数",
+            periodBlocks = item.periodBlocks,
+            kind = "zhengfang",
+            origin = JWXT_ORIGIN,
+            loginName = "统一身份认证",
+        )
+    }
     if (item != School.Custom) {
         return ResolvedSchool(
             id = item.id,
@@ -124,11 +148,12 @@ fun AppSettings.resolved(): ResolvedSchool {
                 else -> "zhengfang"
             },
             origin = when (item) {
-                School.Gzus -> "https://jwxt.gzus.edu.cn"
+                School.Gzus -> JWXT_ORIGIN
                 School.Zhku -> "https://edu-admin.zhku.edu.cn"
                 School.Gzist -> GZIST_JWXT_ORIGIN
                 School.Custom -> ""
             },
+            loginName = item.jwxtName,
         )
     }
     val cfg = customJwxt
@@ -169,6 +194,7 @@ fun AppSettings.resolved(): ResolvedSchool {
         periodBlocks = if (kind == "kingosoft") ZhkuPeriods else MajorPeriods,
         kind = kind,
         origin = origin,
+        loginName = cfg.name.trim().ifBlank { "自定义教务" },
     )
 }
 
@@ -190,6 +216,12 @@ interface SchoolPortal {
     suspend fun fetchFreeRooms(year: String, term: String, weekday: String, start: String, end: String): List<FreeRoom>
     suspend fun fetchNotices(): List<NoticeItem>
     suspend fun fetchNoticeDetail(id: String): NoticeItem
+    suspend fun fetchHall(): HallSnapshot? = null
+    suspend fun fetchLeaveForm(affairId: String = ""): LeaveForm? = null
+    suspend fun submitLeave(form: LeaveForm, values: Map<String, String>): String =
+        error("这所学校没有请假接口")
+    suspend fun fetchUtility(bind: UtilityBind = UtilityBind()): UtilitySnapshot? = null
+    suspend fun fetchUtilityOptions(level: String, parentId: String = ""): List<UtilityOption> = emptyList()
     suspend fun logout()
 }
 

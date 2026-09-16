@@ -13,7 +13,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import cn.edu.gzus.qingke.data.AppSnapshot
+import cn.edu.gzus.qingke.data.leaveSummary
 import cn.edu.gzus.qingke.data.resolved
+import cn.edu.gzus.qingke.data.showsGzusHall
 import cn.edu.gzus.qingke.data.uniqueCourses
 import cn.edu.gzus.qingke.data.xiaoaiImportSummary
 import cn.edu.gzus.qingke.nav.QingkeNavigator
@@ -43,19 +45,52 @@ fun JwxtScreen(
         Spacer(Modifier.height(16.dp))
         ScreenHeader(
             "",
-            "教务",
-            if (snapshot.session.loggedIn) "通知、空教室、考试、导入小爱、学籍" else "登录后同步。本地课表也能导入小爱",
+            "服务",
+            if (snapshot.session.loggedIn) {
+                if (snapshot.showsGzusHall()) "请假、宿舍水电、通知、空教室、考试、办事大厅、导入小爱" else "通知、空教室、考试、导入小爱、学籍"
+            } else {
+                "登录后同步。本地课表也能导入小爱"
+            },
         )
         if (!snapshot.session.loggedIn && !snapshot.hasTimetable) {
             Spacer(Modifier.height(12.dp))
             InfoCard(
-                title = "还没有教务数据",
+                title = "还没有服务数据",
                 summary = "去「我的」登录$jwxt。课表、成绩、考试同步进来之后，再在这里查。",
                 modifier = Modifier.padding(horizontal = 16.dp),
                 onClick = { nav.goTab(TabDest.Mine) },
             )
         }
-        Spacer(Modifier.height(12.dp))
+        if (snapshot.showsGzusHall()) {
+            SmallTitle(text = "常用")
+            Column(
+                modifier = Modifier.padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                InfoCard(
+                    title = "请假",
+                    summary = when {
+                        snapshot.hall.leaves.isNotEmpty() || snapshot.session.loggedIn -> snapshot.hall.leaveSummary()
+                        else -> "广软常用功能，门户登录后同步"
+                    },
+                    onClick = { nav.open(Route.Leave) },
+                )
+                InfoCard(
+                    title = "宿舍水电",
+                    summary = when {
+                        snapshot.utility.ready -> listOf(
+                            snapshot.utility.power.takeIf { it.isNotBlank() }?.let { "电 $it 度" },
+                            snapshot.utility.coldWater.takeIf { it.isNotBlank() }?.let { "冷水 $it" },
+                            snapshot.utility.hotWater.takeIf { it.isNotBlank() }?.let { "热水 $it" },
+                        ).filterNotNull().joinToString(" · ").ifBlank { "已同步" }
+                        snapshot.utility.error.isNotBlank() -> snapshot.utility.error
+                        else -> "广软一卡通剩余水电"
+                    },
+                    onClick = { nav.open(Route.Utility) },
+                )
+            }
+        }
+        SmallTitle(text = "教务")
         Column(
             modifier = Modifier.padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -88,6 +123,25 @@ fun JwxtScreen(
                 summary = xiaoaiImportSummary(snapshot),
                 onClick = { nav.open(Route.XiaoaiImport) },
             )
+        }
+        if (snapshot.showsGzusHall()) {
+            SmallTitle(text = "办事")
+            Column(
+                modifier = Modifier.padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                InfoCard(
+                    title = "办事大厅",
+                    summary = when {
+                        snapshot.hall.todos.isNotEmpty() -> "${snapshot.hall.todos.size} 条待办 · 广软事务中心"
+                        snapshot.hall.ready -> "消息、办事、日程"
+                        snapshot.hall.error.isNotBlank() -> snapshot.hall.error
+                        snapshot.session.loggedIn -> "要用统一身份认证登录才能同步"
+                        else -> "广软事务中心，门户登录后同步"
+                    },
+                    onClick = { nav.open(Route.Hall) },
+                )
+            }
         }
         if (snapshot.profile.name.isNotBlank() || snapshot.session.studentId.isNotBlank()) {
             SmallTitle(text = "学籍")

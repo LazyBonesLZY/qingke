@@ -44,6 +44,8 @@ import cn.edu.gzus.qingke.data.AppUpdate
 import cn.edu.gzus.qingke.data.CustomJwxt
 import cn.edu.gzus.qingke.data.DRIVE_UPDATE_URL
 import cn.edu.gzus.qingke.data.GITHUB_RELEASES_URL
+import cn.edu.gzus.qingke.data.GZUS_LOGIN_CAS
+import cn.edu.gzus.qingke.data.GZUS_LOGIN_JWXT
 import cn.edu.gzus.qingke.data.ResolvedSchool
 import cn.edu.gzus.qingke.data.School
 import cn.edu.gzus.qingke.data.normalizedKind
@@ -107,6 +109,7 @@ fun MineScreen(
     captchaError: String? = null,
     onRefreshCaptcha: () -> Unit = {},
     onSelectSchool: (School) -> Unit = {},
+    onSelectGzusLogin: (String) -> Unit = {},
     onLogin: (String, String, String) -> Unit,
     onSync: () -> Unit,
     onToggleRemind: (Boolean) -> Unit,
@@ -133,6 +136,7 @@ fun MineScreen(
     var editingAlias by remember { mutableStateOf<String?>(null) }
     var confirmLogout by remember { mutableStateOf(false) }
     var confirmSchool by remember { mutableStateOf<School?>(null) }
+    var confirmGzusLogin by remember { mutableStateOf<String?>(null) }
     val selected = snapshot.school()
     val school = snapshot.resolved()
     Column(
@@ -148,7 +152,7 @@ fun MineScreen(
             if (snapshot.session.loggedIn) {
                 formatSync(snapshot.session.lastSyncAt)
             } else {
-                "学号密码只在这里。先选学校，再登录${school.jwxtName}。"
+                "学号密码只在这里。先选学校，再登录${school.loginName}。"
             },
         )
         Spacer(Modifier.height(12.dp))
@@ -166,20 +170,61 @@ fun MineScreen(
             )
             Spacer(Modifier.height(4.dp))
         }
-        SchoolBlock(
+        SmallTitle(text = if (snapshot.session.loggedIn) "账号" else "登录")
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp),
+        ) {
+            SchoolRow(
+                selectedLabel = school.label,
+                onToggle = {
+                    pickingSchool = !pickingSchool
+                    pickingDate = false
+                    pickingWeek = false
+                    pickingLead = false
+                    editingAlias = null
+                    if (!pickingSchool) confirmSchool = null
+                },
+            )
+            if (selected == School.Gzus) {
+                GzusChannelRows(
+                    channel = snapshot.settings.gzusLoginChannel,
+                    onPick = { next ->
+                        pickingSchool = false
+                        pickingDate = false
+                        pickingWeek = false
+                        pickingLead = false
+                        editingAlias = null
+                        if (next == snapshot.settings.gzusLoginChannel) {
+                            confirmGzusLogin = null
+                        } else if (snapshot.session.loggedIn) {
+                            confirmGzusLogin = next
+                        } else {
+                            confirmGzusLogin = null
+                            onSelectGzusLogin(next)
+                        }
+                    },
+                )
+            }
+            if (snapshot.session.loggedIn) {
+                ArrowPreference(
+                    title = "立即同步",
+                    summary = if (busy) "同步中" else formatSync(snapshot.session.lastSyncAt),
+                    onClick = onSync,
+                )
+                ArrowPreference(
+                    title = "退出登录",
+                    summary = "清除会话，课表留在本地",
+                    onClick = { confirmLogout = !confirmLogout },
+                )
+            }
+        }
+        SchoolExtras(
             selected = selected,
             selectedLabel = school.label,
             expanded = pickingSchool,
             confirm = confirmSchool,
             hasLocalData = snapshot.session.loggedIn || snapshot.hasTimetable,
-            onToggle = {
-                pickingSchool = !pickingSchool
-                pickingDate = false
-                pickingWeek = false
-                pickingLead = false
-                editingAlias = null
-                if (!pickingSchool) confirmSchool = null
-            },
             onPick = { next ->
                 pickingSchool = false
                 if (next == selected) {
@@ -197,10 +242,42 @@ fun MineScreen(
             },
             onCancel = { confirmSchool = null },
         )
-        DeveloperBlock(
-            snapshot = snapshot,
-            onSave = onSaveCustom,
-        )
+        if (selected == School.Gzus) {
+            GzusChannelConfirm(
+                confirm = confirmGzusLogin,
+                loggedIn = snapshot.session.loggedIn,
+                onConfirm = { next ->
+                    confirmGzusLogin = null
+                    onSelectGzusLogin(next)
+                },
+                onCancel = { confirmGzusLogin = null },
+            )
+        }
+        if (snapshot.session.loggedIn && confirmLogout) {
+            Spacer(Modifier.height(8.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                insideMargin = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+            ) {
+                Text("退出${school.jwxtName}会话。已经同步过的课表留在本地。", style = MiuixTheme.textStyles.body2, color = MiuixTheme.colorScheme.onBackground)
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick = {
+                        confirmLogout = false
+                        onLogout()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    minHeight = 44.dp,
+                    colors = ButtonDefaults.buttonColorsPrimary(),
+                ) { Text("确定退出") }
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = { confirmLogout = false },
+                    modifier = Modifier.fillMaxWidth(),
+                    minHeight = 44.dp,
+                ) { Text("取消") }
+            }
+        }
         if (!snapshot.session.loggedIn) {
             LoggedOutMine(
                 snapshot = snapshot,
@@ -288,49 +365,10 @@ fun MineScreen(
             onOpenGithub = onOpenGithubUpdate,
             onOpenDrive = onOpenDriveUpdate,
         )
-        if (snapshot.session.loggedIn) {
-            SmallTitle(text = "账号")
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                insideMargin = PaddingValues(0.dp),
-            ) {
-                ArrowPreference(
-                    title = "立即同步",
-                    summary = if (busy) "同步中" else formatSync(snapshot.session.lastSyncAt),
-                    onClick = onSync,
-                )
-                ArrowPreference(
-                    title = "退出登录",
-                    summary = "清除会话，课表留在本地",
-                    onClick = { confirmLogout = !confirmLogout },
-                )
-            }
-            if (confirmLogout) {
-                Spacer(Modifier.height(8.dp))
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                    insideMargin = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
-                ) {
-                    Text("退出${school.jwxtName}会话。已经同步过的课表留在本地。", style = MiuixTheme.textStyles.body2, color = MiuixTheme.colorScheme.onBackground)
-                    Spacer(Modifier.height(12.dp))
-                    Button(
-                        onClick = {
-                            confirmLogout = false
-                            onLogout()
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        minHeight = 44.dp,
-                        colors = ButtonDefaults.buttonColorsPrimary(),
-                    ) { Text("确定退出") }
-                    Spacer(Modifier.height(8.dp))
-                    Button(
-                        onClick = { confirmLogout = false },
-                        modifier = Modifier.fillMaxWidth(),
-                        minHeight = 44.dp,
-                    ) { Text("取消") }
-                }
-            }
-        }
+        DeveloperBlock(
+            snapshot = snapshot,
+            onSave = onSaveCustom,
+        )
         Spacer(Modifier.height(16.dp))
     }
 }
@@ -358,16 +396,7 @@ private fun LoggedOutMine(
         captcha?.bytes?.let { runCatching { decodeImageBytes(it) }.getOrNull() }
     }
 
-    Spacer(Modifier.height(4.dp))
-    if (snapshot.hasTimetable) {
-        InfoCard(
-            title = "本地还留着上次课表",
-            summary = "${uniqueCourses(snapshot.slots).size} 门课 · ${formatSync(snapshot.session.lastSyncAt)}",
-            modifier = Modifier.padding(horizontal = 16.dp),
-            onClick = { nav.goTab(TabDest.Timetable) },
-        )
-        Spacer(Modifier.height(12.dp))
-    }
+    Spacer(Modifier.height(8.dp))
     TextField(
         value = studentId,
         onValueChange = { studentId = it.trim() },
@@ -453,7 +482,7 @@ private fun LoggedOutMine(
             Text("需要首登认证", style = MiuixTheme.textStyles.title3, color = MiuixTheme.colorScheme.onBackground)
             Spacer(Modifier.height(8.dp))
             Text(
-                "${school.jwxtName}判定这是初始密码，或者必须先改密。青课不能代改。打开官方教务登录，按页面提示改完，再回到这里登录。",
+                "${school.loginName}判定这是初始密码，或者必须先改密。办事大厅和教务都会拦。青课不能代改。打开官方登录页按提示改完，再回到这里登录。",
                 style = MiuixTheme.textStyles.body2,
                 color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
             )
@@ -463,7 +492,7 @@ private fun LoggedOutMine(
                 modifier = Modifier.fillMaxWidth(),
                 minHeight = 44.dp,
                 colors = ButtonDefaults.buttonColorsPrimary(),
-            ) { Text("打开${school.jwxtName}登录页") }
+            ) { Text("打开${school.loginName}登录页") }
             Spacer(Modifier.height(8.dp))
             Button(
                 onClick = onOpenChangePassword,
@@ -490,31 +519,40 @@ private fun LoggedOutMine(
         if (busy) InfiniteProgressIndicator()
         Text(if (busy) "正在登录" else "登录并同步")
     }
+    if (snapshot.hasTimetable) {
+        Spacer(Modifier.height(12.dp))
+        InfoCard(
+            title = "本地还留着上次课表",
+            summary = "${uniqueCourses(snapshot.slots).size} 门课 · ${formatSync(snapshot.session.lastSyncAt)}",
+            modifier = Modifier.padding(horizontal = 16.dp),
+            onClick = { nav.goTab(TabDest.Timetable) },
+        )
+    }
 }
 
 @Composable
-private fun SchoolBlock(
+private fun SchoolRow(
+    selectedLabel: String,
+    onToggle: () -> Unit,
+) {
+    ArrowPreference(
+        title = "当前学校",
+        summary = selectedLabel,
+        onClick = onToggle,
+    )
+}
+
+@Composable
+private fun SchoolExtras(
     selected: School,
     selectedLabel: String,
     expanded: Boolean,
     confirm: School?,
     hasLocalData: Boolean,
-    onToggle: () -> Unit,
     onPick: (School) -> Unit,
     onConfirm: (School) -> Unit,
     onCancel: () -> Unit,
 ) {
-    SmallTitle(text = "学校")
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        insideMargin = PaddingValues(0.dp),
-    ) {
-        ArrowPreference(
-            title = "当前学校",
-            summary = selectedLabel,
-            onClick = onToggle,
-        )
-    }
     if (expanded) {
         Spacer(Modifier.height(8.dp))
         Card(
@@ -563,6 +601,69 @@ private fun SchoolBlock(
                 minHeight = 44.dp,
                 colors = ButtonDefaults.buttonColorsPrimary(),
             ) { Text("换到这所学校") }
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = onCancel,
+                modifier = Modifier.fillMaxWidth(),
+                minHeight = 44.dp,
+            ) { Text("取消") }
+        }
+    }
+}
+
+@Composable
+private fun GzusChannelRows(
+    channel: String,
+    onPick: (String) -> Unit,
+) {
+    ArrowPreference(
+        title = "正方教务",
+        summary = if (channel != GZUS_LOGIN_CAS) "当前 · jwxt.gzus.edu.cn 直接登录" else "只进教学管理信息服务平台",
+        onClick = { onPick(GZUS_LOGIN_JWXT) },
+    )
+    ArrowPreference(
+        title = "统一身份认证",
+        summary = if (channel == GZUS_LOGIN_CAS) "当前 · 可进正方和办事大厅" else "cas.gzus.edu.cn，登录后也能同步办事大厅",
+        onClick = { onPick(GZUS_LOGIN_CAS) },
+    )
+}
+
+@Composable
+private fun GzusChannelConfirm(
+    confirm: String?,
+    loggedIn: Boolean,
+    onConfirm: (String) -> Unit,
+    onCancel: () -> Unit,
+) {
+    if (confirm != null) {
+        val cas = confirm == GZUS_LOGIN_CAS
+        Spacer(Modifier.height(8.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+        ) {
+            Text(
+                if (cas) "换成统一身份认证" else "换成正方直接登录",
+                style = MiuixTheme.textStyles.title3,
+                color = MiuixTheme.colorScheme.onBackground,
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                if (loggedIn) {
+                    "会退出当前登录。本地课表留下。之后用${if (cas) "统一身份认证" else "正方教务"}重新登录。"
+                } else {
+                    if (cas) "之后从门户进教务，并能同步办事大厅。" else "之后只走正方登录页。"
+                },
+                style = MiuixTheme.textStyles.body2,
+                color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+            )
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = { onConfirm(confirm) },
+                modifier = Modifier.fillMaxWidth(),
+                minHeight = 44.dp,
+                colors = ButtonDefaults.buttonColorsPrimary(),
+            ) { Text("换到这个渠道") }
             Spacer(Modifier.height(8.dp))
             Button(
                 onClick = onCancel,

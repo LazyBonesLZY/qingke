@@ -158,7 +158,7 @@ fun QingkeBottomBar(
         TabDest.Today to (MiuixIcons.Home to "首页"),
         TabDest.Timetable to (MiuixIcons.Weeks to "课表"),
         TabDest.Grades to (MiuixIcons.ListView to "成绩"),
-        TabDest.Jwxt to (MiuixIcons.GridView to "教务"),
+        TabDest.Jwxt to (MiuixIcons.GridView to "服务"),
         TabDest.Mine to (MiuixIcons.Contacts to "我的"),
     )
     val selectedIndex = items.indexOfFirst { it.first == selected }.coerceAtLeast(0)

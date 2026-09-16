@@ -6,7 +6,7 @@
 
 ## 学校
 
-- 广州软件学院：正方 V-9
+- 广州软件学院：默认统一身份认证（cas.gzus.edu.cn），可进正方、办事大厅、请假和宿舍水电；也可改回正方直接登录
 - 仲恺农业工程学院：强智
 - 广州理工学院：联奕门户
 - 自定义教务：开发者选项里选类型、填 origin，正方可覆盖路径
@@ -15,7 +15,7 @@
 
 ## 更新
 
-当前版本 **1.3.1**（versionCode 20）。
+当前版本 **1.5.0**（versionCode 22）。
 
 - GitHub Release：应用里检查 `LazyBonesLZY/qingke` 最新版，再跳到 Release / APK
 - 网盘：浏览器打开 [https://storage.lazzyy.cn/@s/KB](https://storage.lazzyy.cn/@s/KB)

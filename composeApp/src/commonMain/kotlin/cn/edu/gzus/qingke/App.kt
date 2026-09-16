@@ -28,7 +28,10 @@ import cn.edu.gzus.qingke.data.AppRepository
 import cn.edu.gzus.qingke.data.AppUpdate
 import cn.edu.gzus.qingke.data.DRIVE_UPDATE_URL
 import cn.edu.gzus.qingke.data.FreeRoom
+import cn.edu.gzus.qingke.data.LeaveForm
+import cn.edu.gzus.qingke.data.UtilityOption
 import cn.edu.gzus.qingke.data.GITHUB_RELEASES_URL
+import cn.edu.gzus.qingke.data.GZUS_LOGIN_CAS
 import cn.edu.gzus.qingke.data.JwxtNeedFirstLogin
 import cn.edu.gzus.qingke.data.friendlyNetworkMessage
 import cn.edu.gzus.qingke.data.resolved
@@ -54,7 +57,10 @@ import cn.edu.gzus.qingke.ui.grades.GradesScreen
 import cn.edu.gzus.qingke.ui.hub.EmptyRoomScreen
 import cn.edu.gzus.qingke.ui.hub.ExamsScreen
 import cn.edu.gzus.qingke.ui.hub.NoticesScreen
+import cn.edu.gzus.qingke.ui.jwxt.HallScreen
 import cn.edu.gzus.qingke.ui.jwxt.JwxtScreen
+import cn.edu.gzus.qingke.ui.jwxt.LeaveScreen
+import cn.edu.gzus.qingke.ui.jwxt.UtilityScreen
 import cn.edu.gzus.qingke.ui.jwxt.XiaoaiImportScreen
 import cn.edu.gzus.qingke.ui.mine.MineScreen
 import cn.edu.gzus.qingke.ui.timetable.TimetableScreen
@@ -90,6 +96,12 @@ fun App() {
         var roomBusy by remember { mutableStateOf(false) }
         var roomError by remember { mutableStateOf<String?>(null) }
         var rooms by remember { mutableStateOf<List<FreeRoom>>(emptyList()) }
+        var utilityOptions by remember { mutableStateOf<List<UtilityOption>>(emptyList()) }
+        var utilityOptionsBusy by remember { mutableStateOf(false) }
+        var utilityOptionsError by remember { mutableStateOf<String?>(null) }
+        var leaveForm by remember { mutableStateOf<LeaveForm?>(null) }
+        var leaveFormBusy by remember { mutableStateOf(false) }
+        var leaveFormError by remember { mutableStateOf<String?>(null) }
         var update by remember { mutableStateOf<AppUpdate?>(null) }
         var updateBusy by remember { mutableStateOf(false) }
         var updateError by remember { mutableStateOf<String?>(null) }
@@ -100,7 +112,7 @@ fun App() {
             }
         }
 
-        LaunchedEffect(snapshot.settings.schoolId, snapshot.session.loggedIn) {
+        LaunchedEffect(snapshot.settings.schoolId, snapshot.settings.gzusLoginChannel, snapshot.session.loggedIn) {
             if (!snapshot.session.loggedIn) {
                 runCatching { repo.refreshCaptcha() }
             }
@@ -217,6 +229,13 @@ fun App() {
                             loginError = null
                             repo.setSchool(school)
                             toast("已切换到${school.label}")
+                            scope.launch { repo.refreshCaptcha() }
+                        },
+                        onSelectGzusLogin = { channel ->
+                            firstLogin = false
+                            loginError = null
+                            repo.setGzusLoginChannel(channel)
+                            toast(if (channel == GZUS_LOGIN_CAS) "已改用统一身份认证" else "已改用正方直接登录")
                             scope.launch { repo.refreshCaptcha() }
                         },
                         onLogin = { id, pwd, code ->
@@ -409,6 +428,75 @@ fun App() {
                                 },
                             )
                             is Route.Exams -> ExamsScreen(snapshot, padding)
+                            is Route.Hall -> HallScreen(
+                                snapshot = snapshot,
+                                nav = nav,
+                                contentPadding = padding,
+                            )
+                            is Route.Leave -> LeaveScreen(
+                                snapshot = snapshot,
+                                nav = nav,
+                                contentPadding = padding,
+                                busy = busy,
+                                form = leaveForm,
+                                formBusy = leaveFormBusy,
+                                formError = leaveFormError,
+                                onLoadForm = { affairId ->
+                                    scope.launch {
+                                        leaveFormBusy = true
+                                        leaveFormError = null
+                                        runCatching { repo.loadLeaveForm(affairId) }
+                                            .onSuccess { leaveForm = it }
+                                            .onFailure { leaveFormError = it.message }
+                                        leaveFormBusy = false
+                                    }
+                                },
+                                onSubmit = { form, values ->
+                                    runJob {
+                                        val message = repo.submitLeave(form, values)
+                                        toast(message)
+                                    }
+                                },
+                                onRefresh = {
+                                    runJob {
+                                        repo.syncHall()
+                                        toast("请假已同步")
+                                    }
+                                },
+                            )
+                            is Route.Utility -> UtilityScreen(
+                                snapshot = snapshot,
+                                nav = nav,
+                                contentPadding = padding,
+                                busy = busy,
+                                options = utilityOptions,
+                                optionsBusy = utilityOptionsBusy,
+                                optionsError = utilityOptionsError,
+                                onLoadOptions = { level, parentId ->
+                                    scope.launch {
+                                        utilityOptionsBusy = true
+                                        utilityOptionsError = null
+                                        runCatching { repo.listUtilityOptions(level, parentId) }
+                                            .onSuccess { utilityOptions = it }
+                                            .onFailure { utilityOptionsError = it.message }
+                                        utilityOptionsBusy = false
+                                    }
+                                },
+                                onSaveBind = { bind ->
+                                    repo.saveUtilityBind(bind)
+                                    toast(if (bind.roomName.isNotBlank()) "已选 ${bind.label}" else "已选 ${bind.label}")
+                                },
+                                onSavePrice = { useCustom, water, electric ->
+                                    repo.saveUtilityPrice(useCustom, water, electric)
+                                    toast(if (useCustom) "已用自定义单价" else "已用江门校区单价")
+                                },
+                                onRefresh = {
+                                    runJob {
+                                        repo.syncUtility()
+                                        toast("水电已同步")
+                                    }
+                                },
+                            )
                             is Route.Notices -> NoticesScreen(
                                 snapshot = snapshot,
                                 contentPadding = padding,
@@ -454,6 +542,9 @@ private fun routeTitle(route: Route): String = when (route) {
     is Route.EmptyRoom -> "空教室"
     is Route.Exams -> "考试"
     is Route.Notices -> "通知"
+    is Route.Hall -> "办事大厅"
+    is Route.Leave -> "请假"
+    is Route.Utility -> "宿舍水电"
     is Route.XiaoaiImport -> "导入小爱"
     is Route.Tab -> "青课"
 }

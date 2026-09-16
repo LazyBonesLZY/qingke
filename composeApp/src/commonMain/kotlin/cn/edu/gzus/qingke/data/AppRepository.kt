@@ -10,6 +10,7 @@ private const val STORE = "qingke-snapshot.json"
 
 class AppRepository(
     private val gzus: JwxtClient = JwxtClient(),
+    private val gzusCas: GzusCasClient = GzusCasClient(),
     private val zhku: ZhkuClient = ZhkuClient(),
     private val gzist: GzistClient = GzistClient(),
     private val xiaoai: XiaoaiClient = XiaoaiClient(),
@@ -19,7 +20,7 @@ class AppRepository(
     private fun portal(): SchoolPortal {
         val settings = _state.value.settings
         return when (settings.school()) {
-            School.Gzus -> gzus
+            School.Gzus -> if (settings.gzusUsesCas()) gzusCas else gzus
             School.Zhku -> zhku
             School.Gzist -> gzist
             School.Custom -> customPortal(settings.customJwxt)
@@ -108,7 +109,14 @@ class AppRepository(
                     },
                     xiaoaiEditUrl = it.settings.xiaoaiEditUrl,
                     remindLeadMinutes = it.settings.remindLeadMinutes,
+                    gzusLoginChannel = it.settings.gzusLoginChannel,
                     customJwxt = it.settings.customJwxt,
+                    utilityUseCustomPrice = it.settings.utilityUseCustomPrice,
+                    utilityWaterPrice = it.settings.utilityWaterPrice,
+                    utilityElectricPrice = it.settings.utilityElectricPrice,
+                    utilityBuilding = it.settings.utilityBuilding,
+                    utilityRoom = it.settings.utilityRoom,
+                    utilityBind = it.settings.utilityBind,
                 ),
                 holidays = it.holidays,
             )
@@ -149,6 +157,30 @@ class AppRepository(
         updateSettings { it.copy(customJwxt = cleaned) }
         if (apply && _state.value.settings.school() != School.Custom) {
             setSchool(School.Custom)
+        }
+    }
+
+    fun setGzusLoginChannel(channel: String) {
+        val next = if (channel == GZUS_LOGIN_CAS) GZUS_LOGIN_CAS else GZUS_LOGIN_JWXT
+        val snap = _state.value
+        if (snap.settings.school() == School.Gzus && snap.settings.gzusLoginChannel == next) return
+        clearCookieStore()
+        _captcha.value = null
+        _captchaError.value = null
+        cancelLiveClass()
+        commit {
+            it.copy(
+                settings = it.settings.copy(
+                    schoolId = School.Gzus.id,
+                    gzusLoginChannel = next,
+                ),
+                session = SessionState(studentId = it.session.studentId),
+                hall = HallSnapshot(),
+                utility = UtilitySnapshot(),
+                grades = emptyList(),
+                exams = emptyList(),
+                rooms = emptyList(),
+            )
         }
     }
 
@@ -242,6 +274,34 @@ class AppRepository(
                 if (detail == null) item else item.mergeDetail(detail)
             }
         }
+        val hall = when {
+            snap.settings.school() != School.Gzus -> HallSnapshot()
+            !snap.settings.gzusUsesCas() -> HallSnapshot(error = "要用统一身份认证登录才能看办事大厅")
+            else -> runCatching { portal().fetchHall() ?: HallSnapshot(error = "这次门户没给办事大厅票据") }
+                .getOrElse { error ->
+                    if (error is JwxtNeedFirstLogin) throw error
+                    if (keepGradesIfFail && snap.hall.ready) {
+                        snap.hall.copy(error = error.message ?: "办事大厅同步失败")
+                    } else {
+                        HallSnapshot(error = error.message ?: "办事大厅同步失败")
+                    }
+                }
+        }
+        val utility = when {
+            snap.settings.school() != School.Gzus -> UtilitySnapshot()
+            !snap.settings.gzusUsesCas() -> UtilitySnapshot(error = "要用统一身份认证登录才能看宿舍水电")
+            else -> runCatching {
+                portal().fetchUtility(snap.settings.resolvedUtilityBind())
+                    ?: UtilitySnapshot(error = "这次门户没给一卡通票据")
+            }.getOrElse { error ->
+                if (error is JwxtNeedFirstLogin) throw error
+                if (keepGradesIfFail && snap.utility.ready) {
+                    snap.utility.copy(error = error.message ?: "水电同步失败")
+                } else {
+                    UtilitySnapshot(error = error.message ?: "水电同步失败")
+                }
+            }
+        }
         commit {
             it.copy(
                 profile = profile.copy(studentId = studentId.ifBlank { profile.studentId }),
@@ -250,6 +310,8 @@ class AppRepository(
                 grades = grades,
                 exams = exams,
                 notices = notices,
+                hall = hall,
+                utility = utility,
                 settings = it.settings.mergeCalendar(calendar).copy(
                     yearCode = profile.yearCode.ifBlank { year },
                     termCode = profile.termCode.ifBlank { term },
@@ -315,7 +377,11 @@ class AppRepository(
         clearCookieStore()
         cancelLiveClass()
         commit {
-            it.copy(session = SessionState(studentId = it.session.studentId))
+            it.copy(
+                session = SessionState(studentId = it.session.studentId),
+                hall = HallSnapshot(),
+                utility = UtilitySnapshot(),
+            )
         }
     }
 
@@ -328,9 +394,86 @@ class AppRepository(
                 grades = emptyList(),
                 exams = emptyList(),
                 rooms = emptyList(),
+                hall = HallSnapshot(),
+                utility = UtilitySnapshot(),
             )
         }
         cancelLiveClass()
+    }
+
+    fun saveUtilityRoom(building: String, room: String) {
+        updateSettings {
+            it.copy(
+                utilityBuilding = building.trim(),
+                utilityRoom = room.trim(),
+                utilityBind = it.utilityBind.copy(buildingName = building.trim(), roomName = room.trim()),
+            )
+        }
+    }
+
+    fun saveUtilityBind(bind: UtilityBind) {
+        updateSettings {
+            it.copy(
+                utilityBind = bind,
+                utilityBuilding = bind.buildingName,
+                utilityRoom = bind.roomName,
+            )
+        }
+    }
+
+    suspend fun listUtilityOptions(level: String, parentId: String = ""): List<UtilityOption> {
+        val snap = _state.value
+        if (snap.settings.school() != School.Gzus) error("宿舍选择只属于广软")
+        if (!snap.session.loggedIn) error("登录后才能选宿舍")
+        if (!snap.settings.gzusUsesCas()) error("要用统一身份认证登录才能选宿舍")
+        return portal().fetchUtilityOptions(level, parentId)
+    }
+
+    fun saveUtilityPrice(useCustom: Boolean, water: Double, electric: Double) {
+        updateSettings {
+            it.copy(
+                utilityUseCustomPrice = useCustom,
+                utilityWaterPrice = if (water > 0) water else JIANGMEN_WATER_PRICE,
+                utilityElectricPrice = if (electric > 0) electric else JIANGMEN_ELECTRIC_PRICE,
+            )
+        }
+    }
+
+    suspend fun syncHall() {
+        val snap = _state.value
+        if (snap.settings.school() != School.Gzus) error("请假和办事大厅只属于广软")
+        if (!snap.session.loggedIn) error("登录后才能同步办事大厅")
+        if (!snap.settings.gzusUsesCas()) error("要用统一身份认证登录才能同步办事大厅")
+        val hall = portal().fetchHall() ?: HallSnapshot(error = "这次门户没给办事大厅票据")
+        commit { it.copy(hall = hall) }
+    }
+
+    suspend fun loadLeaveForm(affairId: String = ""): LeaveForm {
+        val snap = _state.value
+        if (snap.settings.school() != School.Gzus) error("请假只属于广软")
+        if (!snap.session.loggedIn) error("登录后才能请假")
+        if (!snap.settings.gzusUsesCas()) error("要用统一身份认证登录才能请假")
+        return portal().fetchLeaveForm(affairId) ?: error("大厅没有返回请假表单")
+    }
+
+    suspend fun submitLeave(form: LeaveForm, values: Map<String, String>): String {
+        val snap = _state.value
+        if (snap.settings.school() != School.Gzus) error("请假只属于广软")
+        if (!snap.session.loggedIn) error("登录后才能请假")
+        if (!snap.settings.gzusUsesCas()) error("要用统一身份认证登录才能请假")
+        val message = portal().submitLeave(form, values)
+        runCatching { syncHall() }
+        return message
+    }
+
+    suspend fun syncUtility() {
+        val snap = _state.value
+        if (snap.settings.school() != School.Gzus) error("宿舍水电只属于广软")
+        if (!snap.session.loggedIn) error("登录后才能看水电")
+        if (!snap.settings.gzusUsesCas()) error("要用统一身份认证登录才能看宿舍水电")
+        val utility = portal().fetchUtility(snap.settings.resolvedUtilityBind())
+            ?: UtilitySnapshot(error = "这次门户没给一卡通票据")
+        commit { it.copy(utility = utility) }
     }
 
     fun startLiveTest(): String {

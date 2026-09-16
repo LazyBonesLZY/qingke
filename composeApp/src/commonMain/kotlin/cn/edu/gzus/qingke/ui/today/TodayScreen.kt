@@ -18,7 +18,12 @@ import cn.edu.gzus.qingke.data.activeIn
 import cn.edu.gzus.qingke.data.combineMillis
 import cn.edu.gzus.qingke.data.examSortKey
 import cn.edu.gzus.qingke.data.forDay
+import cn.edu.gzus.qingke.data.formatMoney
 import cn.edu.gzus.qingke.data.formatRemain
+import cn.edu.gzus.qingke.data.powerYuan
+import cn.edu.gzus.qingke.data.resolvedElectricPrice
+import cn.edu.gzus.qingke.data.resolvedWaterPrice
+import cn.edu.gzus.qingke.data.waterYuan
 import cn.edu.gzus.qingke.data.greeting
 import cn.edu.gzus.qingke.data.hasTermStart
 import cn.edu.gzus.qingke.data.nextLesson
@@ -27,6 +32,8 @@ import cn.edu.gzus.qingke.data.periodEnd
 import cn.edu.gzus.qingke.data.periodStart
 import cn.edu.gzus.qingke.data.resolvedCurrentWeek
 import cn.edu.gzus.qingke.data.resolved
+import cn.edu.gzus.qingke.data.isLeave
+import cn.edu.gzus.qingke.data.showsGzusHall
 import cn.edu.gzus.qingke.data.resolvedWeekCount
 import cn.edu.gzus.qingke.data.teachingWeeks
 import cn.edu.gzus.qingke.data.uniqueCourses
@@ -99,21 +106,6 @@ fun TodayScreen(
             title = "${now.date.monthNumber}月${now.date.dayOfMonth}日 $weekdayLabel",
             subtitle = subtitle,
         )
-        val latestNotice = snapshot.notices.firstOrNull()
-        if (latestNotice != null) {
-            Spacer(Modifier.height(12.dp))
-            InfoCard(
-                title = latestNotice.title,
-                summary = listOf(
-                    latestNotice.date,
-                    latestNotice.category.ifBlank { "通知" },
-                    if (latestNotice.pinned) "置顶" else null,
-                    if (snapshot.notices.size > 1) "共 ${snapshot.notices.size} 条" else null,
-                ).filter { !it.isNullOrBlank() }.joinToString(" · "),
-                modifier = Modifier.padding(horizontal = 16.dp),
-                onClick = { nav.open(Route.Notices) },
-            )
-        }
         Spacer(Modifier.height(12.dp))
         when {
             hero != null -> {
@@ -179,6 +171,50 @@ fun TodayScreen(
         if (inClass) {
             Spacer(Modifier.height(8.dp))
             ProgressLine(progress)
+        }
+        if (snapshot.showsGzusHall()) {
+            val utility = snapshot.utility
+            val waterPrice = snapshot.settings.resolvedWaterPrice()
+            val electricPrice = snapshot.settings.resolvedElectricPrice()
+            val powerYuan = utility.powerYuan(electricPrice)
+            val waterYuan = utility.waterYuan(waterPrice)
+            Spacer(Modifier.height(12.dp))
+            InfoCard(
+                title = "宿舍水电",
+                summary = when {
+                    utility.ready -> buildList {
+                        if (utility.power.isNotBlank()) {
+                            add("电 ${utility.power} 度" + if (powerYuan != null) " · ${formatMoney(powerYuan)} 元" else "")
+                        }
+                        val waters = listOfNotNull(
+                            utility.coldWater.takeIf { it.isNotBlank() }?.let { "冷 $it" },
+                            utility.hotWater.takeIf { it.isNotBlank() }?.let { "热 $it" },
+                        )
+                        if (waters.isNotEmpty()) {
+                            add(waters.joinToString("/") + " 吨" + if (waterYuan != null) " · ${formatMoney(waterYuan)} 元" else "")
+                        }
+                    }.joinToString("\n").ifBlank { "已同步" }
+                    utility.error.isNotBlank() -> utility.error
+                    snapshot.session.loggedIn -> "同步后显示剩余水电"
+                    else -> "登录统一身份认证后同步"
+                },
+                modifier = Modifier.padding(horizontal = 16.dp),
+                onClick = { nav.open(Route.Utility) },
+            )
+            val hallTodo = snapshot.hall.todos.firstOrNull()
+            if (hallTodo != null) {
+                Spacer(Modifier.height(8.dp))
+                InfoCard(
+                    title = hallTodo.title,
+                    summary = listOf(
+                        hallTodo.status.ifBlank { "办事大厅" },
+                        hallTodo.time,
+                        if (snapshot.hall.todos.size > 1) "共 ${snapshot.hall.todos.size} 条待办" else null,
+                    ).filter { !it.isNullOrBlank() }.joinToString(" · "),
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    onClick = { if (hallTodo.isLeave()) nav.open(Route.Leave) else nav.open(Route.Hall) },
+                )
+            }
         }
         Spacer(Modifier.height(14.dp))
         val stats = buildList {

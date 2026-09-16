@@ -12,13 +12,15 @@ const val GZUS_EHALL_CAS_SERVICE = "$GZUS_EHALL_ORIGIN/shiro-cas"
 const val GZUS_EHALL_HOME = "$GZUS_EHALL_ORIGIN/#/index"
 const val GZUS_SSO_ORIGIN = "https://sso.gzus.edu.cn"
 const val GZUS_ECARD_ORIGIN = "https://ecarduser.gzus.edu.cn"
+const val GZUS_ECARD_WX_UA =
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.38 NetType/WIFI Language/zh_CN"
 const val GZUS_EHALL_LEAVE = "$GZUS_EHALL_ORIGIN/#/affairs"
 const val GZUS_EHALL_MESSAGE = "$GZUS_EHALL_ORIGIN/#/message"
 
 @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
 fun gzusEcardCasService(): String {
     val redirect = kotlin.io.encoding.Base64.encode("https://ecarduser.gzus.edu.cn/".encodeToByteArray())
-    return "$GZUS_SSO_ORIGIN/login?redirectUrl=BASE64$redirect&t=12"
+    return "$GZUS_SSO_ORIGIN//login?redirectUrl=BASE64$redirect&t=12&"
 }
 const val ZHKU_LOGIN_URL = "https://edu-admin.zhku.edu.cn/Logon.do?method=logon"
 const val ZHKU_CHANGE_PASSWORD_URL = "https://edu-admin.zhku.edu.cn/jsxsd/grsz/grsz_xgmm"

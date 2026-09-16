@@ -1,9 +1,12 @@
 package cn.edu.gzus.qingke.data
 
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 
 private const val STORE = "qingke-snapshot.json"
@@ -56,6 +59,7 @@ class AppRepository(
     val captchaError: StateFlow<String?> = _captchaError.asStateFlow()
     private var testStartMillis = 0L
     private var testEndMillis = 0L
+    private val pickMutex = Mutex()
 
     fun hasLiveTest(): Boolean = testEndMillis > nowMillis()
 
@@ -108,6 +112,8 @@ class AppRepository(
                         else -> "3"
                     },
                     xiaoaiEditUrl = it.settings.xiaoaiEditUrl,
+                    courseAliases = it.settings.courseAliases,
+                    scheduleShifts = it.settings.scheduleShifts,
                     remindLeadMinutes = it.settings.remindLeadMinutes,
                     gzusLoginChannel = it.settings.gzusLoginChannel,
                     customJwxt = it.settings.customJwxt,
@@ -117,6 +123,7 @@ class AppRepository(
                     utilityBuilding = it.settings.utilityBuilding,
                     utilityRoom = it.settings.utilityRoom,
                     utilityBind = it.settings.utilityBind,
+                    autoSyncOnStart = it.settings.autoSyncOnStart,
                 ),
                 holidays = it.holidays,
             )
@@ -187,8 +194,16 @@ class AppRepository(
     suspend fun checkGithubUpdate(): AppUpdate = updates.checkGithub()
 
     suspend fun loginAndSync(studentId: String, password: String, captcha: String = "", captchaId: String = "") {
-        portal().login(studentId, password, captcha, captchaId).getOrThrow()
+        try {
+            portal().login(studentId, password, captcha, captchaId).getOrThrow()
+        } catch (failed: Throwable) {
+            if (failed !is JwxtNeedFirstLogin) {
+                runCatching { refreshCaptcha() }
+            }
+            throw failed
+        }
         _captcha.value = null
+        markLoggedIn(studentId)
         runCatching { pullRemote(studentId = studentId, keepGradesIfFail = false) }
             .onFailure { error ->
                 if (error is JwxtNeedFirstLogin) throw error
@@ -204,18 +219,30 @@ class AppRepository(
         refreshLive()
     }
 
+    private fun markLoggedIn(studentId: String) {
+        commit {
+            it.copy(
+                session = SessionState(
+                    loggedIn = true,
+                    cookies = currentCookies().toMap(),
+                    lastSyncAt = it.session.lastSyncAt,
+                    studentId = studentId.ifBlank { it.session.studentId },
+                ),
+            )
+        }
+    }
+
+    suspend fun checkSession() {
+        if (!_state.value.session.loggedIn) return
+        withLiveSession { }
+    }
+
     suspend fun sync() {
         if (!_state.value.session.loggedIn) error("还没有登录")
-        try {
+        withLiveSession {
             pullRemote(studentId = _state.value.session.studentId, keepGradesIfFail = true)
             runCatching { syncHolidays() }
             refreshLive()
-        } catch (error: Throwable) {
-            if (isSessionLost(error.message.orEmpty())) {
-                markSessionExpired()
-                error("登录已过期，请重新登录")
-            }
-            throw error
         }
     }
 
@@ -248,14 +275,18 @@ class AppRepository(
 
     suspend fun syncCalendar() {
         if (!_state.value.session.loggedIn) return
-        val calendar = portal().fetchTermCalendar()
-        commit { it.copy(settings = it.settings.mergeCalendar(calendar)) }
-        refreshLive()
+        withLiveSession(probe = false) {
+            val calendar = portal().fetchTermCalendar()
+            commit { it.copy(settings = it.settings.mergeCalendar(calendar)) }
+            refreshLive()
+        }
     }
 
     private suspend fun pullRemote(studentId: String, keepGradesIfFail: Boolean) {
         val snap = _state.value
-        val calendar = runCatching { portal().fetchTermCalendar() }.getOrNull()
+        val calendar = runCatching { portal().fetchTermCalendar() }
+            .onFailure { error -> if (isSessionLost(error.message.orEmpty())) throw error }
+            .getOrNull()
         val year = calendar?.yearCode?.ifBlank { null } ?: snap.settings.yearCode
         val term = calendar?.termCode?.ifBlank { null } ?: snap.settings.termCode
         val (profile, slots, practices) = portal().fetchTimetable(year, term)
@@ -265,43 +296,6 @@ class AppRepository(
         val exams = runCatching { portal().fetchExams(year, term) }.getOrElse {
             if (keepGradesIfFail) snap.exams else emptyList()
         }
-        val notices = runCatching { mergeNoticeCache(portal().fetchNotices(), snap.notices) }.getOrElse {
-            if (keepGradesIfFail) snap.notices else emptyList()
-        }.mapIndexed { index, item ->
-            if (index >= 5 || item.content.isNotBlank() || item.id.startsWith("msg:")) item
-            else {
-                val detail = runCatching { portal().fetchNoticeDetail(item.id) }.getOrNull()
-                if (detail == null) item else item.mergeDetail(detail)
-            }
-        }
-        val hall = when {
-            snap.settings.school() != School.Gzus -> HallSnapshot()
-            !snap.settings.gzusUsesCas() -> HallSnapshot(error = "要用统一身份认证登录才能看办事大厅")
-            else -> runCatching { portal().fetchHall() ?: HallSnapshot(error = "这次门户没给办事大厅票据") }
-                .getOrElse { error ->
-                    if (error is JwxtNeedFirstLogin) throw error
-                    if (keepGradesIfFail && snap.hall.ready) {
-                        snap.hall.copy(error = error.message ?: "办事大厅同步失败")
-                    } else {
-                        HallSnapshot(error = error.message ?: "办事大厅同步失败")
-                    }
-                }
-        }
-        val utility = when {
-            snap.settings.school() != School.Gzus -> UtilitySnapshot()
-            !snap.settings.gzusUsesCas() -> UtilitySnapshot(error = "要用统一身份认证登录才能看宿舍水电")
-            else -> runCatching {
-                portal().fetchUtility(snap.settings.resolvedUtilityBind())
-                    ?: UtilitySnapshot(error = "这次门户没给一卡通票据")
-            }.getOrElse { error ->
-                if (error is JwxtNeedFirstLogin) throw error
-                if (keepGradesIfFail && snap.utility.ready) {
-                    snap.utility.copy(error = error.message ?: "水电同步失败")
-                } else {
-                    UtilitySnapshot(error = error.message ?: "水电同步失败")
-                }
-            }
-        }
         commit {
             it.copy(
                 profile = profile.copy(studentId = studentId.ifBlank { profile.studentId }),
@@ -309,9 +303,6 @@ class AppRepository(
                 practices = practices,
                 grades = grades,
                 exams = exams,
-                notices = notices,
-                hall = hall,
-                utility = utility,
                 settings = it.settings.mergeCalendar(calendar).copy(
                     yearCode = profile.yearCode.ifBlank { year },
                     termCode = profile.termCode.ifBlank { term },
@@ -324,6 +315,58 @@ class AppRepository(
                 ),
                 seeded = false,
             )
+        }
+        val notices = runCatching { mergeNoticeCache(portal().fetchNotices(), snap.notices) }.getOrElse {
+            if (keepGradesIfFail) snap.notices else emptyList()
+        }.mapIndexed { index, item ->
+            if (index >= 5 || item.content.isNotBlank() || item.id.startsWith("msg:")) item
+            else {
+                val detail = runCatching { portal().fetchNoticeDetail(item.id) }.getOrNull()
+                if (detail == null) item else item.mergeDetail(detail)
+            }
+        }
+        commit { it.copy(notices = notices) }
+        val hall = pullHall(keepGradesIfFail)
+        commit { it.copy(hall = hall) }
+        val utility = pullUtility(keepGradesIfFail)
+        commitUtility(utility)
+    }
+
+    private suspend fun pullHall(keepGradesIfFail: Boolean): HallSnapshot {
+        val snap = _state.value
+        return when {
+            snap.settings.school() != School.Gzus -> HallSnapshot()
+            !snap.settings.gzusUsesCas() -> HallSnapshot(error = "要用统一身份认证登录才能看办事大厅")
+            else -> runCatching { portal().fetchHall() ?: error(SESSION_LOST_HINT) }
+                .getOrElse { error ->
+                    if (isSessionLost(error.message.orEmpty())) throw error
+                    if (keepGradesIfFail && snap.hall.ready) {
+                        snap.hall.copy(error = error.message ?: "办事大厅同步失败")
+                    } else {
+                        HallSnapshot(error = error.message ?: "办事大厅同步失败")
+                    }
+                }
+        }
+    }
+
+    private suspend fun pullUtility(keepGradesIfFail: Boolean): UtilitySnapshot {
+        val snap = _state.value
+        return when {
+            snap.settings.school() != School.Gzus -> UtilitySnapshot()
+            !snap.settings.gzusUsesCas() -> UtilitySnapshot(error = "要用统一身份认证登录才能看宿舍水电")
+            else -> runCatching {
+                portal().fetchUtility(
+                    snap.settings.resolvedUtilityBind(),
+                    snap.session.studentId.ifBlank { snap.profile.studentId },
+                ) ?: error(SESSION_LOST_HINT)
+            }.getOrElse { error ->
+                if (isSessionLost(error.message.orEmpty())) throw error
+                if (keepGradesIfFail && snap.utility.ready) {
+                    snap.utility.copy(error = error.message ?: "水电同步失败")
+                } else {
+                    UtilitySnapshot(error = error.message ?: "水电同步失败")
+                }
+            }
         }
     }
 
@@ -353,9 +396,11 @@ class AppRepository(
         val snap = _state.value
         if (!snap.session.loggedIn) error("登录后才能查空教室")
         if (!portal().supportsFreeRooms) error("${snap.resolved().jwxtName}没有空教室查询")
-        val rooms = portal().fetchFreeRooms(snap.settings.yearCode, snap.settings.termCode, weekday, start, end)
-        commit { it.copy(rooms = rooms) }
-        return rooms
+        return withLiveSession {
+            val rooms = portal().fetchFreeRooms(snap.settings.yearCode, snap.settings.termCode, weekday, start, end)
+            commit { it.copy(rooms = rooms) }
+            rooms
+        }
     }
 
     suspend fun loadNoticeBody(id: String) {
@@ -363,7 +408,7 @@ class AppRepository(
         if (existing != null && existing.content.isNotBlank()) return
         if (id.startsWith("msg:")) return
         if (!_state.value.session.loggedIn) error("登录后才能看通知正文")
-        val detail = portal().fetchNoticeDetail(id)
+        val detail = withLiveSession { portal().fetchNoticeDetail(id) }
         commit {
             it.copy(
                 notices = it.notices.map { item ->
@@ -373,7 +418,26 @@ class AppRepository(
         }
     }
 
+    private suspend fun <T> withLiveSession(probe: Boolean = true, block: suspend () -> T): T {
+        try {
+            val snap = _state.value
+            if (probe && snap.session.loggedIn && snap.settings.school() == School.Gzus && snap.settings.gzusUsesCas()) {
+                gzusCas.requireLiveSession()
+            }
+            return block()
+        } catch (failed: Throwable) {
+            if (failed is JwxtNeedFirstLogin) throw failed
+            if (isTransientNetwork(failed)) throw failed
+            if (isSessionLost(failed.message.orEmpty())) {
+                markSessionExpired()
+                error(SESSION_LOST_HINT)
+            }
+            throw failed
+        }
+    }
+
     private fun markSessionExpired() {
+        gzusCas.forgetTickets()
         clearCookieStore()
         cancelLiveClass()
         commit {
@@ -444,8 +508,11 @@ class AppRepository(
         if (snap.settings.school() != School.Gzus) error("请假和办事大厅只属于广软")
         if (!snap.session.loggedIn) error("登录后才能同步办事大厅")
         if (!snap.settings.gzusUsesCas()) error("要用统一身份认证登录才能同步办事大厅")
-        val hall = portal().fetchHall() ?: HallSnapshot(error = "这次门户没给办事大厅票据")
-        commit { it.copy(hall = hall) }
+        withLiveSession {
+            val hall = portal().fetchHall() ?: error(SESSION_LOST_HINT)
+            if (isSessionLost(hall.error) && !hall.ready) error(SESSION_LOST_HINT)
+            commit { it.copy(hall = hall) }
+        }
     }
 
     suspend fun loadLeaveForm(affairId: String = ""): LeaveForm {
@@ -453,7 +520,7 @@ class AppRepository(
         if (snap.settings.school() != School.Gzus) error("请假只属于广软")
         if (!snap.session.loggedIn) error("登录后才能请假")
         if (!snap.settings.gzusUsesCas()) error("要用统一身份认证登录才能请假")
-        return portal().fetchLeaveForm(affairId) ?: error("大厅没有返回请假表单")
+        return withLiveSession { portal().fetchLeaveForm(affairId) ?: error("大厅没有返回请假表单") }
     }
 
     suspend fun submitLeave(form: LeaveForm, values: Map<String, String>): String {
@@ -461,9 +528,159 @@ class AppRepository(
         if (snap.settings.school() != School.Gzus) error("请假只属于广软")
         if (!snap.session.loggedIn) error("登录后才能请假")
         if (!snap.settings.gzusUsesCas()) error("要用统一身份认证登录才能请假")
-        val message = portal().submitLeave(form, values)
-        runCatching { syncHall() }
-        return message
+        return withLiveSession {
+            val message = portal().submitLeave(form, values)
+            runCatching { syncHall() }
+            message
+        }
+    }
+
+    fun queueCoursePick(offer: CoursePickOffer, section: CoursePickSection): CoursePickTask {
+        val task = coursePickTaskOf(offer, section)
+        updateSettings { settings ->
+            settings.copy(coursePickQueue = settings.coursePickQueue.filterNot { it.id == task.id } + task)
+        }
+        return task
+    }
+
+    fun removeCoursePick(id: String) {
+        updateSettings { settings ->
+            settings.copy(coursePickQueue = settings.coursePickQueue.filterNot { it.id == id })
+        }
+    }
+
+    fun scheduleCoursePick(id: String, fireAt: Long) {
+        if (fireAt <= 0L) error("先填开选时间")
+        patchCoursePick(id) {
+            it.copy(fireAt = fireAt, status = "waiting", message = "到点自动提交")
+        }
+    }
+
+    suspend fun loadCoursePickScopes(): List<CoursePickScope> = withLiveSession {
+        requireCoursePick().fetchCoursePickScopes()
+    }
+
+    suspend fun searchCoursePicks(scope: CoursePickScope, keyword: String): List<CoursePickOffer> = withLiveSession {
+        requireCoursePick().fetchCoursePickOffers(scope, keyword.trim())
+    }
+
+    suspend fun loadCoursePickSections(offer: CoursePickOffer): List<CoursePickSection> = withLiveSession {
+        requireCoursePick().fetchCoursePickSections(offer)
+    }
+
+    suspend fun loadCoursePicked(scope: CoursePickScope): List<CoursePickOffer> = withLiveSession {
+        runCatching { requireCoursePick().fetchCoursePicked(scope) }.getOrDefault(emptyList())
+    }
+
+    suspend fun selectCourseNow(offer: CoursePickOffer, section: CoursePickSection): String = pickMutex.withLock {
+        withLiveSession {
+            val message = selectCourseWithRetry(offer, section, attempts = 3)
+            markCoursePickResult(offer, section, message, ok = true)
+            message
+        }
+    }
+
+    suspend fun runQueuedCoursePick(id: String): String = pickMutex.withLock {
+        val task = _state.value.settings.coursePickQueue.firstOrNull { it.id == id }
+            ?: error("队列里没有这门课")
+        runQueuedTask(task, attempts = 3)
+    }
+
+    suspend fun runDueCoursePicks(): List<String> = pickMutex.withLock {
+        val now = nowMillis()
+        val due = _state.value.settings.coursePickQueue
+            .filter { it.status == "waiting" && it.fireAt > 0L && it.fireAt <= now }
+        val out = mutableListOf<String>()
+        for (task in due) {
+            val line = runCatching { runQueuedTask(task, attempts = 5) }
+                .getOrElse { failed ->
+                    if (isSessionLost(failed.message.orEmpty())) throw failed
+                    "${task.courseName}：${failed.message ?: "选课失败"}"
+                }
+            out += if (line.contains(task.courseName)) line else "${task.courseName}：$line"
+        }
+        out
+    }
+
+    private fun requireCoursePick(): SchoolPortal {
+        val snap = _state.value
+        if (!snap.session.loggedIn) error("登录后才能选课")
+        if (!snap.resolved().supportsCoursePick) error("${snap.resolved().jwxtName}没有正方自主选课")
+        return portal()
+    }
+
+    private suspend fun runQueuedTask(task: CoursePickTask, attempts: Int): String = withLiveSession {
+        patchCoursePick(task.id) {
+            it.copy(status = "running", message = "正在提交", lastAttemptAt = nowMillis())
+        }
+        val result = runCatching {
+            selectCourseWithRetry(offerFromTask(task), sectionFromTask(task), attempts)
+        }
+        val now = nowMillis()
+        result.fold(
+            onSuccess = { message ->
+                patchCoursePick(task.id) { it.copy(status = "ok", message = message, lastAttemptAt = now) }
+                message
+            },
+            onFailure = { failed ->
+                val text = failed.message.orEmpty()
+                if (isSessionLost(text)) {
+                    patchCoursePick(task.id) {
+                        it.copy(status = "waiting", message = SESSION_LOST_HINT, lastAttemptAt = now)
+                    }
+                    throw failed
+                }
+                patchCoursePick(task.id) { it.copy(status = "fail", message = text, lastAttemptAt = now) }
+                throw failed
+            },
+        )
+    }
+
+    private suspend fun selectCourseWithRetry(
+        offer: CoursePickOffer,
+        section: CoursePickSection,
+        attempts: Int,
+    ): String {
+        var last = ""
+        val portal = requireCoursePick()
+        val times = attempts.coerceIn(1, 5)
+        repeat(times) { index ->
+            val result = runCatching { portal.selectCoursePick(offer, section) }
+            result.onSuccess { return it }
+            last = result.exceptionOrNull()?.message.orEmpty()
+            if (isSessionLost(last)) throw result.exceptionOrNull()!!
+            if (!coursePickRetryable(last) || index == times - 1) error(last.ifBlank { "选课失败" })
+            delay(2_000)
+        }
+        error(last.ifBlank { "选课失败" })
+    }
+
+    private fun markCoursePickResult(
+        offer: CoursePickOffer,
+        section: CoursePickSection,
+        message: String,
+        ok: Boolean,
+    ) {
+        val id = coursePickTaskId(offer.scopeId, offer.courseId, section.doJxbId.ifBlank { section.classId })
+        val now = nowMillis()
+        updateSettings { settings ->
+            settings.copy(
+                coursePickQueue = settings.coursePickQueue.map { task ->
+                    if (task.id != id) task
+                    else task.copy(status = if (ok) "ok" else "fail", message = message, lastAttemptAt = now)
+                },
+            )
+        }
+    }
+
+    private fun patchCoursePick(id: String, transform: (CoursePickTask) -> CoursePickTask) {
+        updateSettings { settings ->
+            settings.copy(
+                coursePickQueue = settings.coursePickQueue.map { task ->
+                    if (task.id == id) transform(task) else task
+                },
+            )
+        }
     }
 
     suspend fun syncUtility() {
@@ -471,9 +688,26 @@ class AppRepository(
         if (snap.settings.school() != School.Gzus) error("宿舍水电只属于广软")
         if (!snap.session.loggedIn) error("登录后才能看水电")
         if (!snap.settings.gzusUsesCas()) error("要用统一身份认证登录才能看宿舍水电")
-        val utility = portal().fetchUtility(snap.settings.resolvedUtilityBind())
-            ?: UtilitySnapshot(error = "这次门户没给一卡通票据")
-        commit { it.copy(utility = utility) }
+        val utility = portal().fetchUtility(
+            snap.settings.resolvedUtilityBind(),
+            snap.session.studentId.ifBlank { snap.profile.studentId },
+        ) ?: error("宿舍水电还没查到")
+        commitUtility(utility)
+    }
+
+    private fun commitUtility(utility: UtilitySnapshot) {
+        commit { current ->
+            val nextSettings = if (!current.settings.hasUtilityBind() && utility.bind.hasRoom()) {
+                current.settings.copy(
+                    utilityBind = utility.bind,
+                    utilityBuilding = utility.bind.buildingName,
+                    utilityRoom = utility.bind.roomName,
+                )
+            } else {
+                current.settings
+            }
+            current.copy(utility = utility, settings = nextSettings)
+        }
     }
 
     fun startLiveTest(): String {
@@ -540,8 +774,7 @@ class AppRepository(
             return false
         }
         val now = nowDateTime()
-        val weekday = weekdayIndex(now.date)
-        val next = nextLiveLesson(snap.slots, resolvedCurrentWeek(snap.settings, now.date), weekday, now.time)
+        val next = nextLiveLesson(snap.slots, now.date, snap.settings, now.date, now.time)
         if (next == null) {
             cancelLiveClass()
             return false
@@ -586,6 +819,51 @@ class AppRepository(
             chip = chip,
         )
     }
+
+    private fun coursePickTaskOf(offer: CoursePickOffer, section: CoursePickSection): CoursePickTask {
+        val doJxb = section.doJxbId.ifBlank { section.classId }
+        return CoursePickTask(
+            id = coursePickTaskId(offer.scopeId, offer.courseId, doJxb),
+            courseId = offer.courseId,
+            courseName = offer.name,
+            className = section.name.ifBlank { offer.className },
+            teacher = section.teacher.ifBlank { offer.teacher },
+            doJxbId = doJxb,
+            classId = section.classId.ifBlank { offer.classId },
+            scopeId = offer.scopeId,
+            params = offer.params + section.params,
+            status = "queued",
+        )
+    }
+}
+
+private fun coursePickTaskId(scopeId: String, courseId: String, doJxbId: String): String =
+    listOf(scopeId, courseId, doJxbId).joinToString("|")
+
+private fun offerFromTask(task: CoursePickTask): CoursePickOffer = CoursePickOffer(
+    courseId = task.courseId,
+    name = task.courseName,
+    teacher = task.teacher,
+    className = task.className,
+    classId = task.classId,
+    scopeId = task.scopeId,
+    params = task.params,
+)
+
+private fun sectionFromTask(task: CoursePickTask): CoursePickSection = CoursePickSection(
+    classId = task.classId,
+    doJxbId = task.doJxbId,
+    name = task.className,
+    teacher = task.teacher,
+    params = task.params,
+)
+
+private fun coursePickRetryable(message: String): Boolean {
+    val text = message
+    if (listOf("冲突", "已满", "学分", "已经选", "已选该", "重复", "无余量").any { text.contains(it) }) return false
+    return listOf("未开始", "未开放", "不在选课", "选课时间", "系统繁忙", "稍后重试", "请稍后再试").any { text.contains(it) } ||
+        text.contains("timeout", ignoreCase = true) ||
+        text.contains("超时")
 }
 
 fun formatRemain(minutes: Int): String = when {
@@ -618,5 +896,3 @@ fun formatSync(ts: Long): String {
 
 private fun nowMillis(): Long = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
 
-private fun isSessionLost(message: String): Boolean =
-    message.contains("登录已过期") || message.contains("请重新登录")

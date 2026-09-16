@@ -1,6 +1,5 @@
 package cn.edu.gzus.qingke.ui.jwxt
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
@@ -12,6 +11,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -25,17 +25,15 @@ import cn.edu.gzus.qingke.data.JIANGMEN_ELECTRIC_PRICE
 import cn.edu.gzus.qingke.data.JIANGMEN_WATER_PRICE
 import cn.edu.gzus.qingke.data.UtilityBind
 import cn.edu.gzus.qingke.data.UtilityOption
-import cn.edu.gzus.qingke.data.formatMoney
 import cn.edu.gzus.qingke.data.gzusUsesCas
+import cn.edu.gzus.qingke.data.hasUtilityBind
 import cn.edu.gzus.qingke.data.openUrl
-import cn.edu.gzus.qingke.data.powerYuan
 import cn.edu.gzus.qingke.data.resolvedElectricPrice
 import cn.edu.gzus.qingke.data.resolvedUtilityBind
 import cn.edu.gzus.qingke.data.resolvedWaterPrice
-import cn.edu.gzus.qingke.data.waterYuan
+import cn.edu.gzus.qingke.data.utilityBrief
 import cn.edu.gzus.qingke.nav.QingkeNavigator
 import cn.edu.gzus.qingke.nav.TabDest
-import cn.edu.gzus.qingke.ui.components.EmptyHint
 import cn.edu.gzus.qingke.ui.components.InfoCard
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
@@ -45,6 +43,7 @@ import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
+import kotlinx.coroutines.delay
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 @Composable
@@ -60,8 +59,8 @@ fun UtilityScreen(
     onSaveBind: (UtilityBind) -> Unit,
     onSavePrice: (Boolean, Double, Double) -> Unit,
     onRefresh: () -> Unit,
+    onPeekBind: () -> Unit = {},
 ) {
-    val utility = snapshot.utility
     val bind = snapshot.settings.resolvedUtilityBind()
     val waterPrice = snapshot.settings.resolvedWaterPrice()
     val electricPrice = snapshot.settings.resolvedElectricPrice()
@@ -72,14 +71,24 @@ fun UtilityScreen(
     var electricText by remember(snapshot.settings.utilityElectricPrice) {
         mutableStateOf(snapshot.settings.utilityElectricPrice.toString())
     }
-    var picking by remember { mutableStateOf<String?>(null) }
-    var roomFilter by remember { mutableStateOf("") }
-    val powerYuan = utility.powerYuan(electricPrice)
-    val waterYuan = utility.waterYuan(waterPrice)
-    val shown = if (picking == "room" && roomFilter.isNotBlank()) {
-        options.filter { it.name.contains(roomFilter) || it.id.contains(roomFilter) }
-    } else {
-        options
+    var query by remember { mutableStateOf("") }
+    var searching by remember { mutableStateOf(false) }
+    val bound = snapshot.settings.hasUtilityBind()
+    val shown = options.take(100)
+    LaunchedEffect(snapshot.session.loggedIn, bound) {
+        if (snapshot.session.loggedIn && snapshot.settings.gzusUsesCas() && !bound) {
+            onPeekBind()
+        }
+    }
+    LaunchedEffect(query, searching, bound) {
+        if (bound && !searching) return@LaunchedEffect
+        val q = query.trim()
+        if (q.isBlank()) {
+            onLoadOptions("clear", "")
+            return@LaunchedEffect
+        }
+        delay(400)
+        onLoadOptions("search", q)
     }
     Column(
         modifier = Modifier
@@ -90,7 +99,7 @@ fun UtilityScreen(
     ) {
         Spacer(Modifier.height(8.dp))
         Text(
-            "宿舍从一卡通目录里选：校区、楼栋、楼层、房间。不用手填编号。",
+            "绑定后可查看电费、冷水和热水余额。",
             modifier = Modifier.padding(horizontal = 16.dp),
             color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
             style = MiuixTheme.textStyles.body2,
@@ -98,150 +107,104 @@ fun UtilityScreen(
         Spacer(Modifier.height(12.dp))
         if (!snapshot.settings.gzusUsesCas()) {
             InfoCard(
-                title = "还不能同步水电",
+                title = "还不能看水电",
                 summary = "「我的」里用统一身份认证登录。",
                 modifier = Modifier.padding(horizontal = 16.dp),
                 onClick = { nav.goTab(TabDest.Mine) },
             )
         } else if (!snapshot.session.loggedIn) {
             InfoCard(
-                title = "还没有水电数据",
-                summary = "登录门户后才能拉宿舍列表。",
+                title = "未绑定宿舍",
+                summary = "登录后再搜索宿舍。",
                 modifier = Modifier.padding(horizontal = 16.dp),
                 onClick = { nav.goTab(TabDest.Mine) },
             )
-        } else if (!utility.ready) {
-            EmptyHint(utility.error.ifBlank { "先选宿舍，再同步水电" })
         } else {
-            Column(
+            InfoCard(
+                title = if (!bound) "未绑定宿舍" else bind.label.ifBlank { "已绑定宿舍" },
+                summary = if (!bound) "搜索并选择你的宿舍" else snapshot.utilityBrief(),
                 modifier = Modifier.padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                height = null,
+            )
+        }
+        SmallTitle(text = "宿舍")
+        if (bound && !searching) {
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                insideMargin = PaddingValues(0.dp),
             ) {
-                InfoCard(
-                    title = bind.label.ifBlank { listOf(utility.building, utility.room).filter { it.isNotBlank() }.joinToString(" ") }.ifBlank { "已绑定宿舍" },
-                    summary = buildString {
-                        if (utility.power.isNotBlank()) {
-                            append("电 ${utility.power} 度")
-                            if (powerYuan != null) append(" · 约 ${formatMoney(powerYuan)} 元")
-                            append('\n')
-                        }
-                        val waters = listOfNotNull(
-                            utility.coldWater.takeIf { it.isNotBlank() }?.let { "冷水 $it 吨" },
-                            utility.hotWater.takeIf { it.isNotBlank() }?.let { "热水 $it 吨" },
-                        )
-                        if (waters.isNotEmpty()) {
-                            append(waters.joinToString(" / "))
-                            if (waterYuan != null) append(" · 约 ${formatMoney(waterYuan)} 元")
-                        }
-                    }.ifBlank { "已同步，还没有读到度数" },
-                    height = null,
+                ArrowPreference(
+                    title = "已绑定：${bind.label}",
+                    summary = "点更换宿舍重新搜索",
+                    onClick = { searching = true },
                 )
             }
-        }
-        SmallTitle(text = "选择宿舍")
-        Card(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            insideMargin = PaddingValues(0.dp),
-        ) {
-            ArrowPreference(
-                title = "校区",
-                summary = bind.areaName.ifBlank { "从目录里选" },
-                onClick = {
-                    picking = if (picking == "area") null else "area"
-                    roomFilter = ""
-                    if (picking == "area") onLoadOptions("area", "")
-                },
-            )
-            ArrowPreference(
-                title = "楼栋",
-                summary = bind.buildingName.ifBlank { if (bind.areaId.isBlank()) "先选校区" else "从目录里选" },
-                onClick = {
-                    if (bind.areaId.isBlank() && bind.areaName.isBlank()) return@ArrowPreference
-                    picking = if (picking == "building") null else "building"
-                    roomFilter = ""
-                    if (picking == "building") onLoadOptions("building", bind.areaId.ifBlank { bind.areaName })
-                },
-            )
-            ArrowPreference(
-                title = "楼层",
-                summary = bind.floorName.ifBlank { if (bind.buildingId.isBlank() && bind.buildingName.isBlank()) "先选楼栋" else "从目录里选" },
-                onClick = {
-                    if (bind.buildingId.isBlank() && bind.buildingName.isBlank()) return@ArrowPreference
-                    picking = if (picking == "floor") null else "floor"
-                    roomFilter = ""
-                    if (picking == "floor") onLoadOptions("floor", bind.buildingId.ifBlank { bind.buildingName })
-                },
-            )
-            ArrowPreference(
-                title = "房间",
-                summary = bind.roomName.ifBlank { if (bind.floorId.isBlank() && bind.floorName.isBlank()) "先选楼层" else "从目录里选" },
-                onClick = {
-                    if (bind.floorId.isBlank() && bind.floorName.isBlank()) return@ArrowPreference
-                    picking = if (picking == "room") null else "room"
-                    roomFilter = ""
-                    if (picking == "room") onLoadOptions("room", bind.floorId.ifBlank { bind.floorName })
-                },
-            )
-        }
-        if (picking != null) {
             Spacer(Modifier.height(8.dp))
-            if (picking == "room") {
-                TextField(
-                    value = roomFilter,
-                    onValueChange = { roomFilter = it },
-                    label = "在列表里筛选房间",
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                )
+            Button(
+                onClick = { searching = true },
+                enabled = snapshot.session.loggedIn,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                minHeight = 44.dp,
+            ) { Text("更换宿舍") }
+        } else {
+            TextField(
+                value = query,
+                onValueChange = { query = it },
+                label = "输入楼栋或房间号搜索",
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            )
+            if (bound) {
                 Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        searching = false
+                        query = ""
+                        onLoadOptions("clear", "")
+                    },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    minHeight = 44.dp,
+                ) { Text("取消") }
             }
+            Spacer(Modifier.height(8.dp))
             Card(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                 insideMargin = PaddingValues(0.dp),
             ) {
                 when {
-                    optionsBusy -> ArrowPreference(title = "正在加载目录", summary = "一卡通宿舍列表", onClick = {})
-                    !optionsError.isNullOrBlank() -> ArrowPreference(title = "目录没加载出来", summary = optionsError, onClick = {
-                        val parent = when (picking) {
-                            "building" -> bind.areaId.ifBlank { bind.areaName }
-                            "floor" -> bind.buildingId.ifBlank { bind.buildingName }
-                            "room" -> bind.floorId.ifBlank { bind.floorName }
-                            else -> ""
-                        }
-                        onLoadOptions(picking ?: "area", parent)
-                    })
-                    shown.isEmpty() -> ArrowPreference(title = "这一层没有选项", summary = "换上一层再试，或打开一卡通核对", onClick = { openUrl(GZUS_ECARD_ORIGIN) })
+                    optionsBusy -> ArrowPreference(title = "正在搜索", summary = query.trim(), onClick = {})
+                    !optionsError.isNullOrBlank() -> ArrowPreference(
+                        title = optionsError ?: "宿舍列表加载失败",
+                        summary = "换个楼栋或房间号再搜",
+                        onClick = {},
+                    )
+                    query.isBlank() -> ArrowPreference(
+                        title = "请输入关键词搜索宿舍",
+                        summary = "搜索并选择你的宿舍",
+                        onClick = {},
+                    )
+                    shown.isEmpty() -> ArrowPreference(title = "未找到宿舍", summary = "换个楼栋或房间号再搜", onClick = {})
                     else -> shown.forEach { item ->
                         ArrowPreference(
                             title = item.name,
-                            summary = when {
-                                bindLevelSelected(bind, item) -> "当前"
-                                else -> item.id.takeIf { it.isNotBlank() && it != item.name }.orEmpty()
-                            }.ifBlank { "点选" },
+                            summary = listOf(item.areaName, item.buildingName, item.roomName)
+                                .filter { it.isNotBlank() && it != item.name }
+                                .joinToString(" ")
+                                .ifBlank { "点选绑定" },
                             onClick = {
-                                val next = when (picking) {
-                                    "area" -> UtilityBind(areaId = item.id, areaName = item.name)
-                                    "building" -> bind.copy(
-                                        buildingId = item.id,
-                                        buildingName = item.name,
-                                        floorId = "",
-                                        floorName = "",
-                                        roomId = "",
-                                        roomName = "",
-                                    )
-                                    "floor" -> bind.copy(
-                                        floorId = item.id,
-                                        floorName = item.name,
-                                        roomId = "",
-                                        roomName = "",
-                                    )
-                                    else -> bind.copy(roomId = item.id, roomName = item.name)
-                                }
-                                onSaveBind(next)
-                                val after = picking
-                                picking = null
-                                roomFilter = ""
-                                if (after == "room") onRefresh()
+                                onSaveBind(
+                                    UtilityBind(
+                                        areaId = item.areaId,
+                                        areaName = item.areaName,
+                                        buildingId = item.buildingId,
+                                        buildingName = item.buildingName.ifBlank { item.buildingId },
+                                        roomId = item.roomId.ifBlank { item.id },
+                                        roomName = item.roomName.ifBlank { item.name },
+                                    ),
+                                )
+                                searching = false
+                                query = ""
+                                onRefresh()
                             },
                         )
                     }
@@ -312,7 +275,3 @@ fun UtilityScreen(
         ) { Text("打开一卡通") }
     }
 }
-
-private fun bindLevelSelected(bind: UtilityBind, item: UtilityOption): Boolean =
-    item.id == bind.areaId || item.id == bind.buildingId || item.id == bind.floorId || item.id == bind.roomId ||
-        item.name == bind.areaName || item.name == bind.buildingName || item.name == bind.floorName || item.name == bind.roomName

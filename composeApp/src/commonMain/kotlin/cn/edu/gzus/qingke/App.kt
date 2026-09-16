@@ -26,6 +26,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import cn.edu.gzus.qingke.data.AppRepository
 import cn.edu.gzus.qingke.data.AppUpdate
+import cn.edu.gzus.qingke.data.CoursePickOffer
+import cn.edu.gzus.qingke.data.CoursePickScope
+import cn.edu.gzus.qingke.data.CoursePickSection
+import cn.edu.gzus.qingke.data.ScheduleShift
 import cn.edu.gzus.qingke.data.DRIVE_UPDATE_URL
 import cn.edu.gzus.qingke.data.FreeRoom
 import cn.edu.gzus.qingke.data.LeaveForm
@@ -33,7 +37,10 @@ import cn.edu.gzus.qingke.data.UtilityOption
 import cn.edu.gzus.qingke.data.GITHUB_RELEASES_URL
 import cn.edu.gzus.qingke.data.GZUS_LOGIN_CAS
 import cn.edu.gzus.qingke.data.JwxtNeedFirstLogin
+import cn.edu.gzus.qingke.data.gzusUsesCas
+import cn.edu.gzus.qingke.data.hasUtilityBind
 import cn.edu.gzus.qingke.data.friendlyNetworkMessage
+import cn.edu.gzus.qingke.data.isSessionLost
 import cn.edu.gzus.qingke.data.resolved
 import cn.edu.gzus.qingke.data.cancelLiveClass
 import cn.edu.gzus.qingke.data.mondayOf
@@ -43,6 +50,7 @@ import cn.edu.gzus.qingke.data.openXiaoaiSchedule
 import cn.edu.gzus.qingke.data.requestLiveUpdatePermission
 import cn.edu.gzus.qingke.data.resetLiveDismiss
 import cn.edu.gzus.qingke.data.resolveCourseDetail
+import cn.edu.gzus.qingke.data.shiftConflict
 import cn.edu.gzus.qingke.data.teachingWeekFromStart
 import cn.edu.gzus.qingke.data.termStartFromCurrentWeek
 import cn.edu.gzus.qingke.nav.QingkeNavigator
@@ -57,17 +65,21 @@ import cn.edu.gzus.qingke.ui.grades.GradesScreen
 import cn.edu.gzus.qingke.ui.hub.EmptyRoomScreen
 import cn.edu.gzus.qingke.ui.hub.ExamsScreen
 import cn.edu.gzus.qingke.ui.hub.NoticesScreen
+import cn.edu.gzus.qingke.ui.jwxt.CoursePickScreen
 import cn.edu.gzus.qingke.ui.jwxt.HallScreen
 import cn.edu.gzus.qingke.ui.jwxt.JwxtScreen
 import cn.edu.gzus.qingke.ui.jwxt.LeaveScreen
 import cn.edu.gzus.qingke.ui.jwxt.UtilityScreen
 import cn.edu.gzus.qingke.ui.jwxt.XiaoaiImportScreen
+import cn.edu.gzus.qingke.ui.mine.CourseAliasesScreen
 import cn.edu.gzus.qingke.ui.mine.MineScreen
+import cn.edu.gzus.qingke.ui.mine.ScheduleShiftsScreen
 import cn.edu.gzus.qingke.ui.timetable.TimetableScreen
 import cn.edu.gzus.qingke.ui.today.TodayScreen
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.datetime.Clock
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Scaffold
@@ -105,10 +117,64 @@ fun App() {
         var update by remember { mutableStateOf<AppUpdate?>(null) }
         var updateBusy by remember { mutableStateOf(false) }
         var updateError by remember { mutableStateOf<String?>(null) }
+        var pickScopes by remember { mutableStateOf<List<CoursePickScope>>(emptyList()) }
+        var pickOffers by remember { mutableStateOf<List<CoursePickOffer>>(emptyList()) }
+        var pickSections by remember { mutableStateOf<List<CoursePickSection>>(emptyList()) }
+        var pickChosen by remember { mutableStateOf<List<CoursePickOffer>>(emptyList()) }
+        var pickScopesBusy by remember { mutableStateOf(false) }
+        var pickSearchBusy by remember { mutableStateOf(false) }
+        var pickSectionsBusy by remember { mutableStateOf(false) }
+        var pickError by remember { mutableStateOf<String?>(null) }
+
+        fun toast(message: String) {
+            scope.launch { snackbar.showSnackbar(message) }
+        }
+
+        fun runJob(block: suspend () -> Unit) {
+            scope.launch {
+                busy = true
+                runCatching { block() }
+                    .onFailure { failed ->
+                        if (failed is JwxtNeedFirstLogin) {
+                            firstLogin = true
+                            loginError = failed.message
+                        } else {
+                            loginError = failed.friendlyNetworkMessage()
+                            toast(loginError ?: "操作失败")
+                        }
+                    }
+                busy = false
+            }
+        }
 
         LaunchedEffect(snapshot.session.loggedIn) {
             if (snapshot.session.loggedIn) {
-                runCatching { repo.syncCalendar() }
+                runCatching { repo.checkSession() }
+                    .onFailure { failed ->
+                        val message = failed.friendlyNetworkMessage()
+                        if (isSessionLost(message)) {
+                            loginError = message
+                            toast(message)
+                        }
+                    }
+                if (repo.state.value.session.loggedIn) {
+                    if (repo.state.value.settings.autoSyncOnStart) {
+                        runCatching { repo.sync() }
+                            .onFailure { failed ->
+                                val message = failed.friendlyNetworkMessage()
+                                if (isSessionLost(message)) {
+                                    loginError = message
+                                    toast(message)
+                                }
+                            }
+                    } else {
+                        runCatching { repo.syncCalendar() }
+                        val now = repo.state.value
+                        if (now.settings.gzusUsesCas() && !now.settings.hasUtilityBind()) {
+                            runCatching { repo.syncUtility() }
+                        }
+                    }
+                }
             }
         }
 
@@ -122,6 +188,31 @@ fun App() {
             runCatching { repo.syncHolidays() }
         }
 
+        val pickSignal = snapshot.settings.coursePickQueue
+            .filter { it.status == "waiting" && it.fireAt > 0L }
+            .joinToString { "${it.id}:${it.fireAt}" }
+        LaunchedEffect(pickSignal, snapshot.session.loggedIn) {
+            if (!snapshot.session.loggedIn || pickSignal.isBlank()) return@LaunchedEffect
+            while (isActive) {
+                val waiting = repo.state.value.settings.coursePickQueue
+                    .filter { it.status == "waiting" && it.fireAt > 0L }
+                if (waiting.isEmpty()) break
+                val wait = waiting.minOf { it.fireAt } - Clock.System.now().toEpochMilliseconds()
+                if (wait > 0) {
+                    delay(wait.coerceAtMost(15_000))
+                    continue
+                }
+                runCatching { repo.runDueCoursePicks() }
+                    .onSuccess { lines -> lines.forEach { line -> toast(line) } }
+                    .onFailure { failed ->
+                        val message = failed.friendlyNetworkMessage()
+                        if (isSessionLost(message)) loginError = message
+                        toast(message)
+                        break
+                    }
+            }
+        }
+
         LaunchedEffect(snapshot.settings.remindBeforeClass, snapshot.settings.remindLeadMinutes, snapshot.slots, snapshot.settings.currentWeek, snapshot.settings.termStart, liveTick) {
             if (snapshot.settings.remindBeforeClass) requestLiveUpdatePermission()
             while (isActive) {
@@ -132,27 +223,6 @@ fun App() {
                     break
                 }
                 delay(if (live || testing) 15_000 else 60_000)
-            }
-        }
-
-        fun toast(message: String) {
-            scope.launch { snackbar.showSnackbar(message) }
-        }
-
-        fun runJob(block: suspend () -> Unit) {
-            scope.launch {
-                busy = true
-                runCatching { block() }
-                    .onFailure { error ->
-                        if (error is JwxtNeedFirstLogin) {
-                            firstLogin = true
-                            loginError = error.message
-                        } else {
-                            loginError = error.friendlyNetworkMessage()
-                            toast(loginError ?: "操作失败")
-                        }
-                    }
-                busy = false
             }
         }
 
@@ -274,6 +344,10 @@ fun App() {
                                 toast("已同步")
                             }
                         },
+                        onToggleAutoSync = { on ->
+                            repo.updateSettings { it.copy(autoSyncOnStart = on) }
+                            toast(if (on) "已打开启动自动同步" else "已关闭启动自动同步")
+                        },
                         onToggleRemind = { on ->
                             repo.updateSettings { it.copy(remindBeforeClass = on) }
                             if (on) {
@@ -306,20 +380,6 @@ fun App() {
                                 )
                             }
                             repo.refreshLive()
-                        },
-                        onSaveAlias = { courseId, courseName, alias ->
-                            repo.updateSettings { settings ->
-                                val map = settings.courseAliases.toMutableMap()
-                                val key = courseId.ifBlank { courseName }
-                                if (alias.isBlank()) {
-                                    map.remove(courseId)
-                                    map.remove(courseName)
-                                    map.remove(key)
-                                } else {
-                                    map[key] = alias.trim().take(4)
-                                }
-                                settings.copy(courseAliases = map)
-                            }
                         },
                         onLogout = {
                             runJob {
@@ -409,6 +469,9 @@ fun App() {
                             is Route.Course -> CourseDetailScreen(
                                 detail = resolveCourseDetail(snapshot, current.courseId),
                                 contentPadding = padding,
+                                hasClock = snapshot.resolved().hasPeriodClock,
+                                settings = snapshot.settings,
+                                today = nowDateTime().date,
                             )
                             is Route.EmptyRoom -> EmptyRoomScreen(
                                 snapshot = snapshot,
@@ -473,18 +536,27 @@ fun App() {
                                 optionsBusy = utilityOptionsBusy,
                                 optionsError = utilityOptionsError,
                                 onLoadOptions = { level, parentId ->
-                                    scope.launch {
-                                        utilityOptionsBusy = true
+                                    if (level == "clear" || parentId.isBlank()) {
+                                        utilityOptions = emptyList()
                                         utilityOptionsError = null
-                                        runCatching { repo.listUtilityOptions(level, parentId) }
-                                            .onSuccess { utilityOptions = it }
-                                            .onFailure { utilityOptionsError = it.message }
                                         utilityOptionsBusy = false
+                                    } else {
+                                        scope.launch {
+                                            utilityOptions = emptyList()
+                                            utilityOptionsBusy = true
+                                            utilityOptionsError = null
+                                            runCatching { repo.listUtilityOptions(level, parentId) }
+                                                .onSuccess { utilityOptions = it }
+                                                .onFailure { utilityOptionsError = it.message }
+                                            utilityOptionsBusy = false
+                                        }
                                     }
                                 },
                                 onSaveBind = { bind ->
                                     repo.saveUtilityBind(bind)
-                                    toast(if (bind.roomName.isNotBlank()) "已选 ${bind.label}" else "已选 ${bind.label}")
+                                    utilityOptions = emptyList()
+                                    utilityOptionsError = null
+                                    toast("已绑定 ${bind.label}")
                                 },
                                 onSavePrice = { useCustom, water, electric ->
                                     repo.saveUtilityPrice(useCustom, water, electric)
@@ -496,6 +568,9 @@ fun App() {
                                         toast("水电已同步")
                                     }
                                 },
+                                onPeekBind = {
+                                    scope.launch { runCatching { repo.syncUtility() } }
+                                },
                             )
                             is Route.Notices -> NoticesScreen(
                                 snapshot = snapshot,
@@ -504,6 +579,130 @@ fun App() {
                                     scope.launch {
                                         runCatching { repo.loadNoticeBody(id) }
                                             .onFailure { toast(it.message ?: "通知正文加载失败") }
+                                    }
+                                },
+                            )
+                            is Route.ScheduleShifts -> ScheduleShiftsScreen(
+                                snapshot = snapshot,
+                                contentPadding = padding,
+                                onAdd = { from, to ->
+                                    val conflict = snapshot.settings.shiftConflict(from, to)
+                                    if (conflict != null) return@ScheduleShiftsScreen conflict
+                                    repo.updateSettings { settings ->
+                                        settings.copy(
+                                            scheduleShifts = settings.scheduleShifts + ScheduleShift(
+                                                id = "${from}>${to}",
+                                                fromDate = from.toString(),
+                                                toDate = to.toString(),
+                                            ),
+                                        )
+                                    }
+                                    toast("已保存调课")
+                                    null
+                                },
+                                onRemove = { id ->
+                                    repo.updateSettings { settings ->
+                                        settings.copy(scheduleShifts = settings.scheduleShifts.filterNot { it.id == id })
+                                    }
+                                    toast("已删除调课")
+                                },
+                            )
+                            is Route.CourseAliases -> CourseAliasesScreen(
+                                snapshot = snapshot,
+                                contentPadding = padding,
+                                onSaveAlias = { courseId, courseName, alias ->
+                                    repo.updateSettings { settings ->
+                                        val map = settings.courseAliases.toMutableMap()
+                                        val key = courseId.ifBlank { courseName }
+                                        if (alias.isBlank()) {
+                                            map.remove(courseId)
+                                            map.remove(courseName)
+                                            map.remove(key)
+                                        } else {
+                                            map[key] = alias.trim().take(4)
+                                        }
+                                        settings.copy(courseAliases = map)
+                                    }
+                                    toast(if (alias.isBlank()) "已恢复默认缩写" else "已保存缩写")
+                                },
+                            )
+                            is Route.CoursePick -> CoursePickScreen(
+                                snapshot = snapshot,
+                                nav = nav,
+                                contentPadding = padding,
+                                busy = busy,
+                                scopes = pickScopes,
+                                offers = pickOffers,
+                                sections = pickSections,
+                                picked = pickChosen,
+                                scopesBusy = pickScopesBusy,
+                                searchBusy = pickSearchBusy,
+                                sectionsBusy = pickSectionsBusy,
+                                error = pickError,
+                                onLoadScopes = {
+                                    scope.launch {
+                                        pickScopesBusy = true
+                                        pickError = null
+                                        runCatching { repo.loadCoursePickScopes() }
+                                            .onSuccess { list ->
+                                                pickScopes = list
+                                                pickChosen = emptyList()
+                                                list.firstOrNull()?.let { first ->
+                                                    runCatching { repo.loadCoursePicked(first) }
+                                                        .onSuccess { pickChosen = it }
+                                                }
+                                            }
+                                            .onFailure { pickError = it.friendlyNetworkMessage() }
+                                        pickScopesBusy = false
+                                    }
+                                },
+                                onSearch = { item, keyword ->
+                                    scope.launch {
+                                        pickSearchBusy = true
+                                        pickError = null
+                                        pickSections = emptyList()
+                                        runCatching { repo.searchCoursePicks(item, keyword) }
+                                            .onSuccess { pickOffers = it }
+                                            .onFailure { failed ->
+                                                pickOffers = emptyList()
+                                                pickError = failed.friendlyNetworkMessage()
+                                            }
+                                        pickSearchBusy = false
+                                    }
+                                },
+                                onOpenSections = { offer ->
+                                    scope.launch {
+                                        pickSectionsBusy = true
+                                        pickSections = emptyList()
+                                        runCatching { repo.loadCoursePickSections(offer) }
+                                            .onSuccess { pickSections = it }
+                                            .onFailure { pickError = it.friendlyNetworkMessage() }
+                                        pickSectionsBusy = false
+                                    }
+                                },
+                                onSelectNow = { offer, section ->
+                                    runJob {
+                                        val message = repo.selectCourseNow(offer, section)
+                                        toast(message)
+                                    }
+                                },
+                                onQueue = { offer, section ->
+                                    repo.queueCoursePick(offer, section)
+                                    toast("已加入队列")
+                                },
+                                onSchedule = { id, fireAt ->
+                                    runCatching { repo.scheduleCoursePick(id, fireAt) }
+                                        .onSuccess { toast("已设定到点自动选") }
+                                        .onFailure { toast(it.message ?: "时间不对") }
+                                },
+                                onRemove = { id ->
+                                    repo.removeCoursePick(id)
+                                    toast("已移出队列")
+                                },
+                                onRunQueued = { id ->
+                                    runJob {
+                                        val message = repo.runQueuedCoursePick(id)
+                                        toast(message)
                                     }
                                 },
                             )
@@ -546,5 +745,8 @@ private fun routeTitle(route: Route): String = when (route) {
     is Route.Leave -> "请假"
     is Route.Utility -> "宿舍水电"
     is Route.XiaoaiImport -> "导入小爱"
+    is Route.CourseAliases -> "课表缩写"
+    is Route.ScheduleShifts -> "调课"
+    is Route.CoursePick -> "选课"
     is Route.Tab -> "青课"
 }

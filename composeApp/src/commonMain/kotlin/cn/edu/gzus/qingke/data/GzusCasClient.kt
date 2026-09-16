@@ -1,6 +1,8 @@
 package cn.edu.gzus.qingke.data
 
 import io.ktor.client.HttpClient
+import io.ktor.client.plugins.ResponseException
+import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.forms.submitForm
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -10,9 +12,12 @@ import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.client.statement.request
 import io.ktor.http.ContentType
+import io.ktor.http.Cookie
 import io.ktor.http.HttpHeaders
 import io.ktor.http.Parameters
+import io.ktor.http.Url
 import io.ktor.http.contentType
+import io.ktor.http.decodeURLQueryComponent
 import kotlinx.datetime.Clock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -28,11 +33,14 @@ private const val UA =
 
 class GzusCasClient(
     private val client: HttpClient = createHttpClient(),
+    private val publicClient: HttpClient = createBareHttpClient(),
     private val jwxt: JwxtClient = JwxtClient(origin = JWXT_ORIGIN, client = client),
 ) : SchoolPortal by jwxt {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val cas = GZUS_CAS_ORIGIN.trimEnd('/')
     private val ehall = GZUS_EHALL_ORIGIN.trimEnd('/')
+    private var cachedTgt = ""
+    private var roomCatalog: List<EcardRoomRow> = emptyList()
 
     override suspend fun fetchCaptcha(): LoginCaptcha? {
         client.get("$cas/login") {
@@ -56,6 +64,8 @@ class GzusCasClient(
         captcha: String,
         captchaId: String,
     ): Result<Unit> = runCatching {
+        cachedTgt = ""
+        roomCatalog = emptyList()
         if (captcha.isBlank() || captchaId.isBlank()) error("统一身份认证要先填验证码")
         val encrypted = lyuapEncrypt(password, LYUAP_MOD, LYUAP_EXP)
         val raw = client.submitForm(
@@ -75,21 +85,22 @@ class GzusCasClient(
         }.bodyAsText()
         if (isCasFirstLogin(raw)) throw JwxtNeedFirstLogin()
         val tickets = parseCasTickets(raw, json)
-        consumeJwxtTicket(tickets.serviceTicket)
-        val tgt = tickets.ticketGrantingTicket.ifBlank { tgtFromCookies() }
-        if (tgt.startsWith("TGT-")) {
-            runCatching { openEhall(tgt) }.onFailure { error ->
-                if (error is JwxtNeedFirstLogin) throw error
-            }
-            runCatching { openEcard(tgt) }.onFailure { error ->
-                if (error is JwxtNeedFirstLogin) throw error
-            }
+        rememberTgt(tickets.ticketGrantingTicket.ifBlank { tgtFromCookies() })
+        val st = tickets.serviceTicket.ifBlank {
+            val tgt = currentTgt()
+            if (tgt.startsWith("TGT-")) requestServiceTicket(tgt, GZUS_JWXT_SSO_SERVICE)
+            else error("门户没有返回票据")
         }
+        if (!st.startsWith("ST-")) error("门户没有返回票据")
+        consumeJwxtTicket(st)
     }
 
     override suspend fun fetchHall(): HallSnapshot {
+        ensureEhall()
         runCatching { tryLoginEhall() }
-        val userName = runCatching { hallUserName() }.getOrDefault("")
+        val nameRoot = runCatching { hallGet("api/authc/users/name") }.getOrNull()
+        if (nameRoot != null && hallDenied(nameRoot)) error(SESSION_LOST_HINT)
+        val userName = runCatching { hallUserName(nameRoot) }.getOrDefault("")
         val pending = runCatching { hallTodos("api/bpm/processes/tasks/pending", "待办") }.getOrDefault(emptyList())
         val apply = runCatching { hallTodos("api/bpm/processes/tasks/apply", "申请") }.getOrDefault(emptyList())
         val messages = runCatching { hallMessages() }.getOrDefault(emptyList())
@@ -115,11 +126,12 @@ class GzusCasClient(
             affairs = apps,
             events = events,
             leaves = leaves,
-            error = if (ready) "" else "这次门户没给办事大厅票据，重新用统一身份认证登录一次",
+            error = if (ready) "" else "办事大厅这次是空的",
         )
     }
 
     override suspend fun fetchLeaveForm(affairId: String): LeaveForm {
+        ensureEhall()
         runCatching { tryLoginEhall() }
         val affairs = runCatching { hallAffairs("api/affair/uis/affairs") }.getOrDefault(emptyList()) +
             runCatching { hallAffairs("api/affair/uis/affairs/often") }.getOrDefault(emptyList())
@@ -161,6 +173,7 @@ class GzusCasClient(
     }
 
     override suspend fun submitLeave(form: LeaveForm, values: Map<String, String>): String {
+        ensureEhall()
         runCatching { tryLoginEhall() }
         val filled = values.filterValues { it.isNotBlank() }
         if (filled.isEmpty()) error("先填请假时间和事由")
@@ -170,85 +183,103 @@ class GzusCasClient(
             .orEmpty()
             .ifBlank { root.lyuapStr("message") }
             .ifBlank { root.lyuapStr("msg") }
-        return message.ifBlank { "请假已提交" }
+        return message.takeUnless { isCasEnvelopeMessage(it) }.orEmpty().ifBlank { "请假已提交" }
     }
 
-    override suspend fun fetchUtility(bind: UtilityBind): UtilitySnapshot {
-        ensureEcard()
-        val member = runCatching { ecardJson("waterfee/memberInfo", "{}") }.getOrNull()
-        if (member != null && ecardDenied(member)) {
-            return UtilitySnapshot(error = "一卡通没登录上。用统一身份认证再登一次")
+    override suspend fun fetchUtility(bind: UtilityBind, sno: String): UtilitySnapshot {
+        runCatching { ensureEcard() }
+        val member = runCatching { ecardMemberRoot() }.getOrNull()?.ecardMemberBag()
+        val ecardBind = member?.toUtilityBind() ?: UtilityBind()
+        val used = mergeUtilityBind(bind, ecardBind)
+        if (!used.hasRoom()) {
+            return UtilitySnapshot(error = "未绑定宿舍")
         }
-        val bag = member?.hallBag() ?: JsonObject(emptyMap())
-        val buildingName = bind.buildingName.ifBlank {
-            bag.pick("buildingNo", "building", "buildingName", "loudong", "areaName")
-        }
-        val roomName = bind.roomName.ifBlank {
-            bag.pick("roomNo", "room", "roomName", "roomId", "ssbh")
-        }
-        var power = bag.pick("powerBalance", "remainPower", "electricity", "power", "elecBalance", "surplus")
-        var cold = bag.pick("coldWaterBalance", "coldWater", "cold", "waterBalance")
-        var hot = bag.pick("hotWaterBalance", "hotWater", "hot")
-        if (power.isBlank() || (cold.isBlank() && hot.isBlank())) {
-            val payload = buildEcardRoomBody(bind, bag)
-            if (power.isBlank()) {
-                val info = runCatching { ecardJson("powerfee/getRoomInfo", payload) }.getOrNull()?.hallBag()
-                val balance = runCatching { ecardJson("powerfee/getBalance", payload) }.getOrNull()?.hallBag()
-                power = power.ifBlank {
-                    listOf(info, balance).firstNotNullOfOrNull { obj ->
-                        obj?.pick("powerBalance", "remainPower", "electricity", "power", "surplus", "mdye", "remain")
-                    }.orEmpty()
-                }
-            }
-            if (cold.isBlank() && hot.isBlank()) {
-                val water = runCatching { ecardJson("waterfee/getBalance", payload) }.getOrNull()?.hallBag()
-                cold = cold.ifBlank { water?.pick("coldWaterBalance", "coldWater", "cold", "waterBalance").orEmpty() }
-                hot = hot.ifBlank { water?.pick("hotWaterBalance", "hotWater", "hot").orEmpty() }
+        val catalog = runCatching { loadRoomCatalog() }.getOrDefault(emptyList())
+        val row = catalog.firstOrNull { it.matchesBind(used) }
+        val query = UtilityBind(
+            areaId = row?.areaId.orEmpty().ifBlank { used.areaId },
+            areaName = used.areaName.ifBlank { row?.areaName.orEmpty() },
+            buildingId = row?.buildingId.orEmpty().ifBlank { used.buildingId },
+            buildingName = used.buildingName.ifBlank { row?.buildingName.orEmpty() },
+            roomId = row?.roomId.orEmpty().ifBlank { used.roomId },
+            roomName = used.roomName.ifBlank { row?.roomName.orEmpty() },
+        )
+        var power = ""
+        var cold = ""
+        var hot = ""
+        val fields = ecardBalanceFields(query)
+        if (fields.isNotEmpty()) {
+            for (root in fetchEcardBalance(fields)) {
+                val found = pickUtilityTriple(root)
+                power = power.ifBlank { found.power }
+                cold = cold.ifBlank { found.cold }
+                hot = hot.ifBlank { found.hot }
+                if (power.isNotBlank() && cold.isNotBlank()) break
             }
         }
+        power = power.ifBlank { row?.power.orEmpty() }
         val ready = power.isNotBlank() || cold.isNotBlank() || hot.isNotBlank()
         return UtilitySnapshot(
             ready = ready,
-            building = listOf(bind.areaName, buildingName).filter { it.isNotBlank() }.joinToString(" "),
-            room = listOf(bind.floorName, roomName).filter { it.isNotBlank() }.joinToString(" "),
+            building = listOf(used.areaName, used.buildingName.ifBlank { row?.buildingName.orEmpty() }).filter { it.isNotBlank() }.joinToString(" "),
+            room = listOf(used.floorName, used.roomName.ifBlank { row?.roomName.orEmpty() }).filter { it.isNotBlank() }.joinToString(" "),
             power = power,
             coldWater = cold,
             hotWater = hot,
-            error = if (ready) "" else "宿舍水电还没查到。在水电页按校区、楼栋、楼层、房间选一次",
+            error = if (ready) "" else "查询失败",
+            bind = used,
         )
     }
 
     override suspend fun fetchUtilityOptions(level: String, parentId: String): List<UtilityOption> {
-        ensureEcard()
-        val path = when (level) {
-            "building" -> "powerfee/queryBuilding"
-            "floor" -> "powerfee/queryFloor"
-            "room" -> "powerfee/queryRoom"
-            else -> "powerfee/queryArea"
-        }
-        val keys = when (level) {
-            "building" -> listOf("areaid", "areaId", "aid", "id")
-            "floor" -> listOf("buildingid", "buildingId", "id")
-            "room" -> listOf("floorid", "floorId", "id")
-            else -> emptyList()
-        }
-        val extra = if (parentId.isBlank() || keys.isEmpty()) emptyMap() else keys.associateWith { parentId }
-        val first = ecardQuery(path, extra)
-        if (first.isNotEmpty()) return first
-        val alt = path.replace("powerfee/", "waterfee/")
-        return if (alt != path) ecardQuery(alt, extra) else emptyList()
+        val query = parentId.trim()
+        if (query.isBlank()) error("请输入楼栋或房间号。")
+        val catalog = loadRoomCatalog()
+        if (catalog.isEmpty()) error("宿舍列表加载失败")
+        val hit = catalog.filter { it.matches(query) }
+        if (hit.isEmpty()) error("未找到宿舍")
+        val needle = foldRoomKey(query)
+        return hit.sortedWith(
+            compareBy<EcardRoomRow>(
+                { foldRoomKey(it.roomName) != needle },
+                { !foldRoomKey(it.roomName).startsWith(needle) },
+                { it.display.length },
+            ),
+        ).take(100).map { it.toOption() }
+    }
+
+    suspend fun requireLiveSession() {
+        val tgt = currentTgt()
+        if (!tgt.startsWith("TGT-")) error(SESSION_LOST_HINT)
+        consumeJwxtTicket(requestServiceTicket(tgt, GZUS_JWXT_SSO_SERVICE))
+    }
+
+    private suspend fun ensureEhall() {
+        val tgt = currentTgt()
+        if (!tgt.startsWith("TGT-")) error(SESSION_LOST_HINT)
+        openEhall(tgt)
     }
 
     private suspend fun ensureEcard() {
-        val tgt = tgtFromCookies()
-        if (tgt.startsWith("TGT-")) {
-            runCatching { openEcard(tgt) }.onFailure { error ->
-                if (error is JwxtNeedFirstLogin) throw error
-            }
-        }
+        val tgt = currentTgt()
+        if (!tgt.startsWith("TGT-")) error(SESSION_LOST_HINT)
+        if (ecardMemberRoot() != null) return
+        openEcard(tgt)
+        if (ecardMemberRoot() == null) error(SESSION_LOST_HINT)
+    }
+
+    private suspend fun ecardMemberRoot(): JsonObject? {
+        val root = ecardPost("waterfee/memberInfo")
+        if (ecardDenied(root)) return null
+        return root
+    }
+
+    fun forgetTickets() {
+        cachedTgt = ""
     }
 
     override suspend fun logout() {
+        forgetTickets()
         runCatching { jwxt.logout() }
         runCatching {
             client.get("$ehall/logout") { header(HttpHeaders.UserAgent, UA) }
@@ -282,19 +313,7 @@ class GzusCasClient(
     }
 
     private suspend fun openEhall(tgt: String) {
-        val raw = client.submitForm(
-            url = "$cas/v1/tickets/$tgt",
-            formParameters = Parameters.build {
-                append("service", GZUS_EHALL_CAS_SERVICE)
-                append("loginToken", "loginToken")
-            },
-        ) {
-            header(HttpHeaders.UserAgent, UA)
-            header(HttpHeaders.Referrer, "$cas/login")
-            header(HttpHeaders.Origin, "https://cas.gzus.edu.cn")
-        }.bodyAsText()
-        if (isCasFirstLogin(raw)) throw JwxtNeedFirstLogin()
-        val st = parseServiceTicket(raw)
+        val st = requestServiceTicket(tgt, GZUS_EHALL_CAS_SERVICE)
         val jump = client.get(GZUS_EHALL_CAS_SERVICE) {
             header(HttpHeaders.UserAgent, UA)
             parameter("ticket", st)
@@ -304,27 +323,79 @@ class GzusCasClient(
     }
 
     private suspend fun openEcard(tgt: String) {
+        rememberTgt(tgt)
+        if (ecardMemberRoot() != null) return
         val service = gzusEcardCasService()
-        val raw = client.submitForm(
-            url = "$cas/v1/tickets/$tgt",
-            formParameters = Parameters.build {
-                append("service", service)
-                append("loginToken", "loginToken")
-            },
-        ) {
-            header(HttpHeaders.UserAgent, UA)
-            header(HttpHeaders.Referrer, "$cas/login")
-            header(HttpHeaders.Origin, "https://cas.gzus.edu.cn")
-        }.bodyAsText()
-        if (isCasFirstLogin(raw)) throw JwxtNeedFirstLogin()
-        val st = parseServiceTicket(raw)
-        val jump = client.get(service) {
-            header(HttpHeaders.UserAgent, UA)
-            parameter("ticket", st)
-        }
-        val url = jump.request.url.toString()
-        val body = jump.bodyAsText()
+        val st = requestServiceTicket(tgt, service)
+        val (url, body) = getFollowing(service) { parameter("ticket", st) }
         if (isCasFirstLogin(body, url)) throw JwxtNeedFirstLogin()
+        if (ecardMemberRoot() != null) return
+        getFollowing("$GZUS_ECARD_ORIGIN/")
+        if (ecardMemberRoot() == null) error(SESSION_LOST_HINT)
+    }
+
+    private suspend fun getFollowing(start: String, configure: HttpRequestBuilder.() -> Unit = {}): Pair<String, String> {
+        var url = start
+        var first = true
+        var hops = 0
+        while (hops++ < 8) {
+            val resp = client.get(url) {
+                header(HttpHeaders.UserAgent, UA)
+                if (first) configure()
+            }
+            first = false
+            val loc = resp.headers[HttpHeaders.Location].orEmpty()
+            if (resp.status.value in 300..399 && loc.isNotBlank()) {
+                url = resolveRedirect(resp.request.url.toString(), loc)
+            } else {
+                return resp.request.url.toString() to resp.bodyAsText()
+            }
+        }
+        error("一卡通跳转失败")
+    }
+
+    private suspend fun requestServiceTicket(tgt: String, service: String): String {
+        val raw = try {
+            client.submitForm(
+                url = "$cas/v1/tickets/$tgt",
+                formParameters = Parameters.build {
+                    append("service", service)
+                    append("loginToken", "loginToken")
+                },
+            ) {
+                header(HttpHeaders.UserAgent, UA)
+                header(HttpHeaders.Referrer, "$cas/login")
+                header(HttpHeaders.Origin, "https://cas.gzus.edu.cn")
+            }.bodyAsText()
+        } catch (failed: ResponseException) {
+            if (failed.response.status.value in 400..499) error(SESSION_LOST_HINT)
+            throw failed
+        }
+        if (isCasFirstLogin(raw)) throw JwxtNeedFirstLogin()
+        return parseServiceTicket(raw)
+    }
+
+    private fun extractCasService(url: String, body: String): String? {
+        val fromUrl = runCatching { Url(url).parameters["service"].orEmpty() }.getOrDefault("")
+        if (fromUrl.isNotBlank()) return fromUrl
+        val raw = Regex("""(?:name=["']service["'][^>]*value=["']|[\?&]service=)([^"'&\s]+)""")
+            .find(body)?.groupValues?.get(1).orEmpty()
+            .replace("&amp;", "&")
+        if (raw.isBlank()) return null
+        return runCatching { raw.decodeURLQueryComponent() }.getOrDefault(raw)
+    }
+
+    private fun isEcardLoginPage(body: String): Boolean =
+        body.contains("登录失效") ||
+            (body.contains("lyuapServer/login") && (body.contains("name=\"username\"") || body.contains("id=\"username\"")))
+
+    private fun currentTgt(): String {
+        val fromCookie = tgtFromCookies()
+        if (fromCookie.startsWith("TGT-")) {
+            cachedTgt = fromCookie
+            return fromCookie
+        }
+        return cachedTgt.takeIf { it.startsWith("TGT-") }.orEmpty()
     }
 
     private fun tgtFromCookies(): String =
@@ -333,24 +404,57 @@ class GzusCasClient(
             .firstOrNull { it.startsWith("TGT-") }
             .orEmpty()
 
+    private suspend fun rememberTgt(tgt: String) {
+        if (!tgt.startsWith("TGT-")) return
+        cachedTgt = tgt
+        val url = Url("$cas/login")
+        PersistCookieStorage.shared.addCookie(
+            url,
+            Cookie(name = "CASTGC", value = tgt, domain = "cas.gzus.edu.cn", path = "/lyuapServer"),
+        )
+        PersistCookieStorage.shared.addCookie(
+            url,
+            Cookie(name = "CASTGC", value = tgt, domain = "cas.gzus.edu.cn", path = "/"),
+        )
+    }
+
     private fun parseServiceTicket(text: String): String {
-        val trimmed = text.trim().trim('"')
-        if (trimmed.startsWith("ST-")) return trimmed
-        return parseCasTickets(trimmed, json).serviceTicket
+        val tickets = runCatching { parseCasTickets(text, json) }.getOrElse { failed ->
+            if (failed is JwxtNeedFirstLogin) throw failed
+            if (isTransientNetwork(failed)) throw failed
+            val msg = failed.message.orEmpty()
+            if (
+                msg.contains("验证码") ||
+                msg.contains("学号或密码") ||
+                msg.contains("账号不存在") ||
+                msg.contains("已锁定") ||
+                msg.contains("已停用") ||
+                msg.contains("二次验证") ||
+                msg.contains("没有教务权限") ||
+                msg.contains("绑定微信") ||
+                msg.contains("网络承诺") ||
+                msg.contains("多个账号")
+            ) {
+                throw failed
+            }
+            error(SESSION_LOST_HINT)
+        }
+        if (tickets.serviceTicket.startsWith("ST-")) return tickets.serviceTicket
+        error(SESSION_LOST_HINT)
     }
 
     private suspend fun tryLoginEhall() {
         hallPost("tryLoginUserInfo", """{"version":"2","loadType":"6"}""")
     }
 
-    private suspend fun hallUserName(): String {
-        val root = hallGet("api/authc/users/name")
-        if (hallDenied(root)) return ""
-        val data = root["data"]
+    private suspend fun hallUserName(root: JsonObject? = null): String {
+        val payload = root ?: hallGet("api/authc/users/name")
+        if (hallDenied(payload)) return ""
+        val data = payload["data"]
         return when (data) {
             is JsonPrimitive -> data.contentOrNull?.trim().orEmpty()
             is JsonObject -> data.pick("userName", "name", "realName", "nickName", "username")
-            else -> root.pick("userName", "name", "realName")
+            else -> payload.pick("userName", "name", "realName")
         }
     }
 
@@ -478,10 +582,10 @@ class GzusCasClient(
             else -> false
         }
         if (failed) {
-            return meta?.lyuapStr("message").orEmpty()
+            val message = meta?.lyuapStr("message").orEmpty()
                 .ifBlank { root.lyuapStr("message") }
                 .ifBlank { root.lyuapStr("msg") }
-                .ifBlank { "提交失败" }
+            return message.takeUnless { isCasEnvelopeMessage(it) }.orEmpty().ifBlank { "提交失败" }
         }
         val code = root.lyuapStr("code")
         if (code.isNotBlank() && code != "0" && code != "200" && !code.equals("success", true)) {
@@ -625,18 +729,59 @@ class GzusCasClient(
         return ts to md5Hex("timestamp=$ts,key=lianyi2019")
     }
 
-    private suspend fun ecardJson(path: String, body: String): JsonObject {
-        val text = client.post("$GZUS_ECARD_ORIGIN/$path") {
-            header(HttpHeaders.UserAgent, UA)
-            header(HttpHeaders.Referrer, "$GZUS_ECARD_ORIGIN/")
-            header("X-Requested-With", "XMLHttpRequest")
-            contentType(ContentType.Application.Json)
-            setBody(body)
-        }.bodyAsText()
-        if (text.contains("登录失效") || text.contains("ssoHost") || isCasFirstLogin(text)) {
-            return JsonObject(mapOf("denied" to JsonPrimitive(true), "message" to JsonPrimitive(text.take(80))))
+    private suspend fun fetchEcardBalance(fields: Map<String, String>): List<JsonObject> {
+        val out = ArrayList<JsonObject>(3)
+        for (implType in listOf("CGCOMMON1111", "CGCOMMON2222", "CGCOMMON3333")) {
+            val body = fields + ("implType" to implType)
+            val root = runCatching {
+                ecardPost("powerfee/getBalance", body, http = publicClient, wechat = true)
+            }.getOrNull() ?: runCatching {
+                ecardPost("powerfee/getBalance", body)
+            }.getOrNull() ?: continue
+            if (ecardDenied(root)) continue
+            if (root.lyuapStr("ret").equals("false", ignoreCase = true)) continue
+            out.add(root)
+            if (pickUtilityTriple(root).hasWater()) break
         }
-        return parseHallJson(text)
+        return out
+    }
+
+    private suspend fun ecardPost(
+        path: String,
+        fields: Map<String, String> = emptyMap(),
+        http: HttpClient = client,
+        wechat: Boolean = false,
+    ): JsonObject {
+        val text = http.submitForm(
+            url = "$GZUS_ECARD_ORIGIN/$path",
+            formParameters = Parameters.build {
+                fields.forEach { (key, value) ->
+                    if (value.isNotBlank()) append(key, value)
+                }
+            },
+        ) {
+            ecardHeaders(wechat)
+        }.bodyAsText()
+        return parseEcardJson(text)
+    }
+
+    private suspend fun ecardPostJson(
+        path: String,
+        fields: Map<String, String>,
+        http: HttpClient = client,
+        wechat: Boolean = false,
+    ): JsonObject {
+        val body = buildJsonObject {
+            fields.forEach { (key, value) ->
+                if (value.isNotBlank()) put(key, value)
+            }
+        }
+        val text = http.post("$GZUS_ECARD_ORIGIN/$path") {
+            ecardHeaders(wechat)
+            contentType(ContentType.Application.Json)
+            setBody(body.toString())
+        }.bodyAsText()
+        return parseEcardJson(text)
     }
 
     private fun ecardDenied(root: JsonObject): Boolean {
@@ -646,61 +791,91 @@ class GzusCasClient(
         return code == "203" || message.contains("登录失效") || message.contains("未登录")
     }
 
-    private fun buildEcardRoomBody(bind: UtilityBind, bag: JsonObject): String {
-        val roomId = bind.roomId.ifBlank { bag.pick("roomId", "roomid", "id", "mdid") }.ifBlank { bind.roomName }
-        val buildingNo = bind.buildingId.ifBlank { bind.buildingName }.ifBlank { bag.pick("buildingNo", "building") }
-        val roomNo = bind.roomName.ifBlank { bag.pick("roomNo", "room") }
-        val floorId = bind.floorId
-        val areaId = bind.areaId
-        return buildString {
-            append('{')
-            val parts = buildList {
-                if (roomId.isNotBlank()) {
-                    add("\"roomId\":\"${roomId.jsonEsc()}\"")
-                    add("\"id\":\"${roomId.jsonEsc()}\"")
-                }
-                if (buildingNo.isNotBlank()) add("\"buildingNo\":\"${buildingNo.jsonEsc()}\"")
-                if (roomNo.isNotBlank()) add("\"roomNo\":\"${roomNo.jsonEsc()}\"")
-                if (floorId.isNotBlank()) add("\"floorId\":\"${floorId.jsonEsc()}\"")
-                if (areaId.isNotBlank()) add("\"areaId\":\"${areaId.jsonEsc()}\"")
-            }
-            append(parts.joinToString(","))
-            append('}')
-        }
+    private fun ecardRoomQueryFields(bind: UtilityBind, bag: JsonObject): Map<String, String> = ecardFields(
+        "schoolAreaNo" to bind.areaId.ifBlank { bag.pick("schoolAreaNo", "areaId", "areaid") },
+        "buildingNo" to bind.buildingId.ifBlank { bind.buildingName }.ifBlank { bag.pick("buildingNo", "building") },
+        "roomNum" to bind.roomId.ifBlank { bind.roomName }.ifBlank { bag.pick("roomNum", "roomId", "roomNo", "room") },
+    )
+
+    private fun ecardBalanceFields(bind: UtilityBind): Map<String, String> {
+        val schoolAreaNo = bind.areaId
+        val buildingNo = bind.buildingId.ifBlank { bind.buildingName }
+        val roomNum = bind.roomId.ifBlank { bind.roomName }
+        if (schoolAreaNo.isBlank() || buildingNo.isBlank() || roomNum.isBlank()) return emptyMap()
+        return ecardFields(
+            "implType" to "CGCOMMON1111",
+            "schoolAreaNo" to schoolAreaNo,
+            "buildingNo" to buildingNo,
+            "roomNum" to roomNum,
+        )
     }
 
-    private suspend fun ecardQuery(path: String, extra: Map<String, String>): List<UtilityOption> {
-        val get = runCatching { ecardGet(path, extra) }.getOrNull()
-        val fromGet = get?.let(::parseUtilityOptions).orEmpty()
-        if (fromGet.isNotEmpty()) return fromGet
-        val jsonBody = if (extra.isEmpty()) "{}" else {
-            extra.entries.joinToString(",", "{", "}") { (k, v) -> "\"${k.jsonEsc()}\":\"${v.jsonEsc()}\"" }
+    private fun parseEcardJson(text: String): JsonObject {
+        if (isCasFirstLogin(text) || text.contains("登录失效") || isEcardLoginPage(text)) {
+            return JsonObject(mapOf("denied" to JsonPrimitive(true), "message" to JsonPrimitive(text.take(80))))
         }
-        val posted = runCatching { ecardJson(path, jsonBody) }.getOrNull()
-        return posted?.let(::parseUtilityOptions).orEmpty()
-    }
-
-    private suspend fun ecardGet(path: String, extra: Map<String, String>): JsonObject {
-        val text = client.get("$GZUS_ECARD_ORIGIN/$path") {
-            header(HttpHeaders.UserAgent, UA)
-            header(HttpHeaders.Referrer, "$GZUS_ECARD_ORIGIN/")
-            header("X-Requested-With", "XMLHttpRequest")
-            extra.forEach { (key, value) -> parameter(key, value) }
-        }.bodyAsText()
-        if (text.contains("登录失效") || text.contains("ssoHost")) {
-            return JsonObject(mapOf("denied" to JsonPrimitive(true)))
+        if (text.trimStart().startsWith("<")) {
+            return JsonObject(emptyMap())
+        }
+        if (text.contains("ssoHost")) {
+            return JsonObject(mapOf("denied" to JsonPrimitive(true), "message" to JsonPrimitive(text.take(80))))
         }
         return parseHallJson(text)
     }
 
-    private fun parseUtilityOptions(root: JsonObject): List<UtilityOption> {
+    private fun HttpRequestBuilder.ecardHeaders(wechat: Boolean = false) {
+        header(HttpHeaders.UserAgent, if (wechat) GZUS_ECARD_WX_UA else UA)
+        header(HttpHeaders.Referrer, "$GZUS_ECARD_ORIGIN/")
+        header(HttpHeaders.Origin, GZUS_ECARD_ORIGIN)
+        header(HttpHeaders.Accept, "application/json, text/plain, */*")
+        header("X-Requested-With", "XMLHttpRequest")
+    }
+
+    private suspend fun loadRoomCatalog(force: Boolean = false): List<EcardRoomRow> {
+        if (!force && roomCatalog.isNotEmpty()) return roomCatalog
+        val rows = fetchRoomCatalog(publicClient, wechat = true).ifEmpty { fetchRoomCatalog(client) }
+        if (rows.isNotEmpty()) roomCatalog = rows
+        return rows
+    }
+
+    private suspend fun fetchRoomCatalog(http: HttpClient, wechat: Boolean = false): List<EcardRoomRow> {
+        for (implType in listOf("CGCOMMON1111", "CGCOMMON2222", "CGCOMMON3333")) {
+            val root = runCatching {
+                ecardPost("powerfee/getRoomInfo", mapOf("implType" to implType), http = http, wechat = wechat)
+            }.getOrNull() ?: continue
+            if (ecardDenied(root)) continue
+            val rows = parseRoomRows(root)
+            if (rows.isNotEmpty()) return rows
+        }
+        return emptyList()
+    }
+
+    private fun parseRoomRows(root: JsonObject): List<EcardRoomRow> {
         if (ecardDenied(root)) return emptyList()
-        return root.hallObjects().mapNotNull { item ->
-            val id = item.pick("id", "areaid", "areaId", "buildingid", "buildingId", "floorid", "floorId", "roomid", "roomId", "mdid")
-            val name = item.pick("name", "areaName", "buildingName", "floorName", "roomName", "mdname", "title", "text")
-            if (id.isBlank() && name.isBlank()) null
-            else UtilityOption(id = id.ifBlank { name }, name = name.ifBlank { id })
-        }.distinctBy { it.id + "/" + it.name }
+        return root.ecardObjects().mapNotNull { item ->
+            val areaName = item.pick("schoolArea", "areaName", "campus", "xqmc")
+            val areaId = item.pick("schoolAreaNo", "areaId", "areaid", "campusId", "xqid").ifBlank { areaName }
+            val buildingName = item.pick("building", "buildingName", "loudong")
+            val buildingId = item.pick("buildingNo", "buildingId", "buildingid").ifBlank { buildingName }
+            val roomName = item.pick("room", "roomDisplay", "roomName", "roomNo")
+            val roomId = item.pick("roomNum", "roomId", "roomid", "mdid", "id").ifBlank { roomName }
+            val display = item.pick("displayName").ifBlank {
+                listOf(areaName, buildingName, roomName.ifBlank { roomId }).filter { it.isNotBlank() }.joinToString(" ")
+            }
+            if (listOf(areaName, buildingName, roomName, display).all { it.isBlank() }) null
+            else EcardRoomRow(
+                areaId = areaId,
+                areaName = areaName,
+                buildingId = buildingId,
+                buildingName = buildingName,
+                roomId = roomId,
+                roomName = roomName.ifBlank { roomId },
+                display = display,
+                power = item.pickUtilityBalance(),
+                coldWater = item.pickColdWater(),
+                hotWater = item.pickHotWater(),
+            )
+        }
     }
 
     private fun hallAbs(url: String): String {
@@ -724,6 +899,168 @@ private fun JsonObject.pick(vararg keys: String): String {
     return ""
 }
 
+private fun JsonObject.pickDeep(vararg keys: String): String {
+    pick(*keys).takeIf { it.isNotBlank() }?.let { return it }
+    for ((_, value) in this) {
+        if (value is JsonObject) {
+            value.pickDeep(*keys).takeIf { it.isNotBlank() }?.let { return it }
+        } else if (value is JsonArray) {
+            for (el in value) {
+                (el as? JsonObject)?.pickDeep(*keys)?.takeIf { it.isNotBlank() }?.let { return it }
+            }
+        }
+    }
+    return ""
+}
+
+private fun JsonObject.pickBalance(vararg keys: String): String =
+    pickDeep(*keys).trim().removeSuffix("吨").removeSuffix("度").trim()
+
+private fun JsonObject.pickUtilityBalance(): String = pickUtilityTree(this)
+
+private fun JsonObject.pickColdWater(): String = pickColdWaterTree(this)
+
+private fun JsonObject.pickHotWater(): String = pickHotWaterTree(this)
+
+private fun pickUtilityTree(obj: JsonObject): String =
+    obj.pickBalance(
+        "powerBalance", "formatPowerBalance", "formatPowerBalanceStr", "powerText",
+        "remainPower", "utilityElectricity",
+    )
+
+private fun pickColdWaterTree(obj: JsonObject): String =
+    obj.pickBalance(
+        "formatWaterBalanceStr", "coldWaterBalance", "coldWaterText", "waterBalance",
+        "utilityColdWater", "cold_water",
+    )
+
+private fun pickHotWaterTree(obj: JsonObject): String =
+    obj.pickBalance(
+        "formatHotWaterBalanceStr", "hotWaterBalance", "hotWaterText",
+        "utilityHotWater", "hot_water",
+    )
+
+private data class UtilityTriple(val power: String, val cold: String, val hot: String) {
+    fun hasWater(): Boolean = cold.isNotBlank() || hot.isNotBlank()
+}
+
+private fun pickUtilityTriple(root: JsonObject): UtilityTriple {
+    val bags = root.ecardBags() + root.ecardObjects()
+    var power = ""
+    var cold = ""
+    var hot = ""
+    for (bag in bags) {
+        power = power.ifBlank { pickUtilityTree(bag) }
+        cold = cold.ifBlank { pickColdWaterTree(bag) }
+        hot = hot.ifBlank { pickHotWaterTree(bag) }
+        if (power.isNotBlank() && cold.isNotBlank() && hot.isNotBlank()) break
+    }
+    return UtilityTriple(power, cold, hot)
+}
+
+private fun JsonObject.ecardBags(): List<JsonObject> {
+    val bags = ArrayList<JsonObject>(6)
+    bags.add(this)
+    listOf("data", "obj", "result", "info", "member", "user").forEach { key ->
+        when (val value = this[key]) {
+            is JsonObject -> bags.add(value)
+            is JsonArray -> value.mapNotNull { it as? JsonObject }.forEach(bags::add)
+            else -> Unit
+        }
+    }
+    return bags
+}
+
+private fun JsonObject.ecardMemberBag(): JsonObject =
+    ecardBags().firstOrNull {
+        it.toUtilityBind().hasRoom() || it.pickDeep("sno", "xh", "studentId", "userNo", "username").isNotBlank()
+    } ?: hallBag()
+
+private fun JsonObject.toUtilityBind(): UtilityBind {
+    val roomId = pickDeep("roomNum", "roomId", "roomNo")
+    val roomName = pickDeep("room", "roomDisplay", "roomName").ifBlank { roomId }
+    val buildingId = pickDeep("buildingNo", "buildingId")
+    val buildingName = pickDeep("building", "buildingName").ifBlank { buildingId }
+    val areaId = pickDeep("schoolAreaNo", "areaId", "areaid")
+    val areaName = pickDeep("schoolArea", "areaName").ifBlank { areaId }
+    return UtilityBind(
+        areaId = areaId,
+        areaName = areaName,
+        buildingId = buildingId,
+        buildingName = buildingName,
+        roomId = roomId,
+        roomName = roomName,
+    )
+}
+
+private fun mergeUtilityBind(local: UtilityBind, ecard: UtilityBind): UtilityBind {
+    if (ecard.hasRoom()) {
+        return UtilityBind(
+            areaId = ecard.areaId.ifBlank { local.areaId },
+            areaName = ecard.areaName.ifBlank { local.areaName },
+            buildingId = ecard.buildingId.ifBlank { local.buildingId },
+            buildingName = ecard.buildingName.ifBlank { local.buildingName },
+            roomId = ecard.roomId.ifBlank { local.roomId },
+            roomName = ecard.roomName.ifBlank { local.roomName }.ifBlank { ecard.roomId },
+        )
+    }
+    return local
+}
+
+private fun ecardFields(vararg pairs: Pair<String, String>): Map<String, String> =
+    pairs.mapNotNull { (key, value) -> value.trim().takeIf { it.isNotBlank() }?.let { key to it } }.toMap()
+
+private data class EcardRoomRow(
+    val areaId: String,
+    val areaName: String,
+    val buildingId: String,
+    val buildingName: String,
+    val roomId: String,
+    val roomName: String,
+    val display: String = "",
+    val power: String = "",
+    val coldWater: String = "",
+    val hotWater: String = "",
+) {
+    fun matches(query: String): Boolean {
+        val q = query.trim()
+        if (q.isBlank()) return false
+        val fields = listOf(display, areaName, areaId, buildingName, buildingId, roomName, roomId)
+        if (fields.any { it.contains(q, ignoreCase = true) }) return true
+        val needle = foldRoomKey(q)
+        if (needle.isBlank()) return false
+        return fields.any { foldRoomKey(it).contains(needle) } ||
+            foldRoomKey(buildingName + roomName).contains(needle) ||
+            foldRoomKey(display).contains(needle)
+    }
+
+    fun matchesBind(bind: UtilityBind): Boolean = matchesRoomBind(
+        bind,
+        areaId = areaId,
+        areaName = areaName,
+        buildingId = buildingId,
+        buildingName = buildingName,
+        roomId = roomId,
+        roomName = roomName,
+    )
+
+    fun toOption(): UtilityOption {
+        val title = display.ifBlank {
+            listOf(areaName, buildingName, roomName.ifBlank { roomId }).filter { it.isNotBlank() }.joinToString(" ")
+        }
+        return UtilityOption(
+            id = roomId.ifBlank { title },
+            name = title,
+            areaId = areaId,
+            areaName = areaName,
+            buildingId = buildingId,
+            buildingName = buildingName,
+            roomId = roomId,
+            roomName = roomName.ifBlank { roomId },
+        )
+    }
+}
+
 private fun JsonObject.hallObjects(): List<JsonObject> {
     val data = this["data"]
     val arrays = buildList<JsonArray> {
@@ -743,17 +1080,121 @@ private fun JsonObject.hallObjects(): List<JsonObject> {
     return arrays.flatMap { arr -> arr.mapNotNull { it as? JsonObject } }.distinct()
 }
 
+private fun JsonObject.ecardObjects(): List<JsonObject> {
+    val bagKeys = listOf(
+        "list", "records", "rows", "data", "items", "content", "obj", "result",
+        "areas", "buildings", "floors", "rooms", "areaList", "buildingList", "floorList", "roomList",
+    )
+    val data = this["data"]
+    val obj = this["obj"]
+    val arrays = buildList<JsonArray> {
+        when (data) {
+            is JsonArray -> add(data)
+            is JsonObject -> bagKeys.forEach { key -> (data[key] as? JsonArray)?.let(::add) }
+            else -> Unit
+        }
+        when (obj) {
+            is JsonArray -> add(obj)
+            is JsonObject -> bagKeys.forEach { key -> (obj[key] as? JsonArray)?.let(::add) }
+            else -> Unit
+        }
+        bagKeys.forEach { key -> (this@ecardObjects[key] as? JsonArray)?.let(::add) }
+    }
+    val fromArrays = arrays.flatMap { arr -> arr.mapNotNull { it as? JsonObject } }
+    if (fromArrays.isNotEmpty()) return fromArrays.distinct()
+    val roomMaps = buildList<JsonObject> {
+        when (data) {
+            is JsonObject -> addAll(data.values.mapNotNull { it as? JsonObject }.filter { it.looksLikeEcardRoom() })
+            else -> Unit
+        }
+        when (obj) {
+            is JsonObject -> addAll(obj.values.mapNotNull { it as? JsonObject }.filter { it.looksLikeEcardRoom() })
+            else -> Unit
+        }
+    }
+    if (roomMaps.isNotEmpty()) return (fromArrays + roomMaps).distinct()
+    return if (this.looksLikeEcardRoom()) listOf(this) else emptyList()
+}
+
+private fun JsonObject.matchesBind(bind: UtilityBind): Boolean = matchesRoomBind(
+    bind,
+    areaId = pick("schoolAreaNo", "areaId"),
+    areaName = pick("schoolArea", "areaName"),
+    buildingId = pick("buildingNo", "buildingId"),
+    buildingName = pick("building", "buildingName"),
+    roomId = pick("roomNum", "roomId"),
+    roomName = pick("room", "roomDisplay", "roomName"),
+)
+
+private fun resolveRedirect(from: String, location: String): String {
+    val loc = location.trim()
+    if (loc.startsWith("http://") || loc.startsWith("https://")) return loc
+    val base = Url(from)
+    if (loc.startsWith("//")) return "${base.protocol.name}:$loc"
+    if (loc.startsWith("/")) return "${base.protocol.name}://${base.host}$loc"
+    return from.substringBeforeLast('/') + "/" + loc
+}
+
+private fun foldRoomKey(text: String): String = buildString(text.length) {
+    for (ch in text) {
+        val mapped = when (ch) {
+            in 'Ａ'..'Ｚ' -> 'A' + (ch - 'Ａ')
+            in 'ａ'..'ｚ' -> 'a' + (ch - 'ａ')
+            in '０'..'９' -> '0' + (ch - '０')
+            else -> ch
+        }
+        if (mapped.isLetterOrDigit()) append(mapped.lowercaseChar())
+    }
+}
+
+private fun sameRoomToken(token: String, roomId: String, roomName: String): Boolean {
+    if (token == roomId || token == roomName) return true
+    val folded = foldRoomKey(token)
+    if (folded.isNotBlank() && listOf(roomId, roomName).any { foldRoomKey(it) == folded }) return true
+    return token.length >= 3 && (roomName.contains(token, ignoreCase = true) || token.contains(roomName, ignoreCase = true))
+}
+
+private fun sameBindId(bindVal: String, a: String, b: String): Boolean =
+    bindVal.isBlank() || bindVal == a || bindVal == b ||
+        foldRoomKey(bindVal).let { it.isNotBlank() && (it == foldRoomKey(a) || it == foldRoomKey(b)) }
+
+private fun matchesRoomBind(
+    bind: UtilityBind,
+    areaId: String,
+    areaName: String,
+    buildingId: String,
+    buildingName: String,
+    roomId: String,
+    roomName: String,
+): Boolean {
+    val roomOk = listOf(bind.roomId, bind.roomName).any { token ->
+        token.isNotBlank() && sameRoomToken(token, roomId, roomName)
+    }
+    if (!roomOk) return false
+    return sameBindId(bind.buildingId, buildingId, buildingName) &&
+        sameBindId(bind.buildingName, buildingId, buildingName) &&
+        sameBindId(bind.areaId, areaId, areaName) &&
+        sameBindId(bind.areaName, areaId, areaName)
+}
+
+private fun JsonObject.looksLikeEcardRoom(): Boolean =
+    keys.any {
+        it in setOf(
+            "areaName", "areaId", "buildingNo", "roomId", "roomName", "roomDisplay",
+            "schoolArea", "schoolAreaNo", "roomNum", "displayName",
+        )
+    }
+
 private fun JsonObject.hallBag(): JsonObject {
     val data = this["data"]
     val obj = this["obj"]
     return when {
         data is JsonObject -> data
         obj is JsonObject -> obj
+        obj is JsonArray -> obj.mapNotNull { it as? JsonObject }.firstOrNull() ?: this
         else -> this
     }
 }
-
-private fun String.jsonEsc(): String = replace("\\", "\\\\").replace("\"", "\\\"")
 
 private fun isLeaveText(text: String): Boolean =
     text.contains("请假") || text.contains("销假")

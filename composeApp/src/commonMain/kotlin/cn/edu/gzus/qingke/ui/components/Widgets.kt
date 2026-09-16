@@ -1,8 +1,10 @@
 package cn.edu.gzus.qingke.ui.components
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
@@ -14,10 +16,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -28,7 +33,6 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
-import top.yukonga.miuix.kmp.basic.LinearProgressIndicator
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.PressFeedbackType
@@ -74,7 +78,11 @@ fun ScreenHeader(eyebrow: String, title: String, subtitle: String) {
         }
         ScrollText(title, style = MiuixTheme.textStyles.title2, color = MiuixTheme.colorScheme.onBackground)
         if (subtitle.isNotBlank()) {
-            ScrollText(subtitle, style = MiuixTheme.textStyles.body2, color = MiuixTheme.colorScheme.onSurfaceContainerVariant)
+            Text(
+                subtitle,
+                style = MiuixTheme.textStyles.body2,
+                color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+            )
         }
     }
 }
@@ -82,29 +90,86 @@ fun ScreenHeader(eyebrow: String, title: String, subtitle: String) {
 @Composable
 fun HeroCard(
     title: String,
-    summary: String,
+    eyebrow: String = "",
+    facts: List<Pair<String, String>> = emptyList(),
+    progress: Float? = null,
+    progressLabel: String = "",
     onClick: () -> Unit,
 ) {
+    val onPrimary = MiuixTheme.colorScheme.onPrimary
     Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(CanvasHeroHeight),
-        insideMargin = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).heightIn(min = CanvasHeroHeight),
+        insideMargin = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
         colors = CardDefaults.defaultColors(color = MiuixTheme.colorScheme.primary),
         pressFeedbackType = PressFeedbackType.Sink,
         onClick = onClick,
     ) {
-        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
-            ScrollText(
+        Column(Modifier.fillMaxWidth()) {
+            if (eyebrow.isNotBlank()) {
+                Text(
+                    eyebrow,
+                    style = MiuixTheme.textStyles.footnote1,
+                    color = onPrimary.copy(alpha = 0.78f),
+                )
+                Spacer(Modifier.height(6.dp))
+            }
+            Text(
                 title,
                 style = MiuixTheme.textStyles.title2,
-                color = MiuixTheme.colorScheme.onPrimary,
+                color = onPrimary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
             )
-            summary.split('\n').filter { it.isNotBlank() }.forEach { line ->
-                Spacer(Modifier.height(4.dp))
-                ScrollText(
-                    line,
-                    style = MiuixTheme.textStyles.body2,
-                    color = MiuixTheme.colorScheme.onPrimary.copy(alpha = 0.88f),
-                )
+            val shown = facts.filter { it.second.isNotBlank() }
+            shown.chunked(2).forEach { row ->
+                Spacer(Modifier.height(10.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    row.forEach { (label, value) ->
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                label,
+                                style = MiuixTheme.textStyles.footnote1,
+                                color = onPrimary.copy(alpha = 0.7f),
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                value,
+                                style = MiuixTheme.textStyles.body2,
+                                color = onPrimary,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                    if (row.size == 1) Spacer(Modifier.weight(1f))
+                }
+            }
+            if (progress != null) {
+                Spacer(Modifier.height(12.dp))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(onPrimary.copy(alpha = 0.22f)),
+                    ) {
+                        Box(
+                            Modifier
+                                .fillMaxHeight()
+                                .fillMaxWidth(progress.coerceIn(0f, 1f))
+                                .background(onPrimary),
+                        )
+                    }
+                    if (progressLabel.isNotBlank()) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            progressLabel,
+                            style = MiuixTheme.textStyles.footnote1,
+                            color = onPrimary.copy(alpha = 0.86f),
+                        )
+                    }
+                }
             }
         }
     }
@@ -112,11 +177,22 @@ fun HeroCard(
 
 @Composable
 fun ProgressLine(progress: Float) {
-    LinearProgressIndicator(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp),
-        progress = progress.coerceIn(0f, 1f),
-        height = 6.dp,
-    )
+    val color = MiuixTheme.colorScheme.primary
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 32.dp)
+            .height(6.dp)
+            .clip(RoundedCornerShape(3.dp))
+            .background(color.copy(alpha = 0.18f)),
+    ) {
+        Box(
+            Modifier
+                .fillMaxHeight()
+                .fillMaxWidth(progress.coerceIn(0f, 1f))
+                .background(color),
+        )
+    }
 }
 
 @Composable
@@ -127,9 +203,11 @@ fun InfoCard(
     height: Dp? = CanvasRowHeight,
     tintTitle: Boolean = false,
     dimmed: Boolean = false,
+    center: Boolean = false,
     onClick: (() -> Unit)? = null,
 ) {
     val wrap = height == null
+    val align = if (center) TextAlign.Center else TextAlign.Start
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -139,37 +217,51 @@ fun InfoCard(
         pressFeedbackType = if (onClick != null) PressFeedbackType.Sink else PressFeedbackType.None,
         onClick = onClick,
     ) {
-        Column(
+        Box(
             modifier = if (wrap) Modifier.fillMaxWidth() else Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.Center,
+            contentAlignment = if (center) Alignment.Center else Alignment.CenterStart,
         ) {
-            if (wrap) {
-                Text(
-                    title,
-                    style = MiuixTheme.textStyles.title3,
-                    color = if (tintTitle) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onBackground,
-                )
-            } else {
-                ScrollText(
-                    title,
-                    style = MiuixTheme.textStyles.title3,
-                    color = if (tintTitle) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onBackground,
-                )
-            }
-            summary.split('\n').filter { it.isNotBlank() }.forEach { line ->
-                Spacer(Modifier.height(4.dp))
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = if (center) Alignment.CenterHorizontally else Alignment.Start,
+            ) {
                 if (wrap) {
                     Text(
-                        line,
-                        style = MiuixTheme.textStyles.body2,
-                        color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                        title,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = align,
+                        style = MiuixTheme.textStyles.title3,
+                        color = if (tintTitle) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onBackground,
                     )
                 } else {
                     ScrollText(
-                        line,
-                        style = MiuixTheme.textStyles.body2,
-                        color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                        title,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = align,
+                        style = MiuixTheme.textStyles.title3,
+                        color = if (tintTitle) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onBackground,
                     )
+                }
+                summary.split('\n').filter { it.isNotBlank() }.forEach { line ->
+                    Spacer(Modifier.height(4.dp))
+                    if (wrap) {
+                        Text(
+                            line,
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = align,
+                            style = MiuixTheme.textStyles.body2,
+                            color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                        )
+                    } else {
+                        ScrollText(
+                            line,
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = align,
+                            style = MiuixTheme.textStyles.body2,
+                            color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                        )
+                    }
                 }
             }
         }

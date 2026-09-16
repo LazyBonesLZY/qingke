@@ -15,6 +15,7 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
+import android.os.Build
 import android.util.SizeF
 import android.util.TypedValue
 import android.widget.RemoteViews
@@ -120,8 +121,7 @@ object QingkeWidgets {
 
     private fun widgetBitmapSize(context: Context, options: android.os.Bundle): Pair<Int, Int> {
         val density = context.resources.displayMetrics.density
-        val fromSizes = options.getParcelableArrayList(AppWidgetManager.OPTION_APPWIDGET_SIZES, SizeF::class.java)
-            ?.filter { it.width > 0f && it.height > 0f }
+        val fromSizes = widgetOptionSizes(options)?.filter { it.width > 0f && it.height > 0f }
         val minW = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH)
         val maxW = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH)
         val minH = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT)
@@ -133,6 +133,17 @@ object QingkeWidgets {
             ?: fromSizes?.minOfOrNull { it.height }
             ?: 110f
         return (widthDp * density).roundToSize() to (heightDp * density).roundToSize()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun widgetOptionSizes(options: android.os.Bundle): List<SizeF>? {
+        if (Build.VERSION.SDK_INT < 31) return null
+        val raw = if (Build.VERSION.SDK_INT >= 33) {
+            options.getParcelableArrayList(AppWidgetManager.OPTION_APPWIDGET_SIZES, SizeF::class.java)
+        } else {
+            options.getParcelableArrayList(AppWidgetManager.OPTION_APPWIDGET_SIZES)
+        }
+        return raw
     }
 
     private fun Float.roundToSize(): Int = toInt().coerceIn(160, 1600)

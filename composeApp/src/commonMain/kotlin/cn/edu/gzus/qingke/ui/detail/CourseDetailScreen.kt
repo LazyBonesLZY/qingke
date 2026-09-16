@@ -12,8 +12,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import cn.edu.gzus.qingke.data.AppSettings
 import cn.edu.gzus.qingke.data.CourseDetail
 import cn.edu.gzus.qingke.data.WeekdayNames
+import cn.edu.gzus.qingke.data.periodClockRange
+import cn.edu.gzus.qingke.data.shiftNoteFor
+import kotlinx.datetime.LocalDate
 import cn.edu.gzus.qingke.ui.components.FactGrid
 import cn.edu.gzus.qingke.ui.components.InfoCard
 import cn.edu.gzus.qingke.ui.components.LabeledCard
@@ -23,6 +27,9 @@ import top.yukonga.miuix.kmp.basic.SmallTitle
 fun CourseDetailScreen(
     detail: CourseDetail?,
     contentPadding: PaddingValues,
+    hasClock: Boolean = false,
+    settings: AppSettings = AppSettings(),
+    today: LocalDate? = null,
 ) {
     Column(
         modifier = Modifier
@@ -76,6 +83,8 @@ fun CourseDetailScreen(
                     LabeledCard(
                         title = "$weekday  ${slot.periodLabel.ifBlank { slot.period }}",
                         rows = listOf(
+                            "时间" to if (hasClock) periodClockRange(slot.period) else "",
+                            "调课" to today?.let { settings.shiftNoteFor(slot, it) }.orEmpty(),
                             "教室" to slot.room,
                             "教师" to slot.teacher,
                             "周次" to slot.weeks,

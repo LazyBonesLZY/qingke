@@ -15,7 +15,7 @@ kotlin {
     android {
         namespace = "cn.edu.gzus.qingke.shared"
         compileSdk = 37
-        minSdk = 33
+        minSdk = 26
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_17)
         }

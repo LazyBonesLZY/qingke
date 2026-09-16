@@ -57,6 +57,22 @@ actual fun createHttpClient(): HttpClient = HttpClient(OkHttp) {
     }
 }
 
+actual fun createBareHttpClient(): HttpClient = HttpClient(OkHttp) {
+    install(HttpTimeout) {
+        requestTimeoutMillis = 40_000
+        connectTimeoutMillis = 15_000
+        socketTimeoutMillis = 40_000
+    }
+    followRedirects = true
+    engine {
+        config {
+            retryOnConnectionFailure(true)
+            followRedirects(false)
+            followSslRedirects(false)
+        }
+    }
+}
+
 actual fun lyuapEncrypt(password: String, modulusHex: String, exponentHex: String): String =
     lyuapEncryptJvm(password, modulusHex, exponentHex)
 
@@ -96,8 +112,16 @@ actual fun currentCookies(): List<Pair<String, String>> = cookiePairs()
 
 actual fun openUrl(url: String) {
     val ctx = QingkeApp.app
-    val intent = if (url.contains("jwxt.gzus.edu.cn")) {
-        Intent(ctx, JwxtWebActivity::class.java).putExtra(JwxtWebActivity.EXTRA_URL, url)
+    val inApp = listOf(
+        "jwxt.gzus.edu.cn",
+        "ecarduser.gzus.edu.cn",
+        "ehall.gzus.edu.cn",
+        "cas.gzus.edu.cn",
+        "sso.gzus.edu.cn",
+    ).any { url.contains(it) }
+    val intent = if (inApp) {
+        Intent(ctx, JwxtWebActivity::class.java)
+            .putExtra(JwxtWebActivity.EXTRA_URL, url)
     } else {
         Intent(Intent.ACTION_VIEW, Uri.parse(url))
     }

@@ -21,10 +21,12 @@ class GzistClient(
     private val casService: String = GZIST_SSO_SERVICE,
     jwxtOrigin: String = GZIST_JWXT_ORIGIN,
     override val supportsFreeRooms: Boolean = false,
+    override val supportsCoursePick: Boolean = false,
     private val jwxt: JwxtClient = JwxtClient(
         origin = jwxtOrigin,
         client = client,
         supportsFreeRooms = supportsFreeRooms,
+        supportsCoursePick = false,
     ),
 ) : SchoolPortal by jwxt {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -72,7 +74,9 @@ class GzistClient(
             header(HttpHeaders.Referrer, "$CAS/login?service=$service")
             header(HttpHeaders.Origin, CAS.substringBefore("/lyuapServer").ifBlank { CAS })
         }.bodyAsText()
-        val ticket = parseCasTickets(raw, json).serviceTicket
+        val tickets = parseCasTickets(raw, json)
+        val ticket = tickets.serviceTicket
+        if (!ticket.startsWith("ST-")) error("门户没有返回票据")
         val jump = client.get(service) {
             header(HttpHeaders.UserAgent, UA)
             parameter("ticket", ticket)

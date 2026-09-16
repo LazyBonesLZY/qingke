@@ -16,7 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
-import cn.edu.gzus.qingke.data.cookiePairs
+import cn.edu.gzus.qingke.data.cookieRecords
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Scaffold
@@ -33,13 +33,14 @@ class JwxtWebActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         val startUrl = intent.getStringExtra(EXTRA_URL) ?: "https://jwxt.gzus.edu.cn/jwglxt/xtgl/login_slogin.html"
-        val title = mutableStateOf(intent.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { "正方教务" })
+        val title = mutableStateOf(intent.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { titleFor(startUrl) })
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
-        cookiePairs().forEach { (name, value) ->
-            val piece = "$name=$value; Domain=jwxt.gzus.edu.cn; Path=/"
-            cookieManager.setCookie("https://jwxt.gzus.edu.cn", piece)
-            cookieManager.setCookie("https://jwxt.gzus.edu.cn/jwglxt/", piece)
+        cookieRecords().forEach { row ->
+            val host = row.domain.trimStart('.').ifBlank { hostOf(startUrl) }
+            val url = "https://$host/"
+            val piece = "${row.name}=${row.value}; Domain=$host; Path=${row.path.ifBlank { "/" }}"
+            cookieManager.setCookie(url, piece)
         }
         cookieManager.flush()
         onBackPressedDispatcher.addCallback(
@@ -100,3 +101,13 @@ class JwxtWebActivity : ComponentActivity() {
         const val EXTRA_TITLE = "title"
     }
 }
+
+private fun titleFor(url: String): String = when {
+    url.contains("ecarduser.gzus.edu.cn") -> "一卡通"
+    url.contains("ehall.gzus.edu.cn") -> "办事大厅"
+    url.contains("cas.gzus.edu.cn") || url.contains("sso.gzus.edu.cn") -> "统一身份认证"
+    else -> "正方教务"
+}
+
+private fun hostOf(url: String): String =
+    url.substringAfter("://").substringBefore("/").substringBefore(":")

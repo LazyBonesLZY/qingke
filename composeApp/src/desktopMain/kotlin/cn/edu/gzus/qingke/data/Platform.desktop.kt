@@ -31,6 +31,14 @@ actual fun createHttpClient(): HttpClient = HttpClient(CIO) {
     followRedirects = true
 }
 
+actual fun createBareHttpClient(): HttpClient = HttpClient(CIO) {
+    install(HttpTimeout) {
+        requestTimeoutMillis = 40_000
+        connectTimeoutMillis = 15_000
+    }
+    followRedirects = true
+}
+
 actual fun lyuapEncrypt(password: String, modulusHex: String, exponentHex: String): String =
     lyuapEncryptJvm(password, modulusHex, exponentHex)
 

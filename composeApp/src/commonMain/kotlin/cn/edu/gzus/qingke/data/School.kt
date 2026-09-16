@@ -105,7 +105,9 @@ data class ResolvedSchool(
     val kind: String,
     val origin: String,
     val loginName: String,
-)
+) {
+    val supportsCoursePick: Boolean get() = kind == "zhengfang"
+}
 
 fun AppSettings.resolved(): ResolvedSchool {
     val item = school()
@@ -220,8 +222,20 @@ interface SchoolPortal {
     suspend fun fetchLeaveForm(affairId: String = ""): LeaveForm? = null
     suspend fun submitLeave(form: LeaveForm, values: Map<String, String>): String =
         error("这所学校没有请假接口")
-    suspend fun fetchUtility(bind: UtilityBind = UtilityBind()): UtilitySnapshot? = null
+    suspend fun fetchUtility(bind: UtilityBind = UtilityBind(), sno: String = ""): UtilitySnapshot? = null
     suspend fun fetchUtilityOptions(level: String, parentId: String = ""): List<UtilityOption> = emptyList()
+    val supportsCoursePick: Boolean get() = false
+    suspend fun fetchCoursePickScopes(): List<CoursePickScope> = emptyList()
+    suspend fun fetchCoursePickOffers(
+        scope: CoursePickScope,
+        keyword: String = "",
+        start: Int = 0,
+        pageSize: Int = 50,
+    ): List<CoursePickOffer> = emptyList()
+    suspend fun fetchCoursePickSections(offer: CoursePickOffer): List<CoursePickSection> = emptyList()
+    suspend fun selectCoursePick(offer: CoursePickOffer, section: CoursePickSection): String =
+        error("这所学校没有正方自主选课")
+    suspend fun fetchCoursePicked(scope: CoursePickScope): List<CoursePickOffer> = emptyList()
     suspend fun logout()
 }
 

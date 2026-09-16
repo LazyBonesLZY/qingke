@@ -45,7 +45,8 @@ import cn.edu.gzus.qingke.data.resolved
 import cn.edu.gzus.qingke.data.activeIn
 import cn.edu.gzus.qingke.data.compactCourseLines
 import cn.edu.gzus.qingke.data.compactRoomName
-import cn.edu.gzus.qingke.data.forBlock
+import cn.edu.gzus.qingke.data.forBlockOnDate
+import cn.edu.gzus.qingke.data.hasShift
 import cn.edu.gzus.qingke.data.HolidayCalendar
 import cn.edu.gzus.qingke.data.HolidayDay
 import cn.edu.gzus.qingke.data.chip
@@ -60,6 +61,7 @@ import cn.edu.gzus.qingke.data.nowDateTime
 import cn.edu.gzus.qingke.data.resolvedCurrentWeek
 import cn.edu.gzus.qingke.data.resolvedWeekCount
 import cn.edu.gzus.qingke.data.teachingWeekOn
+import cn.edu.gzus.qingke.data.formatPeriodWithClock
 import cn.edu.gzus.qingke.data.weekdayIndex
 import cn.edu.gzus.qingke.data.weeksInUse
 import cn.edu.gzus.qingke.nav.QingkeNavigator
@@ -113,6 +115,7 @@ private val CourseInkLight = Color(0xFF1A1A1A)
 private val CourseInkDark = Color(0xFFF3F3F3)
 
 private val SlotCol = 32.dp
+private val SlotColWithClock = 40.dp
 private val WeekNumCol = 28.dp
 private val CellGap = 3.dp
 private val WeekCellHeight = 64.dp
@@ -211,12 +214,13 @@ fun TimetableScreen(
             Spacer(Modifier.height(10.dp))
             WeekGrid(
                 slots = snapshot.slots,
-                week = viewWeek,
                 monday = monday,
                 today = today,
                 holidays = snapshot.holidays,
                 aliases = settings.courseAliases,
                 blocks = snapshot.resolved().periodBlocks,
+                hasClock = snapshot.resolved().hasPeriodClock,
+                settings = settings,
                 onOpen = { nav.open(Route.Course(it)) },
             )
             if (weekSessions == 0 && weekPractices.isEmpty()) {
@@ -272,6 +276,7 @@ fun TimetableScreen(
                     append("${selectedDate.monthNumber}月${selectedDate.dayOfMonth}日 · 周${WeekdayNames.getOrElse(weekdayIndex(selectedDate) - 1) { "?" }}")
                     if (dayWeek in weekLo..weekHi) append(" · 第${dayWeek}周")
                     snapshot.holidays.lookup(selectedDate)?.let { append(" · ").append(it.chip()) }
+                    if (settings.hasShift(selectedDate)) append(" · 调课")
                 },
             )
             if (daySlots.isEmpty()) {
@@ -287,7 +292,7 @@ fun TimetableScreen(
                 ) {
                     daySlots.forEach { slot ->
                         InfoCard(
-                            title = "${slot.periodLabel.ifBlank { slot.period }}  ${slot.courseName}",
+                            title = "${formatPeriodWithClock(slot.period, slot.periodLabel, snapshot.resolved().hasPeriodClock)}  ${slot.courseName}",
                             summary = listOf(slot.room, slot.teacher, slot.weeks).filter { it.isNotBlank() }.joinToString("\n"),
                             height = null,
                             onClick = { nav.open(Route.Course(slot.courseId)) },
@@ -420,23 +425,25 @@ private fun MonthPager(
 @Composable
 private fun WeekGrid(
     slots: List<LessonSlot>,
-    week: Int,
     monday: LocalDate,
     today: LocalDate,
     holidays: HolidayCalendar,
     aliases: Map<String, String>,
     blocks: List<PeriodBlock>,
+    hasClock: Boolean,
+    settings: AppSettings,
     onOpen: (String) -> Unit,
 ) {
     val shape = RoundedCornerShape(CellRadius)
     val workColor = if (isSystemInDarkTheme()) Color(0xFFE8B86D) else Color(0xFFC9782A)
+    val slotCol = if (hasClock && blocks.any { it.start.isNotBlank() }) SlotColWithClock else SlotCol
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         insideMargin = PaddingValues(6.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(CellGap)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(CellGap)) {
-                Spacer(Modifier.width(SlotCol))
+                Spacer(Modifier.width(slotCol))
                 WeekdayNames.forEachIndexed { index, name ->
                     val date = monday.plus(DatePeriod(days = index))
                     val isToday = date == today
@@ -468,6 +475,15 @@ private fun WeekGrid(
                                 color = if (holiday.off) MiuixTheme.colorScheme.primary else workColor,
                             )
                         }
+                        if (settings.hasShift(date)) {
+                            Text(
+                                "调",
+                                textAlign = TextAlign.Center,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MiuixTheme.colorScheme.primary,
+                            )
+                        }
                     }
                 }
             }
@@ -476,19 +492,38 @@ private fun WeekGrid(
                     modifier = Modifier.fillMaxWidth().height(WeekCellHeight),
                     horizontalArrangement = Arrangement.spacedBy(CellGap),
                 ) {
-                    Text(
-                        block.label,
+                    Column(
                         modifier = Modifier
-                            .width(SlotCol)
-                            .fillMaxHeight()
-                            .padding(top = 20.dp),
-                        textAlign = TextAlign.Center,
-                        fontSize = 10.sp,
-                        color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
-                    )
+                            .width(slotCol)
+                            .fillMaxHeight(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Text(
+                            block.label,
+                            textAlign = TextAlign.Center,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                        )
+                        if (hasClock && block.start.isNotBlank() && block.end.isNotBlank()) {
+                            Text(
+                                block.start,
+                                textAlign = TextAlign.Center,
+                                fontSize = 8.sp,
+                                color = MiuixTheme.colorScheme.onSurfaceContainerVariant.copy(alpha = 0.86f),
+                            )
+                            Text(
+                                block.end,
+                                textAlign = TextAlign.Center,
+                                fontSize = 8.sp,
+                                color = MiuixTheme.colorScheme.onSurfaceContainerVariant.copy(alpha = 0.86f),
+                            )
+                        }
+                    }
                     for (weekday in 1..7) {
                         val date = monday.plus(DatePeriod(days = weekday - 1))
-                        val cell = slots.forBlock(week, weekday, block)
+                        val cell = slots.forBlockOnDate(date, block, settings, today)
                         WeekCell(
                             slots = cell,
                             today = date == today,

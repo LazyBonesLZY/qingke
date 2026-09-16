@@ -323,7 +323,7 @@ internal fun zhkuShowMsg(html: String): String =
         }
 
 private fun requireZhkuSession(text: String) {
-    if (isZhkuLoginPage(text) || isZhkuSessionLost(text)) error("登录已过期，请重新登录")
+    if (isZhkuLoginPage(text) || isZhkuSessionLost(text)) error(SESSION_LOST_HINT)
 }
 
 internal data class ZhkuWeek(val week: Int, val monday: LocalDate)
@@ -627,18 +627,21 @@ internal fun parseZhkuNoticeDetail(id: String, html: String): NoticeItem {
     val publisher = Regex("""(?:发送人|发布人)[:：]\s*([^<\s]+)""").find(cleaned)?.groupValues?.get(1).orEmpty()
     val body = cleaned
         .replace(Regex("""<(br|BR)\s*/?>"""), "\n")
-        .replace(Regex("""</(p|div|tr|li|h[1-6])[^>]*>""", RegexOption.IGNORE_CASE), "\n")
+        .replace(Regex("""</(p|div|li|h[1-6])[^>]*>""", RegexOption.IGNORE_CASE), "\n")
+    val (content, parts) = parseNoticeBody(body) { line ->
+        val text = line.trim()
+        text.isBlank() ||
+            text == title ||
+            text.contains("湖南强智") ||
+            text.contains("Copyright")
+    }
     return NoticeItem(
         id = id,
         title = title,
         date = date.take(16),
         publisher = publisher,
-        content = zhkuPlain(body).lines().map { it.trim() }.filter { line ->
-            line.isNotBlank() &&
-                line != title &&
-                !line.contains("湖南强智") &&
-                !line.contains("Copyright")
-        }.joinToString("\n"),
+        content = content,
+        parts = parts,
     )
 }
 

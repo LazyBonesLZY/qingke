@@ -1,14 +1,18 @@
 package cn.edu.gzus.qingke.ui.hub
 
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
@@ -19,9 +23,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import cn.edu.gzus.qingke.data.AppSnapshot
 import cn.edu.gzus.qingke.data.FreeRoom
+import cn.edu.gzus.qingke.data.NoticePart
 import cn.edu.gzus.qingke.data.MajorPeriods
 import cn.edu.gzus.qingke.data.WeekdayNames
 import cn.edu.gzus.qingke.data.resolved
@@ -170,7 +178,7 @@ fun NoticesScreen(
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(contentPadding).padding(bottom = 24.dp)) {
         Spacer(Modifier.height(8.dp))
         Text(
-            "${snapshot.resolved().jwxtName}通知。点一条展开正文。",
+            "点一条看正文。",
             modifier = Modifier.padding(horizontal = 16.dp),
             color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
             style = MiuixTheme.textStyles.body2,
@@ -185,27 +193,101 @@ fun NoticesScreen(
             ) {
                 snapshot.notices.forEach { notice ->
                     val open = expandedId == notice.id
-                    InfoCard(
-                        title = notice.title,
-                        summary = buildString {
-                            val meta = listOf(
-                                notice.date,
-                                notice.category.ifBlank { "通知" },
-                                if (notice.pinned) "置顶" else null,
-                                notice.publisher,
-                            ).filter { !it.isNullOrBlank() }.joinToString(" · ")
-                            append(meta)
-                            if (open) {
-                                append('\n')
-                                append(notice.content.ifBlank { "正在加载正文" })
-                            }
-                        },
-                        height = null,
-                        tintTitle = open,
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        insideMargin = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
                         onClick = { expandedId = if (open) null else notice.id },
-                    )
+                    ) {
+                        Text(
+                            notice.title,
+                            style = MiuixTheme.textStyles.title3,
+                            color = if (open) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onBackground,
+                        )
+                        val meta = listOf(
+                            notice.date,
+                            notice.category.ifBlank { "通知" },
+                            if (notice.pinned) "置顶" else null,
+                            notice.publisher,
+                        ).filter { !it.isNullOrBlank() }.joinToString(" · ")
+                        if (meta.isNotBlank()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                meta,
+                                style = MiuixTheme.textStyles.body2,
+                                color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                            )
+                        }
+                        if (open) {
+                            Spacer(Modifier.height(10.dp))
+                            val parts = notice.bodyParts()
+                            if (parts.isEmpty()) {
+                                Text(
+                                    "正在加载正文",
+                                    style = MiuixTheme.textStyles.body2,
+                                    color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                                )
+                            } else {
+                                parts.forEachIndexed { index, part ->
+                                    if (index > 0) Spacer(Modifier.height(10.dp))
+                                    when (part) {
+                                        is NoticePart.Text -> Text(
+                                            part.text,
+                                            style = MiuixTheme.textStyles.body2,
+                                            color = MiuixTheme.colorScheme.onBackground,
+                                        )
+                                        is NoticePart.Table -> NoticeTableView(part)
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun NoticeTableView(table: NoticePart.Table) {
+    val columns = maxOf(table.headers.size, table.rows.maxOfOrNull { it.size } ?: 0, 1)
+    val header = if (table.headers.isNotEmpty()) table.headers else null
+    val line = MiuixTheme.colorScheme.outline.copy(alpha = 0.35f)
+    val cellWidth = if (columns <= 3) null else 104.dp
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (cellWidth != null) Modifier.horizontalScroll(rememberScrollState()) else Modifier)
+            .border(1.dp, line),
+    ) {
+        if (header != null) {
+            NoticeTableRow(header, columns, cellWidth, header = true, line = line)
+        }
+        table.rows.forEach { row ->
+            NoticeTableRow(row, columns, cellWidth, header = false, line = line)
+        }
+    }
+}
+
+@Composable
+private fun NoticeTableRow(
+    cells: List<String>,
+    columns: Int,
+    cellWidth: Dp?,
+    header: Boolean,
+    line: Color,
+) {
+    Row(Modifier.fillMaxWidth().border(width = 0.dp, color = Color.Transparent)) {
+        repeat(columns) { index ->
+            Text(
+                text = cells.getOrElse(index) { "" },
+                modifier = Modifier
+                    .then(if (cellWidth != null) Modifier.widthIn(min = cellWidth) else Modifier.weight(1f))
+                    .border(1.dp, line)
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                style = MiuixTheme.textStyles.footnote1,
+                fontWeight = if (header) FontWeight.SemiBold else FontWeight.Normal,
+                color = MiuixTheme.colorScheme.onBackground,
+            )
         }
     }
 }

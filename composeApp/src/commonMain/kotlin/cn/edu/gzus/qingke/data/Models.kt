@@ -1,5 +1,12 @@
 package cn.edu.gzus.qingke.data
 
+import kotlinx.datetime.Instant
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.LocalTime
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toInstant
+import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -68,6 +75,20 @@ data class ExamItem(
 )
 
 @Serializable
+sealed class NoticePart {
+    @Serializable
+    @kotlinx.serialization.SerialName("text")
+    data class Text(val text: String = "") : NoticePart()
+
+    @Serializable
+    @kotlinx.serialization.SerialName("table")
+    data class Table(
+        val headers: List<String> = emptyList(),
+        val rows: List<List<String>> = emptyList(),
+    ) : NoticePart()
+}
+
+@Serializable
 data class NoticeItem(
     val id: String,
     val title: String,
@@ -77,7 +98,11 @@ data class NoticeItem(
     val isNew: Boolean = false,
     val publisher: String = "",
     val content: String = "",
-)
+    val parts: List<NoticePart> = emptyList(),
+) {
+    fun bodyParts(): List<NoticePart> =
+        parts.ifEmpty { if (content.isBlank()) emptyList() else listOf(NoticePart.Text(content)) }
+}
 
 @Serializable
 data class FreeRoom(
@@ -125,6 +150,9 @@ data class AppSettings(
     val utilityBuilding: String = "",
     val utilityRoom: String = "",
     val utilityBind: UtilityBind = UtilityBind(),
+    val scheduleShifts: List<ScheduleShift> = emptyList(),
+    val autoSyncOnStart: Boolean = false,
+    val coursePickQueue: List<CoursePickTask> = emptyList(),
 )
 
 @Serializable
@@ -165,6 +193,13 @@ fun CustomJwxt.originClean(): String = origin.trim().trimEnd('/')
 
 fun AppSettings.resolvedRemindLead(): Int =
     if (remindLeadMinutes in RemindLeadMinutes) remindLeadMinutes else DefaultRemindLeadMinutes
+
+@Serializable
+data class ScheduleShift(
+    val id: String,
+    val fromDate: String,
+    val toDate: String,
+)
 
 @Serializable
 data class HolidayDay(
@@ -310,6 +345,12 @@ data class UtilityBind(
 data class UtilityOption(
     val id: String,
     val name: String,
+    val areaId: String = "",
+    val areaName: String = "",
+    val buildingId: String = "",
+    val buildingName: String = "",
+    val roomId: String = "",
+    val roomName: String = "",
 )
 
 fun AppSettings.resolvedUtilityBind(): UtilityBind {
@@ -317,6 +358,40 @@ fun AppSettings.resolvedUtilityBind(): UtilityBind {
         return utilityBind
     }
     return UtilityBind(buildingName = utilityBuilding, roomName = utilityRoom)
+}
+
+fun AppSettings.hasUtilityBind(): Boolean {
+    val bind = resolvedUtilityBind()
+    return bind.roomId.isNotBlank() || bind.roomName.isNotBlank()
+}
+
+fun AppSnapshot.utilityBrief(): String {
+    if (!settings.hasUtilityBind()) return "未绑定宿舍"
+    if (!utility.ready) return "查询失败"
+    val waterPrice = settings.resolvedWaterPrice()
+    val electricPrice = settings.resolvedElectricPrice()
+    return buildList {
+        utilityLine("电", utility.power, "度", electricPrice)?.let(::add)
+        utilityLine("冷水", utility.coldWater, "吨", waterPrice)?.let(::add)
+        utilityLine("热水", utility.hotWater, "吨", waterPrice)?.let(::add)
+    }.joinToString("\n").ifBlank { "查询失败" }
+}
+
+private fun utilityLine(name: String, amount: String, unit: String, price: Double): String? {
+    if (amount.isBlank()) return null
+    val yuan = parseAmount(amount)?.times(price)
+    return buildString {
+        append(name)
+        append(' ')
+        append(amount)
+        append(' ')
+        append(unit)
+        if (yuan != null) {
+            append(" · ")
+            append(formatMoney(yuan))
+            append(" 元")
+        }
+    }
 }
 
 @Serializable
@@ -328,7 +403,10 @@ data class UtilitySnapshot(
     val coldWater: String = "",
     val hotWater: String = "",
     val error: String = "",
+    val bind: UtilityBind = UtilityBind(),
 )
+
+fun UtilityBind.hasRoom(): Boolean = roomId.isNotBlank() || roomName.isNotBlank()
 
 fun AppSettings.resolvedWaterPrice(): Double =
     if (utilityUseCustomPrice && utilityWaterPrice > 0) utilityWaterPrice else JIANGMEN_WATER_PRICE
@@ -378,6 +456,136 @@ data class HallSnapshot(
     val leaves: List<LeaveApplication> = emptyList(),
     val error: String = "",
 )
+
+@Serializable
+data class CoursePickScope(
+    val id: String = "",
+    val name: String = "",
+    val params: Map<String, String> = emptyMap(),
+)
+
+@Serializable
+data class CoursePickOffer(
+    val courseId: String = "",
+    val name: String = "",
+    val credit: String = "",
+    val teacher: String = "",
+    val className: String = "",
+    val classId: String = "",
+    val time: String = "",
+    val place: String = "",
+    val capacity: String = "",
+    val taken: String = "",
+    val selected: Boolean = false,
+    val scopeId: String = "",
+    val params: Map<String, String> = emptyMap(),
+)
+
+@Serializable
+data class CoursePickSection(
+    val classId: String = "",
+    val doJxbId: String = "",
+    val name: String = "",
+    val teacher: String = "",
+    val time: String = "",
+    val place: String = "",
+    val credit: String = "",
+    val capacity: String = "",
+    val taken: String = "",
+    val params: Map<String, String> = emptyMap(),
+)
+
+@Serializable
+data class CoursePickTask(
+    val id: String = "",
+    val courseId: String = "",
+    val courseName: String = "",
+    val className: String = "",
+    val teacher: String = "",
+    val doJxbId: String = "",
+    val classId: String = "",
+    val scopeId: String = "",
+    val params: Map<String, String> = emptyMap(),
+    val fireAt: Long = 0L,
+    val status: String = "queued",
+    val message: String = "",
+    val lastAttemptAt: Long = 0L,
+)
+
+fun CoursePickOffer.brief(): String = listOf(
+    teacher,
+    credit.takeIf { it.isNotBlank() }?.let { "$it 学分" },
+    time,
+    place,
+    seatsLabel(taken, capacity),
+    if (selected) "已选" else "",
+).filter { !it.isNullOrBlank() }.joinToString(" · ")
+
+fun CoursePickSection.brief(): String = listOf(
+    teacher,
+    time,
+    place,
+    credit.takeIf { it.isNotBlank() }?.let { "$it 学分" },
+    seatsLabel(taken, capacity),
+).filter { !it.isNullOrBlank() }.joinToString(" · ")
+
+fun CoursePickTask.brief(): String = listOf(
+    className.ifBlank { teacher },
+    coursePickStatusLabel(status),
+    if (fireAt > 0 && status == "waiting") formatCoursePickWhen(fireAt) else "",
+    message,
+).filter { it.isNotBlank() }.joinToString(" · ")
+
+fun coursePickStatusLabel(status: String): String = when (status) {
+    "waiting" -> "到点自动选"
+    "running" -> "正在提交"
+    "ok" -> "已选上"
+    "fail" -> "未选上"
+    else -> "队列中"
+}
+
+fun AppSnapshot.coursePickBrief(): String {
+    if (!resolved().supportsCoursePick) return "${resolved().jwxtName}没有自主选课"
+    if (!session.loggedIn) return "登录后搜索、排队、到点提交"
+    val queue = settings.coursePickQueue
+    val waiting = queue.count { it.status == "waiting" }
+    val ok = queue.count { it.status == "ok" }
+    return when {
+        waiting > 0 -> "$waiting 门到点自动选"
+        ok > 0 -> "队列 ${queue.size} 门 · 已选上 $ok"
+        queue.isNotEmpty() -> "队列 ${queue.size} 门"
+        else -> "搜索、立即选、到点自动选"
+    }
+}
+
+fun seatsLabel(taken: String, capacity: String): String {
+    if (taken.isBlank() && capacity.isBlank()) return ""
+    if (capacity.isBlank()) return "已选 $taken"
+    if (taken.isBlank()) return "容量 $capacity"
+    return "$taken / $capacity"
+}
+
+fun formatCoursePickWhen(millis: Long): String {
+    if (millis <= 0L) return ""
+    val dt = Instant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.currentSystemDefault())
+    val h = dt.hour.toString().padStart(2, '0')
+    val m = dt.minute.toString().padStart(2, '0')
+    val s = dt.second.toString().padStart(2, '0')
+    return "${dt.date} $h:$m:$s"
+}
+
+fun parseCoursePickWhen(date: String, time: String): Long {
+    val day = LocalDate.parse(date.trim())
+    val parts = time.trim().split(':', '：', '.', '-', ' ')
+        .mapNotNull { it.toIntOrNull() }
+    if (parts.isEmpty()) error("时间写成 13:00:00")
+    val clock = LocalTime(
+        hour = parts[0].coerceIn(0, 23),
+        minute = parts.getOrElse(1) { 0 }.coerceIn(0, 59),
+        second = parts.getOrElse(2) { 0 }.coerceIn(0, 59),
+    )
+    return LocalDateTime(day, clock).toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds()
+}
 
 data class CourseDetail(
     val courseId: String,

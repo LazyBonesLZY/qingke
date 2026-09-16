@@ -17,23 +17,21 @@ import cn.edu.gzus.qingke.data.WeekdayFull
 import cn.edu.gzus.qingke.data.activeIn
 import cn.edu.gzus.qingke.data.combineMillis
 import cn.edu.gzus.qingke.data.examSortKey
-import cn.edu.gzus.qingke.data.forDay
-import cn.edu.gzus.qingke.data.formatMoney
+import cn.edu.gzus.qingke.data.forDate
 import cn.edu.gzus.qingke.data.formatRemain
-import cn.edu.gzus.qingke.data.powerYuan
-import cn.edu.gzus.qingke.data.resolvedElectricPrice
-import cn.edu.gzus.qingke.data.resolvedWaterPrice
-import cn.edu.gzus.qingke.data.waterYuan
 import cn.edu.gzus.qingke.data.greeting
 import cn.edu.gzus.qingke.data.hasTermStart
 import cn.edu.gzus.qingke.data.nextLesson
 import cn.edu.gzus.qingke.data.nowDateTime
+import cn.edu.gzus.qingke.data.formatPeriodWithClock
+import cn.edu.gzus.qingke.data.periodClockRange
 import cn.edu.gzus.qingke.data.periodEnd
 import cn.edu.gzus.qingke.data.periodStart
 import cn.edu.gzus.qingke.data.resolvedCurrentWeek
 import cn.edu.gzus.qingke.data.resolved
 import cn.edu.gzus.qingke.data.isLeave
 import cn.edu.gzus.qingke.data.showsGzusHall
+import cn.edu.gzus.qingke.data.utilityBrief
 import cn.edu.gzus.qingke.data.resolvedWeekCount
 import cn.edu.gzus.qingke.data.teachingWeeks
 import cn.edu.gzus.qingke.data.uniqueCourses
@@ -44,7 +42,6 @@ import cn.edu.gzus.qingke.nav.TabDest
 import cn.edu.gzus.qingke.ui.components.CanvasHeroHeight
 import cn.edu.gzus.qingke.ui.components.HeroCard
 import cn.edu.gzus.qingke.ui.components.InfoCard
-import cn.edu.gzus.qingke.ui.components.ProgressLine
 import cn.edu.gzus.qingke.ui.components.ScreenHeader
 import cn.edu.gzus.qingke.ui.components.StatRow
 import cn.edu.gzus.qingke.ui.components.tabPagePadding
@@ -62,12 +59,12 @@ fun TodayScreen(
     val week = resolvedCurrentWeek(snapshot.settings, now.date)
     val weekCount = snapshot.settings.resolvedWeekCount(snapshot.slots)
     val weekday = weekdayIndex(now.date)
-    val todaySlots = if (week >= 1) snapshot.slots.forDay(week, weekday) else emptyList()
+    val todaySlots = snapshot.slots.forDate(now.date, snapshot.settings, now.date)
     val weekPractices = if (week >= 1) snapshot.practices.filter { it.activeIn(week) } else emptyList()
     val school = snapshot.resolved()
     val hasClock = school.hasPeriodClock
-    val next = if (week >= 1 && hasClock) nextLesson(snapshot.slots, week, weekday, now.time) else null
-    val hero = next?.first ?: if (week >= 1 && !hasClock) todaySlots.firstOrNull() else null
+    val next = if (hasClock) nextLesson(snapshot.slots, now.date, snapshot.settings, now.date, now.time) else null
+    val hero = next?.first ?: if (!hasClock) todaySlots.firstOrNull() else null
     val remain = next?.second
     val startMillis = if (hasClock) hero?.let { combineMillis(now.date, periodStart(it.period)) } ?: 0L else 0L
     val endMillis = if (hasClock) hero?.let { combineMillis(now.date, periodEnd(it.period)) } ?: 0L else 0L
@@ -116,7 +113,20 @@ fun TodayScreen(
                 }
                 HeroCard(
                     title = hero.courseName,
-                    summary = "$eta\n${hero.periodLabel} · ${hero.room} · ${hero.teacher}",
+                    eyebrow = eta,
+                    facts = listOf(
+                        "节次" to (hero.periodLabel.ifBlank { hero.period }.let { if (it.endsWith("节")) it else "${it}节" }),
+                        "时间" to if (hasClock) periodClockRange(hero.period).replace("-", "–") else "",
+                        "地点" to hero.room,
+                        "老师" to hero.teacher,
+                    ),
+                    progress = if (inClass) progress else null,
+                    progressLabel = if (inClass) {
+                        val left = ((endMillis - nowMs) / 60_000L).toInt().coerceAtLeast(0)
+                        "还剩 ${left} 分"
+                    } else {
+                        ""
+                    },
                     onClick = { nav.open(Route.Course(hero.courseId)) },
                 )
             }
@@ -168,36 +178,13 @@ fun TodayScreen(
                 onClick = { nav.goTab(TabDest.Mine) },
             )
         }
-        if (inClass) {
-            Spacer(Modifier.height(8.dp))
-            ProgressLine(progress)
-        }
         if (snapshot.showsGzusHall()) {
-            val utility = snapshot.utility
-            val waterPrice = snapshot.settings.resolvedWaterPrice()
-            val electricPrice = snapshot.settings.resolvedElectricPrice()
-            val powerYuan = utility.powerYuan(electricPrice)
-            val waterYuan = utility.waterYuan(waterPrice)
             Spacer(Modifier.height(12.dp))
             InfoCard(
                 title = "宿舍水电",
-                summary = when {
-                    utility.ready -> buildList {
-                        if (utility.power.isNotBlank()) {
-                            add("电 ${utility.power} 度" + if (powerYuan != null) " · ${formatMoney(powerYuan)} 元" else "")
-                        }
-                        val waters = listOfNotNull(
-                            utility.coldWater.takeIf { it.isNotBlank() }?.let { "冷 $it" },
-                            utility.hotWater.takeIf { it.isNotBlank() }?.let { "热 $it" },
-                        )
-                        if (waters.isNotEmpty()) {
-                            add(waters.joinToString("/") + " 吨" + if (waterYuan != null) " · ${formatMoney(waterYuan)} 元" else "")
-                        }
-                    }.joinToString("\n").ifBlank { "已同步" }
-                    utility.error.isNotBlank() -> utility.error
-                    snapshot.session.loggedIn -> "同步后显示剩余水电"
-                    else -> "登录统一身份认证后同步"
-                },
+                height = null,
+                center = true,
+                summary = snapshot.utilityBrief(),
                 modifier = Modifier.padding(horizontal = 16.dp),
                 onClick = { nav.open(Route.Utility) },
             )
@@ -266,7 +253,7 @@ fun TodayScreen(
             } else {
                 todaySlots.forEach { slot ->
                     InfoCard(
-                        title = "${slot.periodLabel}  ${slot.courseName}",
+                        title = "${formatPeriodWithClock(slot.period, slot.periodLabel, hasClock)}  ${slot.courseName}",
                         summary = listOf(slot.room, slot.teacher, "第${week}周").filter { it.isNotBlank() }.joinToString("\n"),
                         height = null,
                         onClick = { nav.open(Route.Course(slot.courseId)) },

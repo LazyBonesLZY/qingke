@@ -5,6 +5,8 @@ import io.ktor.client.HttpClient
 
 expect fun createHttpClient(): HttpClient
 
+expect fun createBareHttpClient(): HttpClient
+
 expect fun rsaEncrypt(password: String, modulusB64: String, exponentB64: String): String
 
 expect fun lyuapEncrypt(password: String, modulusHex: String, exponentHex: String): String

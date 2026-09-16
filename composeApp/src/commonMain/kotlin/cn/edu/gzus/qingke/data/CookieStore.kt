@@ -60,6 +60,8 @@ class PersistCookieStorage : CookiesStorage {
 
     fun snapshot(): List<Pair<String, String>> = cookies.map { it.name to it.value }
 
+    fun records(): List<CookieRecord> = cookies.map { CookieRecord(it.name, it.value, it.domain, it.path) }
+
     fun wipe() {
         cookies.clear()
         persist()
@@ -88,3 +90,12 @@ fun wipeCookies() {
 }
 
 fun cookiePairs(): List<Pair<String, String>> = PersistCookieStorage.shared.snapshot()
+
+data class CookieRecord(
+    val name: String,
+    val value: String,
+    val domain: String,
+    val path: String,
+)
+
+fun cookieRecords(): List<CookieRecord> = PersistCookieStorage.shared.records()

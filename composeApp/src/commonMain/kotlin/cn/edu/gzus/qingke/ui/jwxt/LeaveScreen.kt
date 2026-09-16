@@ -54,7 +54,8 @@ fun LeaveScreen(
 ) {
     val hall = snapshot.hall
     val cas = snapshot.settings.gzusUsesCas()
-    val fields = form?.fields.orEmpty().ifEmpty { defaultLeaveFields() }
+    val waitingForm = cas && snapshot.session.loggedIn && (formBusy || (form == null && formError.isNullOrBlank()))
+    val fields = if (waitingForm) emptyList() else form?.fields.orEmpty().ifEmpty { defaultLeaveFields() }
     var values by remember(form?.affairId, fields.joinToString { it.key + it.value }) {
         mutableStateOf(fields.associate { it.key to it.value })
     }
@@ -74,15 +75,12 @@ fun LeaveScreen(
             .padding(bottom = 24.dp),
     ) {
         Spacer(Modifier.height(8.dp))
-        Text(
-            "请假走广软办事大厅接口，不打开网页。课表、成绩仍走正方。",
-            modifier = Modifier.padding(horizontal = 16.dp),
-            color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
-            style = MiuixTheme.textStyles.body2,
-        )
+        if (waitingForm) {
+            EmptyHint("正在拉取大厅请假表单")
+        }
         when {
+            waitingForm -> Unit
             !cas -> {
-                Spacer(Modifier.height(12.dp))
                 InfoCard(
                     title = "还不能请假",
                     summary = "「我的」里把广软登录渠道换成统一身份认证，再登录一次。",
@@ -91,7 +89,6 @@ fun LeaveScreen(
                 )
             }
             !snapshot.session.loggedIn -> {
-                Spacer(Modifier.height(12.dp))
                 InfoCard(
                     title = "还没有请假数据",
                     summary = "用统一身份认证登录后，申请记录和请假表单会同步到这里。",
@@ -100,7 +97,6 @@ fun LeaveScreen(
                 )
             }
             hall.error.isNotBlank() && !hall.ready && hall.leaves.isEmpty() -> {
-                Spacer(Modifier.height(12.dp))
                 InfoCard(
                     title = "大厅这次没同步上",
                     summary = hall.error,
@@ -109,42 +105,8 @@ fun LeaveScreen(
                 )
             }
         }
-        if (cas && snapshot.session.loggedIn) {
-            SmallTitle(text = "我的请假")
-            if (hall.leaves.isEmpty()) {
-                EmptyHint(if (hall.ready) "还没有请假记录" else hall.leaveSummary())
-            } else {
-                Column(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    hall.leaves.forEach { item ->
-                        InfoCard(
-                            title = item.title,
-                            summary = listOf(
-                                item.status,
-                                item.node,
-                                item.time,
-                                listOf(item.start, item.end).filter { it.isNotBlank() }.joinToString(" ~ "),
-                                item.reason,
-                            ).filter { it.isNotBlank() }.joinToString("\n"),
-                            height = null,
-                        )
-                    }
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-            Button(
-                onClick = onRefresh,
-                enabled = !busy,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                minHeight = 44.dp,
-            ) { Text(if (busy) "正在同步" else "刷新申请") }
-
+        if (cas && snapshot.session.loggedIn && !waitingForm) {
             SmallTitle(text = form?.affairName?.ifBlank { "发起请假" } ?: "发起请假")
-            if (formBusy) {
-                EmptyHint("正在拉取大厅请假表单")
-            }
             if (!formError.isNullOrBlank()) {
                 Text(
                     formError,
@@ -177,7 +139,7 @@ fun LeaveScreen(
                     )
                     onSubmit(current, values)
                 },
-                enabled = !busy && !formBusy && values.values.any { it.isNotBlank() },
+                enabled = !busy && values.values.any { it.isNotBlank() },
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                 minHeight = 50.dp,
                 colors = ButtonDefaults.buttonColorsPrimary(),
@@ -185,6 +147,38 @@ fun LeaveScreen(
                 if (busy) InfiniteProgressIndicator()
                 Text(if (busy) "正在提交" else "提交请假")
             }
+        }
+        if (cas && snapshot.session.loggedIn && !waitingForm) {
+            SmallTitle(text = "我的请假")
+            if (hall.leaves.isEmpty()) {
+                EmptyHint(if (hall.ready) "还没有请假记录" else hall.leaveSummary())
+            } else {
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    hall.leaves.forEach { item ->
+                        InfoCard(
+                            title = item.title,
+                            summary = listOf(
+                                item.status,
+                                item.node,
+                                item.time,
+                                listOf(item.start, item.end).filter { it.isNotBlank() }.joinToString(" ~ "),
+                                item.reason,
+                            ).filter { it.isNotBlank() }.joinToString("\n"),
+                            height = null,
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = onRefresh,
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                minHeight = 44.dp,
+            ) { Text(if (busy) "正在同步" else "刷新申请") }
         }
     }
 }
@@ -209,12 +203,7 @@ private fun LeaveFieldBlock(
                 summary = value.ifBlank { "点这里选" },
                 onClick = onToggle,
             )
-        }
-        if (expanded) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                insideMargin = PaddingValues(0.dp),
-            ) {
+            if (expanded) {
                 field.options.forEach { option ->
                     ArrowPreference(
                         title = option,

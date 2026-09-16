@@ -54,7 +54,6 @@ import cn.edu.gzus.qingke.data.resolvedRemindLead
 import cn.edu.gzus.qingke.data.decodeImageBytes
 import cn.edu.gzus.qingke.data.WeekdayNames
 import cn.edu.gzus.qingke.data.school
-import cn.edu.gzus.qingke.data.compactCourseName
 import cn.edu.gzus.qingke.data.formatLongDate
 import cn.edu.gzus.qingke.data.formatSync
 import cn.edu.gzus.qingke.data.hasTermStart
@@ -68,6 +67,7 @@ import cn.edu.gzus.qingke.data.termStartMonday
 import cn.edu.gzus.qingke.data.uniqueCourses
 import cn.edu.gzus.qingke.data.weekdayIndex
 import cn.edu.gzus.qingke.nav.QingkeNavigator
+import cn.edu.gzus.qingke.nav.Route
 import cn.edu.gzus.qingke.nav.TabDest
 import cn.edu.gzus.qingke.ui.components.InfoCard
 import cn.edu.gzus.qingke.ui.components.ProfileCard
@@ -112,11 +112,11 @@ fun MineScreen(
     onSelectGzusLogin: (String) -> Unit = {},
     onLogin: (String, String, String) -> Unit,
     onSync: () -> Unit,
+    onToggleAutoSync: (Boolean) -> Unit = {},
     onToggleRemind: (Boolean) -> Unit,
     onPickRemindLead: (Int) -> Unit,
     onPickTermStart: (LocalDate) -> Unit,
     onPickWeek: (Int) -> Unit,
-    onSaveAlias: (courseId: String, courseName: String, alias: String) -> Unit,
     onLogout: () -> Unit,
     onSaveCustom: (CustomJwxt, Boolean) -> Unit = { _, _ -> },
     update: AppUpdate? = null,
@@ -133,7 +133,6 @@ fun MineScreen(
     var pickingWeek by remember { mutableStateOf(false) }
     var pickingSchool by remember { mutableStateOf(false) }
     var pickingLead by remember { mutableStateOf(false) }
-    var editingAlias by remember { mutableStateOf<String?>(null) }
     var confirmLogout by remember { mutableStateOf(false) }
     var confirmSchool by remember { mutableStateOf<School?>(null) }
     var confirmGzusLogin by remember { mutableStateOf<String?>(null) }
@@ -182,19 +181,48 @@ fun MineScreen(
                     pickingDate = false
                     pickingWeek = false
                     pickingLead = false
-                    editingAlias = null
+                    confirmLogout = false
+                    confirmGzusLogin = null
                     if (!pickingSchool) confirmSchool = null
                 },
+            )
+            SchoolExtras(
+                selected = selected,
+                selectedLabel = school.label,
+                expanded = pickingSchool,
+                confirm = confirmSchool,
+                hasLocalData = snapshot.session.loggedIn || snapshot.hasTimetable,
+                onPick = { next ->
+                    pickingSchool = false
+                    confirmLogout = false
+                    confirmGzusLogin = null
+                    if (next == selected) {
+                        confirmSchool = null
+                    } else if (snapshot.session.loggedIn || snapshot.hasTimetable) {
+                        confirmSchool = next
+                    } else {
+                        confirmSchool = null
+                        onSelectSchool(next)
+                    }
+                },
+                onConfirm = { next ->
+                    confirmSchool = null
+                    onSelectSchool(next)
+                },
+                onCancel = { confirmSchool = null },
             )
             if (selected == School.Gzus) {
                 GzusChannelRows(
                     channel = snapshot.settings.gzusLoginChannel,
+                    confirm = confirmGzusLogin,
+                    loggedIn = snapshot.session.loggedIn,
                     onPick = { next ->
                         pickingSchool = false
                         pickingDate = false
                         pickingWeek = false
                         pickingLead = false
-                        editingAlias = null
+                        confirmSchool = null
+                        confirmLogout = false
                         if (next == snapshot.settings.gzusLoginChannel) {
                             confirmGzusLogin = null
                         } else if (snapshot.session.loggedIn) {
@@ -204,9 +232,20 @@ fun MineScreen(
                             onSelectGzusLogin(next)
                         }
                     },
+                    onConfirm = { next ->
+                        confirmGzusLogin = null
+                        onSelectGzusLogin(next)
+                    },
+                    onCancel = { confirmGzusLogin = null },
                 )
             }
             if (snapshot.session.loggedIn) {
+                SwitchPreference(
+                    title = "启动时自动同步",
+                    summary = if (snapshot.settings.autoSyncOnStart) "打开应用后自动拉课表和水电" else "只在点立即同步时更新",
+                    checked = snapshot.settings.autoSyncOnStart,
+                    onCheckedChange = onToggleAutoSync,
+                )
                 ArrowPreference(
                     title = "立即同步",
                     summary = if (busy) "同步中" else formatSync(snapshot.session.lastSyncAt),
@@ -215,67 +254,25 @@ fun MineScreen(
                 ArrowPreference(
                     title = "退出登录",
                     summary = "清除会话，课表留在本地",
-                    onClick = { confirmLogout = !confirmLogout },
-                )
-            }
-        }
-        SchoolExtras(
-            selected = selected,
-            selectedLabel = school.label,
-            expanded = pickingSchool,
-            confirm = confirmSchool,
-            hasLocalData = snapshot.session.loggedIn || snapshot.hasTimetable,
-            onPick = { next ->
-                pickingSchool = false
-                if (next == selected) {
-                    confirmSchool = null
-                } else if (snapshot.session.loggedIn || snapshot.hasTimetable) {
-                    confirmSchool = next
-                } else {
-                    confirmSchool = null
-                    onSelectSchool(next)
-                }
-            },
-            onConfirm = { next ->
-                confirmSchool = null
-                onSelectSchool(next)
-            },
-            onCancel = { confirmSchool = null },
-        )
-        if (selected == School.Gzus) {
-            GzusChannelConfirm(
-                confirm = confirmGzusLogin,
-                loggedIn = snapshot.session.loggedIn,
-                onConfirm = { next ->
-                    confirmGzusLogin = null
-                    onSelectGzusLogin(next)
-                },
-                onCancel = { confirmGzusLogin = null },
-            )
-        }
-        if (snapshot.session.loggedIn && confirmLogout) {
-            Spacer(Modifier.height(8.dp))
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                insideMargin = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
-            ) {
-                Text("退出${school.jwxtName}会话。已经同步过的课表留在本地。", style = MiuixTheme.textStyles.body2, color = MiuixTheme.colorScheme.onBackground)
-                Spacer(Modifier.height(12.dp))
-                Button(
                     onClick = {
-                        confirmLogout = false
-                        onLogout()
+                        confirmLogout = !confirmLogout
+                        pickingSchool = false
+                        confirmSchool = null
+                        confirmGzusLogin = null
                     },
-                    modifier = Modifier.fillMaxWidth(),
-                    minHeight = 44.dp,
-                    colors = ButtonDefaults.buttonColorsPrimary(),
-                ) { Text("确定退出") }
-                Spacer(Modifier.height(8.dp))
-                Button(
-                    onClick = { confirmLogout = false },
-                    modifier = Modifier.fillMaxWidth(),
-                    minHeight = 44.dp,
-                ) { Text("取消") }
+                )
+                if (confirmLogout) {
+                    InlineConfirm(
+                        title = "退出登录",
+                        body = "退出${school.jwxtName}会话。已经同步过的课表留在本地。",
+                        confirmLabel = "确定退出",
+                        onConfirm = {
+                            confirmLogout = false
+                            onLogout()
+                        },
+                        onCancel = { confirmLogout = false },
+                    )
+                }
             }
         }
         if (!snapshot.session.loggedIn) {
@@ -304,14 +301,12 @@ fun MineScreen(
                 pickingWeek = false
                 pickingSchool = false
                 pickingLead = false
-                editingAlias = null
             },
             onToggleWeek = {
                 pickingWeek = !pickingWeek
                 pickingDate = false
                 pickingSchool = false
                 pickingLead = false
-                editingAlias = null
             },
             onPickTermStart = { date ->
                 pickingDate = false
@@ -322,21 +317,27 @@ fun MineScreen(
                 onPickWeek(week)
             },
         )
-        AliasBlock(
-            snapshot = snapshot,
-            editingId = editingAlias,
-            onToggle = { id ->
-                editingAlias = if (editingAlias == id) null else id
-                pickingDate = false
-                pickingWeek = false
-                pickingSchool = false
-                pickingLead = false
-            },
-            onSave = { id, name, alias ->
-                onSaveAlias(id, name, alias)
-                editingAlias = null
-            },
-        )
+        SmallTitle(text = "课表")
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp),
+        ) {
+            val courses = uniqueCourses(snapshot.slots)
+            ArrowPreference(
+                title = "课表缩写",
+                summary = if (courses.isEmpty()) "同步课表后才能改格子里的简称" else "${courses.size} 门课 · 点进去改",
+                onClick = { nav.open(Route.CourseAliases) },
+            )
+            ArrowPreference(
+                title = "调课",
+                summary = if (snapshot.settings.scheduleShifts.isEmpty()) {
+                    "节假日补课按学校通知填写"
+                } else {
+                    "${snapshot.settings.scheduleShifts.size} 条 · 原上课日的课改到另一天"
+                },
+                onClick = { nav.open(Route.ScheduleShifts) },
+            )
+        }
         RemindBlock(
             snapshot = snapshot,
             school = school,
@@ -348,7 +349,6 @@ fun MineScreen(
                 pickingDate = false
                 pickingWeek = false
                 pickingSchool = false
-                editingAlias = null
             },
             onPickLead = { minutes ->
                 pickingLead = false
@@ -554,123 +554,108 @@ private fun SchoolExtras(
     onCancel: () -> Unit,
 ) {
     if (expanded) {
-        Spacer(Modifier.height(8.dp))
-        Card(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            insideMargin = PaddingValues(0.dp),
-        ) {
-            School.entries.forEach { item ->
-                ArrowPreference(
-                    title = item.label,
-                    summary = when {
-                        item == selected && item == School.Custom -> "当前 · $selectedLabel"
-                        item == selected -> "当前 · ${item.jwxtName}"
-                        item == School.Custom -> "自己填正方 / 强智 / 联奕地址"
-                        else -> item.jwxtName
-                    },
-                    onClick = { onPick(item) },
-                )
-            }
+        School.entries.forEach { item ->
+            ArrowPreference(
+                title = item.label,
+                summary = when {
+                    item == selected && item == School.Custom -> "当前 · $selectedLabel"
+                    item == selected -> "当前 · ${item.jwxtName}"
+                    item == School.Custom -> "自己填正方 / 强智 / 联奕地址"
+                    else -> item.jwxtName
+                },
+                onClick = { onPick(item) },
+            )
         }
     }
     if (confirm != null) {
-        Spacer(Modifier.height(8.dp))
-        Card(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            insideMargin = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
-        ) {
-            Text(
-                "换成 ${confirm.label}",
-                style = MiuixTheme.textStyles.title3,
-                color = MiuixTheme.colorScheme.onBackground,
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                if (hasLocalData) {
-                    "会退出当前登录，并清掉课表、成绩、考试、学期周次和课表缩写。之后用 ${confirm.jwxtName}。"
-                } else {
-                    "之后用 ${confirm.jwxtName} 登录。"
-                },
-                style = MiuixTheme.textStyles.body2,
-                color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
-            )
-            Spacer(Modifier.height(12.dp))
-            Button(
-                onClick = { onConfirm(confirm) },
-                modifier = Modifier.fillMaxWidth(),
-                minHeight = 44.dp,
-                colors = ButtonDefaults.buttonColorsPrimary(),
-            ) { Text("换到这所学校") }
-            Spacer(Modifier.height(8.dp))
-            Button(
-                onClick = onCancel,
-                modifier = Modifier.fillMaxWidth(),
-                minHeight = 44.dp,
-            ) { Text("取消") }
-        }
+        InlineConfirm(
+            title = "换成 ${confirm.label}",
+            body = if (hasLocalData) {
+                "会退出当前登录，并清掉课表、成绩、考试、学期周次和课表缩写。之后用 ${confirm.jwxtName}。"
+            } else {
+                "之后用 ${confirm.jwxtName} 登录。"
+            },
+            confirmLabel = "换到这所学校",
+            onConfirm = { onConfirm(confirm) },
+            onCancel = onCancel,
+        )
     }
 }
 
 @Composable
 private fun GzusChannelRows(
     channel: String,
+    confirm: String?,
+    loggedIn: Boolean,
     onPick: (String) -> Unit,
+    onConfirm: (String) -> Unit,
+    onCancel: () -> Unit,
 ) {
     ArrowPreference(
         title = "正方教务",
         summary = if (channel != GZUS_LOGIN_CAS) "当前 · jwxt.gzus.edu.cn 直接登录" else "只进教学管理信息服务平台",
         onClick = { onPick(GZUS_LOGIN_JWXT) },
     )
+    if (confirm == GZUS_LOGIN_JWXT) {
+        InlineConfirm(
+            title = "换成正方直接登录",
+            body = if (loggedIn) {
+                "会退出当前登录。本地课表留下。之后用正方教务重新登录。"
+            } else {
+                "之后只走正方登录页。"
+            },
+            confirmLabel = "换到这个渠道",
+            onConfirm = { onConfirm(GZUS_LOGIN_JWXT) },
+            onCancel = onCancel,
+        )
+    }
     ArrowPreference(
         title = "统一身份认证",
         summary = if (channel == GZUS_LOGIN_CAS) "当前 · 可进正方和办事大厅" else "cas.gzus.edu.cn，登录后也能同步办事大厅",
         onClick = { onPick(GZUS_LOGIN_CAS) },
     )
+    if (confirm == GZUS_LOGIN_CAS) {
+        InlineConfirm(
+            title = "换成统一身份认证",
+            body = if (loggedIn) {
+                "会退出当前登录。本地课表留下。之后用统一身份认证重新登录。"
+            } else {
+                "之后从门户进教务，并能同步办事大厅。"
+            },
+            confirmLabel = "换到这个渠道",
+            onConfirm = { onConfirm(GZUS_LOGIN_CAS) },
+            onCancel = onCancel,
+        )
+    }
 }
 
 @Composable
-private fun GzusChannelConfirm(
-    confirm: String?,
-    loggedIn: Boolean,
-    onConfirm: (String) -> Unit,
+private fun InlineConfirm(
+    title: String,
+    body: String,
+    confirmLabel: String,
+    onConfirm: () -> Unit,
     onCancel: () -> Unit,
 ) {
-    if (confirm != null) {
-        val cas = confirm == GZUS_LOGIN_CAS
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+    ) {
+        Text(title, style = MiuixTheme.textStyles.title3, color = MiuixTheme.colorScheme.onBackground)
         Spacer(Modifier.height(8.dp))
-        Card(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            insideMargin = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
-        ) {
-            Text(
-                if (cas) "换成统一身份认证" else "换成正方直接登录",
-                style = MiuixTheme.textStyles.title3,
-                color = MiuixTheme.colorScheme.onBackground,
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                if (loggedIn) {
-                    "会退出当前登录。本地课表留下。之后用${if (cas) "统一身份认证" else "正方教务"}重新登录。"
-                } else {
-                    if (cas) "之后从门户进教务，并能同步办事大厅。" else "之后只走正方登录页。"
-                },
-                style = MiuixTheme.textStyles.body2,
-                color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
-            )
-            Spacer(Modifier.height(12.dp))
-            Button(
-                onClick = { onConfirm(confirm) },
-                modifier = Modifier.fillMaxWidth(),
-                minHeight = 44.dp,
-                colors = ButtonDefaults.buttonColorsPrimary(),
-            ) { Text("换到这个渠道") }
-            Spacer(Modifier.height(8.dp))
-            Button(
-                onClick = onCancel,
-                modifier = Modifier.fillMaxWidth(),
-                minHeight = 44.dp,
-            ) { Text("取消") }
-        }
+        Text(body, style = MiuixTheme.textStyles.body2, color = MiuixTheme.colorScheme.onSurfaceContainerVariant)
+        Spacer(Modifier.height(12.dp))
+        Button(
+            onClick = onConfirm,
+            modifier = Modifier.fillMaxWidth(),
+            minHeight = 44.dp,
+            colors = ButtonDefaults.buttonColorsPrimary(),
+        ) { Text(confirmLabel) }
+        Spacer(Modifier.height(8.dp))
+        Button(
+            onClick = onCancel,
+            modifier = Modifier.fillMaxWidth(),
+            minHeight = 44.dp,
+        ) { Text("取消") }
     }
 }
 
@@ -699,6 +684,13 @@ private fun SemesterBlock(
             summary = start?.let { formatLongDate(it) } ?: "同步${school.jwxtName}后自动写入，也可以自己选",
             onClick = onToggleDate,
         )
+        if (pickingDate) {
+            TermStartPicker(
+                initial = start ?: mondayOf(today),
+                onPick = onPickTermStart,
+                embedded = true,
+            )
+        }
         ArrowPreference(
             title = "当前教学周",
             summary = if (snapshot.settings.hasTermStart()) {
@@ -708,50 +700,13 @@ private fun SemesterBlock(
             },
             onClick = onToggleWeek,
         )
-    }
-    if (pickingDate) {
-        Spacer(Modifier.height(8.dp))
-        TermStartPicker(
-            initial = start ?: mondayOf(today),
-            onPick = onPickTermStart,
-        )
-    }
-    if (pickingWeek) {
-        Spacer(Modifier.height(8.dp))
-        Card(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            insideMargin = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
-        ) {
-            Text(
-                "今天是第几周",
-                style = MiuixTheme.textStyles.footnote1,
-                color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
-            )
-            Spacer(Modifier.height(8.dp))
-            (1..maxWeek).chunked(4).forEach { row ->
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    row.forEach { item ->
-                        val selected = item == week
-                        Text(
-                            "第${item}周",
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(
-                                    if (selected) MiuixTheme.colorScheme.primary.copy(alpha = 0.14f)
-                                    else MiuixTheme.colorScheme.surface,
-                                )
-                                .clickable { onPickWeek(item) }
-                                .padding(vertical = 10.dp),
-                            textAlign = TextAlign.Center,
-                            color = if (selected) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onBackground,
-                            style = MiuixTheme.textStyles.body2,
-                        )
-                    }
-                    repeat(4 - row.size) { Spacer(Modifier.weight(1f)) }
+        if (pickingWeek) {
+            ChoiceChipPanel(title = "今天是第几周") {
+                (1..maxWeek).chunked(4).forEach { row ->
+                    ChoiceChipRow(
+                        items = row.map { item -> "第${item}周" to (item == week) },
+                        onPick = { index -> onPickWeek(row[index]) },
+                    )
                 }
             }
         }
@@ -762,6 +717,7 @@ private fun SemesterBlock(
 private fun TermStartPicker(
     initial: LocalDate,
     onPick: (LocalDate) -> Unit,
+    embedded: Boolean = false,
 ) {
     var month by remember(initial) { mutableStateOf(LocalDate(initial.year, initial.monthNumber, 1)) }
     var selected by remember(initial) { mutableStateOf(initial) }
@@ -772,10 +728,7 @@ private fun TermStartPicker(
     val total = ((lead + daysInMonth + 6) / 7) * 7
     val gridStart = first.minus(DatePeriod(days = lead))
     val monday = mondayOf(selected)
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        insideMargin = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
-    ) {
+    val body: @Composable () -> Unit = {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -865,84 +818,17 @@ private fun TermStartPicker(
             Text("用这一周当第1周")
         }
     }
-}
-
-@Composable
-private fun AliasBlock(
-    snapshot: AppSnapshot,
-    editingId: String?,
-    onToggle: (String) -> Unit,
-    onSave: (courseId: String, courseName: String, alias: String) -> Unit,
-) {
-    val courses = uniqueCourses(snapshot.slots)
-    if (courses.isEmpty()) return
-    val aliases = snapshot.settings.courseAliases
-    SmallTitle(text = "课表缩写")
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        insideMargin = PaddingValues(0.dp),
-    ) {
-        courses.forEach { course ->
-            val key = course.courseId.ifBlank { course.courseName }
-            val shown = compactCourseName(course.courseName, aliases, course.courseId)
-            val open = key == editingId
-            ArrowPreference(
-                title = course.courseName,
-                summary = "格子里显示 $shown",
-                onClick = { onToggle(key) },
-            )
-            if (open) {
-                AliasEditor(
-                    courseId = course.courseId,
-                    courseName = course.courseName,
-                    aliases = aliases,
-                    onSave = onSave,
-                )
-            }
+    if (embedded) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp)) {
+            body()
         }
-    }
-}
-
-@Composable
-private fun AliasEditor(
-    courseId: String,
-    courseName: String,
-    aliases: Map<String, String>,
-    onSave: (courseId: String, courseName: String, alias: String) -> Unit,
-) {
-    val key = courseId.ifBlank { courseName }
-    val fallback = compactCourseName(courseName)
-    var draft by remember(key) {
-        mutableStateOf(aliases[key] ?: aliases[courseName] ?: fallback)
-    }
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
-        Text(
-            "默认是 $fallback，最多 4 个字",
-            style = MiuixTheme.textStyles.footnote1,
-            color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
-        )
-        Spacer(Modifier.height(8.dp))
-        TextField(
-            value = draft,
-            onValueChange = { draft = it.take(4) },
-            label = "课表格子缩写",
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(12.dp))
-        Button(
-            onClick = { onSave(courseId, courseName, draft.trim()) },
-            enabled = draft.trim().isNotBlank(),
-            modifier = Modifier.fillMaxWidth(),
-            minHeight = 44.dp,
-            colors = ButtonDefaults.buttonColorsPrimary(),
-        ) { Text("保存缩写") }
-        Spacer(Modifier.height(8.dp))
-        Button(
-            onClick = { onSave(courseId, courseName, "") },
-            modifier = Modifier.fillMaxWidth(),
-            minHeight = 44.dp,
-        ) { Text("恢复默认") }
+    } else {
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
+        ) {
+            body()
+        }
     }
 }
 
@@ -981,6 +867,16 @@ private fun RemindBlock(
                 summary = "上课前 $lead 分钟",
                 onClick = onToggleLead,
             )
+            if (pickingLead) {
+                ChoiceChipPanel(title = "上课前多久弹出 Live") {
+                    RemindLeadMinutes.chunked(4).forEach { row ->
+                        ChoiceChipRow(
+                            items = row.map { item -> "${item}分" to (item == lead) },
+                            onPick = { index -> onPickLead(row[index]) },
+                        )
+                    }
+                }
+            }
         }
         ArrowPreference(
             title = if (liveTesting) "停止 Live 测试" else "测试 Live 通知",
@@ -995,45 +891,51 @@ private fun RemindBlock(
             )
         }
     }
-    if (school.hasPeriodClock && pickingLead) {
+}
+
+@Composable
+private fun ChoiceChipPanel(
+    title: String,
+    content: @Composable () -> Unit,
+) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp)) {
+        Text(
+            title,
+            style = MiuixTheme.textStyles.footnote1,
+            color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+        )
         Spacer(Modifier.height(8.dp))
-        Card(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            insideMargin = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
-        ) {
+        content()
+    }
+}
+
+@Composable
+private fun ChoiceChipRow(
+    items: List<Pair<String, Boolean>>,
+    onPick: (Int) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items.forEachIndexed { index, (label, selected) ->
             Text(
-                "上课前多久弹出 Live",
-                style = MiuixTheme.textStyles.footnote1,
-                color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                label,
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        if (selected) MiuixTheme.colorScheme.primary.copy(alpha = 0.14f)
+                        else MiuixTheme.colorScheme.surface,
+                    )
+                    .clickable { onPick(index) }
+                    .padding(vertical = 10.dp),
+                textAlign = TextAlign.Center,
+                color = if (selected) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onBackground,
+                style = MiuixTheme.textStyles.body2,
             )
-            Spacer(Modifier.height(8.dp))
-            RemindLeadMinutes.chunked(4).forEach { row ->
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    row.forEach { item ->
-                        val selected = item == lead
-                        Text(
-                            "${item}分",
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(
-                                    if (selected) MiuixTheme.colorScheme.primary.copy(alpha = 0.14f)
-                                    else MiuixTheme.colorScheme.surface,
-                                )
-                                .clickable { onPickLead(item) }
-                                .padding(vertical = 10.dp),
-                            textAlign = TextAlign.Center,
-                            color = if (selected) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onBackground,
-                            style = MiuixTheme.textStyles.body2,
-                        )
-                    }
-                    repeat(4 - row.size) { Spacer(Modifier.weight(1f)) }
-                }
-            }
         }
+        repeat(4 - items.size) { Spacer(Modifier.weight(1f)) }
     }
 }
 
@@ -1087,49 +989,47 @@ private fun DeveloperBlock(
             summary = if (origin.isBlank()) "选正方 / 强智 / 联奕，再填学校地址" else "$kindLabel · $origin",
             onClick = { expanded = !expanded },
         )
-    }
-    if (!expanded) return
-    Spacer(Modifier.height(8.dp))
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        insideMargin = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
-    ) {
-        Text(
-            "只改请求地址和路径。学校没公布的作息、空教室、验证码规则，青课不会编。",
-            style = MiuixTheme.textStyles.footnote1,
-            color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
-        )
-        Spacer(Modifier.height(10.dp))
-        Text(
-            "教务类型",
-            style = MiuixTheme.textStyles.footnote1,
-            color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
-        )
-        Spacer(Modifier.height(8.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            CustomKinds.forEach { (id, label) ->
-                val selected = kind == id
+        if (expanded) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp)) {
                 Text(
-                    label,
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(
-                            if (selected) MiuixTheme.colorScheme.primary.copy(alpha = 0.14f)
-                            else MiuixTheme.colorScheme.surface,
-                        )
-                        .clickable { kind = id }
-                        .padding(vertical = 10.dp),
-                    textAlign = TextAlign.Center,
-                    color = if (selected) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onBackground,
-                    style = MiuixTheme.textStyles.body2,
+                    "只改请求地址和路径。学校没公布的作息、空教室、验证码规则，青课不会编。",
+                    style = MiuixTheme.textStyles.footnote1,
+                    color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
                 )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "教务类型",
+                    style = MiuixTheme.textStyles.footnote1,
+                    color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    CustomKinds.forEach { (id, label) ->
+                        val selected = kind == id
+                        Text(
+                            label,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(
+                                    if (selected) MiuixTheme.colorScheme.primary.copy(alpha = 0.14f)
+                                    else MiuixTheme.colorScheme.surface,
+                                )
+                                .clickable { kind = id }
+                                .padding(vertical = 10.dp),
+                            textAlign = TextAlign.Center,
+                            color = if (selected) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onBackground,
+                            style = MiuixTheme.textStyles.body2,
+                        )
+                    }
+                }
             }
         }
     }
+    if (!expanded) return
     Spacer(Modifier.height(8.dp))
     TextField(
         value = name,

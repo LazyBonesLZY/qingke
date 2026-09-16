@@ -13,10 +13,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import cn.edu.gzus.qingke.data.AppSnapshot
+import cn.edu.gzus.qingke.data.coursePickBrief
 import cn.edu.gzus.qingke.data.leaveSummary
 import cn.edu.gzus.qingke.data.resolved
 import cn.edu.gzus.qingke.data.showsGzusHall
 import cn.edu.gzus.qingke.data.uniqueCourses
+import cn.edu.gzus.qingke.data.utilityBrief
 import cn.edu.gzus.qingke.data.xiaoaiImportSummary
 import cn.edu.gzus.qingke.nav.QingkeNavigator
 import cn.edu.gzus.qingke.nav.Route
@@ -46,11 +48,7 @@ fun JwxtScreen(
         ScreenHeader(
             "",
             "服务",
-            if (snapshot.session.loggedIn) {
-                if (snapshot.showsGzusHall()) "请假、宿舍水电、通知、空教室、考试、办事大厅、导入小爱" else "通知、空教室、考试、导入小爱、学籍"
-            } else {
-                "登录后同步。本地课表也能导入小爱"
-            },
+            if (snapshot.session.loggedIn) "校园常用功能" else "登录后同步",
         )
         if (!snapshot.session.loggedIn && !snapshot.hasTimetable) {
             Spacer(Modifier.height(12.dp))
@@ -77,15 +75,9 @@ fun JwxtScreen(
                 )
                 InfoCard(
                     title = "宿舍水电",
-                    summary = when {
-                        snapshot.utility.ready -> listOf(
-                            snapshot.utility.power.takeIf { it.isNotBlank() }?.let { "电 $it 度" },
-                            snapshot.utility.coldWater.takeIf { it.isNotBlank() }?.let { "冷水 $it" },
-                            snapshot.utility.hotWater.takeIf { it.isNotBlank() }?.let { "热水 $it" },
-                        ).filterNotNull().joinToString(" · ").ifBlank { "已同步" }
-                        snapshot.utility.error.isNotBlank() -> snapshot.utility.error
-                        else -> "广软一卡通剩余水电"
-                    },
+                    summary = snapshot.utilityBrief(),
+                    height = null,
+                    center = true,
                     onClick = { nav.open(Route.Utility) },
                 )
             }
@@ -98,7 +90,7 @@ fun JwxtScreen(
             InfoCard(
                 title = "通知",
                 summary = when {
-                    snapshot.notices.isNotEmpty() -> "${snapshot.notices.size} 条 · ${snapshot.notices.first().title}"
+                    snapshot.notices.isNotEmpty() -> "${snapshot.notices.size} 条"
                     snapshot.session.loggedIn -> "同步后出现"
                     else -> "登录后同步"
                 },
@@ -118,6 +110,13 @@ fun JwxtScreen(
                 summary = if (snapshot.exams.isEmpty()) "暂无安排" else "${snapshot.exams.size} 场",
                 onClick = { nav.open(Route.Exams) },
             )
+            if (school.supportsCoursePick) {
+                InfoCard(
+                    title = "选课",
+                    summary = snapshot.coursePickBrief(),
+                    onClick = { nav.open(Route.CoursePick) },
+                )
+            }
             InfoCard(
                 title = "导入小爱课程表",
                 summary = xiaoaiImportSummary(snapshot),

@@ -30,6 +30,7 @@ class JwxtClient(
     private val origin: String = "https://jwxt.gzus.edu.cn",
     private val client: HttpClient = createHttpClient(),
     override val supportsFreeRooms: Boolean = true,
+    override val supportsCoursePick: Boolean = true,
     private val paths: Map<String, String> = emptyMap(),
 ) : SchoolPortal {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -325,6 +326,304 @@ class JwxtClient(
         }
     }
 
+    override suspend fun fetchCoursePickScopes(): List<CoursePickScope> {
+        val gnmkdm = xsxkGnmkdm()
+        val indexUrl = api("courseIndex", "xsxk/zzxkyzb_cxZzxkYzbIndex.html")
+        val index = client.get(indexUrl) {
+            header(HttpHeaders.UserAgent, UA)
+            header(HttpHeaders.Referrer, "$BASE/xtgl/index_initMenu.html?jsdm=xs")
+            parameter("gnmkdm", gnmkdm)
+            parameter("layout", "default")
+        }.bodyAsText()
+        requireSession(index)
+        if (looksLikeCoursePickClosed(index)) error("现在不是选课时间")
+        val indexFields = htmlHiddenFields(index)
+        val categories = QueryCourse4.findAll(index).map { it.groupValues }.toList()
+        val categoryRows = if (categories.isNotEmpty()) {
+            categories
+        } else {
+            val firstKklxdm = indexFields["firstKklxdm"].orEmpty()
+            val firstXkkzId = indexFields["firstXkkzId"].orEmpty()
+            if (firstKklxdm.isNotBlank() && firstXkkzId.isNotBlank()) {
+                listOf(
+                    listOf(
+                        "",
+                        firstKklxdm,
+                        firstXkkzId,
+                        indexFields["firstNjdmId"].orEmpty().ifBlank { indexFields["njdm_id"].orEmpty() },
+                        indexFields["firstZyhId"].orEmpty().ifBlank { indexFields["zyh_id"].orEmpty() },
+                    ),
+                )
+            } else {
+                emptyList()
+            }
+        }
+        if (categoryRows.isEmpty() && indexFields["xkxnm"].isNullOrBlank() && indexFields["xkkz_id"].isNullOrBlank()) {
+            error("教务没有打开自主选课")
+        }
+        val rows = categoryRows.ifEmpty {
+            listOf(
+                listOf(
+                    "",
+                    indexFields["kklxdm"].orEmpty().ifBlank { "default" },
+                    indexFields["xkkz_id"].orEmpty(),
+                    indexFields["njdm_id"].orEmpty(),
+                    indexFields["zyh_id"].orEmpty(),
+                ),
+            )
+        }
+        val displayUrl = api("courseDisplay", "xsxk/zzxkyzb_cxZzxkYzbDisplay.html")
+        return rows.mapIndexed { indexNo, row ->
+            val kklxdm = row.getOrElse(1) { "" }
+            val xkkzId = row.getOrElse(2) { "" }
+            val njdm = row.getOrElse(3) { "" }
+            val zyh = row.getOrElse(4) { "" }
+            val fields = indexFields.toMutableMap()
+            fields["kklxdm"] = kklxdm
+            fields["xkkz_id"] = xkkzId
+            fields["njdm_id"] = njdm
+            fields["zyh_id"] = zyh
+            val display = postXsxk(
+                "$displayUrl?gnmkdm=$gnmkdm",
+                mapOf(
+                    "xkkz_id" to xkkzId,
+                    "kklxdm" to kklxdm,
+                    "xszxzt" to "1",
+                    "njdm_id" to njdm,
+                    "zyh_id" to zyh,
+                    "kspage" to "0",
+                    "jspage" to "0",
+                ),
+            )
+            requireSession(display)
+            fields.putAll(htmlHiddenFields(display))
+            indexFields["firstXkkzXh"]?.takeIf { it.isNotBlank() }?.let { fields["xkkz_xh"] = it }
+            indexFields["firstKklxmc"]?.takeIf { it.isNotBlank() }?.let { fields["kklxmc"] = it }
+            if (fields["jg_id"].isNullOrBlank()) {
+                fields["jg_id_1"]?.takeIf { it.isNotBlank() }?.let { fields["jg_id"] = it }
+            }
+            val name = fields["kklxmc"].orEmpty()
+                .ifBlank { categoryLabel(index, kklxdm, xkkzId) }
+                .ifBlank { fields["xklcmc"].orEmpty() }
+                .ifBlank { if (kklxdm == "default") "选课" else kklxdm }
+            CoursePickScope(
+                id = "zf-$indexNo-$kklxdm",
+                name = name,
+                params = fields,
+            )
+        }
+    }
+
+    override suspend fun fetchCoursePickOffers(
+        scope: CoursePickScope,
+        keyword: String,
+        start: Int,
+        pageSize: Int,
+    ): List<CoursePickOffer> {
+        val gnmkdm = xsxkGnmkdm()
+        val url = api("courseList", "xsxk/zzxkyzb_cxZzxkYzbPartDisplay.html")
+        val size = pageSize.coerceIn(1, 50)
+        val params = zzxkRequestParams(
+            scope.params,
+            keyword = keyword,
+            kspage = (start + 1).toString(),
+            jspage = (start + size).toString(),
+        )
+        val text = postXsxk("$url?gnmkdm=$gnmkdm", params)
+        return xsxkObjects(text, "tmpList", "courses", "items").map { item ->
+            offerFromJson(item, scope)
+        }
+    }
+
+    override suspend fun fetchCoursePickSections(offer: CoursePickOffer): List<CoursePickSection> {
+        val gnmkdm = xsxkGnmkdm()
+        val url = api("courseDetails", "xsxk/zzxkyzbjk_cxJxbWithKchZzxkYzb.html")
+        val params = zzxkRequestParams(
+            offer.params,
+            keyword = "",
+            kspage = "1",
+            jspage = "200",
+            extra = mapOf("kch_id" to offer.courseId),
+        )
+        val text = postXsxk("$url?gnmkdm=$gnmkdm", params)
+        return xsxkObjects(text, "tmpList", "data", "courses", "jxbList").map { item ->
+            sectionFromJson(item, offer)
+        }
+    }
+
+    override suspend fun selectCoursePick(offer: CoursePickOffer, section: CoursePickSection): String {
+        val gnmkdm = xsxkGnmkdm()
+        val fresh = runCatching { fetchCoursePickSections(offer) }.getOrDefault(emptyList())
+        val hit = fresh.firstOrNull { row ->
+            row.classId.isNotBlank() && (row.classId == section.classId || row.classId == section.doJxbId) ||
+                row.doJxbId.isNotBlank() && (row.doJxbId == section.doJxbId || row.doJxbId == section.classId)
+        } ?: section
+        val jxbIds = hit.doJxbId.ifBlank { hit.classId }
+        if (jxbIds.isBlank()) error("没有拿到教学班编号")
+        val url = api("courseSelect", "xsxk/zzxkyzbjk_xkBcZyZzxkYzb.html")
+        val text = postXsxk("$url?gnmkdm=$gnmkdm", selectFields(offer, hit.copy(doJxbId = jxbIds)))
+        return parseSelectResult(text)
+    }
+
+    override suspend fun fetchCoursePicked(scope: CoursePickScope): List<CoursePickOffer> {
+        val gnmkdm = xsxkGnmkdm()
+        val url = api("courseChosen", "xsxk/zzxkyzb_cxZzxkYzbChoosedDisplay.html")
+        val params = zzxkRequestParams(scope.params, keyword = "", kspage = "1", jspage = "200")
+        val text = postXsxk("$url?gnmkdm=$gnmkdm", params)
+        return xsxkObjects(text, "tmpList", "courses", "items", "data").map { item ->
+            offerFromJson(item, scope).copy(selected = true)
+        }
+    }
+
+    private fun xsxkGnmkdm(): String = paths["courseGnmkdm"]?.trim().orEmpty().ifBlank { "N253512" }
+
+    private suspend fun postXsxk(url: String, fields: Map<String, String>): String {
+        val gnmkdm = xsxkGnmkdm()
+        return client.submitForm(
+            url,
+            Parameters.build { fields.forEach { (k, v) -> append(k, v) } },
+        ) {
+            header(HttpHeaders.UserAgent, UA)
+            header("X-Requested-With", "XMLHttpRequest")
+            header(HttpHeaders.Accept, "application/json, text/javascript, */*; q=0.01")
+            header(HttpHeaders.Referrer, "$BASE/xsxk/zzxkyzb_cxZzxkYzbIndex.html?gnmkdm=$gnmkdm&layout=default")
+            header(HttpHeaders.Origin, origin)
+        }.bodyAsText()
+    }
+
+    private fun zzxkRequestParams(
+        source: Map<String, String>,
+        keyword: String,
+        kspage: String,
+        jspage: String,
+        extra: Map<String, String> = emptyMap(),
+    ): LinkedHashMap<String, String> {
+        val params = linkedMapOf<String, String>()
+        for (key in ZZXK_REQUEST_FIELDS) {
+            source[key]?.let { params[key] = it }
+        }
+        source["jg_id_1"]?.takeIf { it.isNotBlank() }?.let { params["jg_id"] = it }
+        if (source["jxbzbkg"] == "1") params["jxbzb"] = source["jxbzb"].orEmpty()
+        if (source["jxbzhkg"] == "1") params["zh"] = source["zh"].orEmpty()
+        if (keyword.isNotBlank()) params["filter_list[0]"] = keyword.trim()
+        params["kspage"] = kspage
+        params["jspage"] = jspage
+        params.putAll(extra)
+        return params
+    }
+
+    private fun selectFields(offer: CoursePickOffer, section: CoursePickSection): Map<String, String> {
+        val src = offer.params + section.params
+        val kch = offer.courseId.ifBlank { src["kch_id"].orEmpty() }
+        val name = offer.name.ifBlank { src["kcmc"].orEmpty() }
+        val out = linkedMapOf<String, String>()
+        out["jxb_ids"] = section.doJxbId.ifBlank { section.classId }
+        out["kch_id"] = kch
+        out["kcmc"] = if (name.startsWith("(")) name else "($kch)$name"
+        out["rwlx"] = src["rwlx"].orEmpty()
+        out["rlkz"] = src["rlkz"].orEmpty()
+        out["rlzlkz"] = src["rlzlkz"].orEmpty()
+        out["sxbj"] = src["sxbj"].orEmpty()
+        out["xxkbj"] = src["xxkbj"].orEmpty()
+        out["qz"] = src["qz"].orEmpty().ifBlank { "0" }
+        out["cxbj"] = src["cxbj"].orEmpty()
+        out["xkkz_id"] = src["xkkz_id"].orEmpty()
+        out["njdm_id"] = src["njdm_id"].orEmpty()
+        out["zyh_id"] = src["zyh_id"].orEmpty()
+        out["kklxdm"] = src["kklxdm"].orEmpty()
+        out["xklc"] = src["xklc"].orEmpty()
+        out["xkxnm"] = src["xkxnm"].orEmpty()
+        out["xkxqm"] = src["xkxqm"].orEmpty()
+        out["jcxx_id"] = src["jcxx_id"].orEmpty()
+        return out
+    }
+
+    private fun offerFromJson(item: JsonObject, scope: CoursePickScope): CoursePickOffer {
+        val raw = scope.params.toMutableMap()
+        for ((key, value) in item.flat()) {
+            if (value.isNotBlank()) raw[key] = value
+        }
+        val jsxx = item.str("jsxx")
+        val teacher = item.str("jsxm").ifBlank { teacherFromJsxx(jsxx) }
+        return CoursePickOffer(
+            courseId = item.str("kch_id").ifBlank { item.str("kch") },
+            name = stripXsxkHtml(item.str("kcmc")),
+            credit = item.str("xf").ifBlank { item.str("jxbxf") },
+            teacher = teacher,
+            className = item.str("jxbmc"),
+            classId = item.str("jxb_id"),
+            time = stripXsxkHtml(item.str("sksj")),
+            place = stripXsxkHtml(item.str("jxdd")),
+            capacity = item.str("jxbrl").ifBlank { item.str("jxbrs") },
+            taken = item.str("yxzrs"),
+            selected = item.str("sfxkbj") == "1",
+            scopeId = scope.id,
+            params = raw,
+        )
+    }
+
+    private fun sectionFromJson(item: JsonObject, offer: CoursePickOffer): CoursePickSection {
+        val raw = offer.params.toMutableMap()
+        for ((key, value) in item.flat()) {
+            if (value.isNotBlank()) raw[key] = value
+        }
+        val jsxx = item.str("jsxx")
+        val classId = item.str("jxb_id")
+        return CoursePickSection(
+            classId = classId,
+            doJxbId = item.str("do_jxb_id").ifBlank { classId },
+            name = item.str("jxbmc").ifBlank { offer.className }.ifBlank { offer.name },
+            teacher = item.str("jsxm").ifBlank { teacherFromJsxx(jsxx) }.ifBlank { offer.teacher },
+            time = stripXsxkHtml(item.str("sksj")).ifBlank { offer.time },
+            place = stripXsxkHtml(item.str("jxdd")).ifBlank { offer.place },
+            credit = item.str("xf").ifBlank { item.str("jxbxf") }.ifBlank { offer.credit },
+            capacity = item.str("jxbrl").ifBlank { item.str("jxbrs") }.ifBlank { offer.capacity },
+            taken = item.str("yxzrs").ifBlank { offer.taken },
+            params = raw,
+        )
+    }
+
+    private fun parseSelectResult(text: String): String {
+        requireSession(text)
+        val body = text.trim().trim('"')
+        if (body == "1") return "选课成功"
+        val root = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull()
+        val flag = root?.str("flag").orEmpty()
+        val msg = root?.str("msg").orEmpty().ifBlank { root?.str("message").orEmpty() }
+        if (flag == "1" || body.contains("\"flag\":\"1\"")) return msg.ifBlank { "选课成功" }
+        if (msg.contains("已经选") || msg.contains("已选该") || msg.contains("重复选课")) return msg
+        if (msg.isNotBlank()) error(msg)
+        if (body.contains("成功")) return "选课成功"
+        error(body.take(120).ifBlank { "选课失败" })
+    }
+
+    private fun xsxkObjects(text: String, vararg keys: String): List<JsonObject> {
+        requireSession(text)
+        val body = text.trim()
+        if (body.isEmpty() || body == "null" || body == "[]") return emptyList()
+        if (body.startsWith("<")) {
+            requireSession(body)
+            error("教务这次没返回数据")
+        }
+        val el = runCatching { json.parseToJsonElement(body) }.getOrElse {
+            error("教务返回了无法识别的列表")
+        }
+        when (el) {
+            is JsonArray -> return el.mapNotNull { it as? JsonObject }
+            is JsonObject -> {
+                val flag = el.str("flag")
+                val msg = el.str("msg").ifBlank { el.str("message") }
+                for (key in keys) {
+                    val arr = el[key] as? JsonArray
+                    if (arr != null) return arr.mapNotNull { it as? JsonObject }
+                }
+                if (flag in setOf("0", "false") && msg.isNotBlank()) error(msg)
+                return emptyList()
+            }
+            else -> error("教务返回了无法识别的列表")
+        }
+    }
+
     private suspend fun fetchNewsWidget(): List<NoticeItem> {
         val posted = runCatching {
             val page = client.submitForm(
@@ -432,7 +731,10 @@ class JwxtClient(
         val body = text.trim()
         requireSession(body)
         if (body.isEmpty() || body == "null") error(emptyHint)
-        if (body.startsWith("<")) error("登录已过期，请重新登录")
+        if (body.startsWith("<")) {
+            requireSession(body)
+            error("教务这次没返回数据")
+        }
         return json.parseToJsonElement(body).jsonObject
     }
 }
@@ -440,10 +742,85 @@ class JwxtClient(
 private fun JsonObject.str(key: String): String =
     (this[key] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
 
+private fun JsonObject.flat(): Map<String, String> {
+    val out = linkedMapOf<String, String>()
+    for ((key, value) in this) {
+        val primitive = value as? JsonPrimitive ?: continue
+        out[key] = primitive.contentOrNull?.trim().orEmpty()
+    }
+    return out
+}
+
+private val QueryCourse4 = Regex(
+    """queryCourse\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]*)['"]\s*,\s*['"]([^'"]*)['"]""",
+)
+
+private val HiddenInput = Regex("""<input\b[^>]*>""", RegexOption.IGNORE_CASE)
+
+private val ZZXK_REQUEST_FIELDS = listOf(
+    "rwlx", "xklc", "xkly", "bklx_id", "sfkkjyxdxnxq", "kzkcgs",
+    "xqh_id", "njdm_id_1", "zyh_id_1", "gnjkxdnj", "zyh_id", "zyfx_id", "njdm_id", "bh_id",
+    "bjgkczxbbjwcx", "xbm", "xslbdm", "mzm", "xz", "ccdm", "xsbj", "sfkknj", "sfkkzy", "kzybkxy",
+    "sfznkx", "zdkxms", "sfkxq", "bhbcyxkjxb", "sfkcfx", "kkbk", "kkbkdj", "bklbkcj", "sfkgbcx",
+    "sfrxtgkcxd", "xkkz_xh", "tykczgxdcs", "xkxnm", "xkxqm", "kklxdm", "bbhzxjxb", "zxgbxkkg",
+    "xkkz_id", "rlkz", "xkzgbj",
+)
+
+private fun htmlHiddenFields(html: String): Map<String, String> {
+    val out = linkedMapOf<String, String>()
+    for (tag in HiddenInput.findAll(html).map { it.value }) {
+        val type = htmlAttr(tag, "type").lowercase()
+        if (type.isNotBlank() && type != "hidden") continue
+        val name = htmlAttr(tag, "name").ifBlank { htmlAttr(tag, "id") }
+        if (name.isBlank()) continue
+        out[name] = htmlAttr(tag, "value")
+    }
+    return out
+}
+
+private fun htmlAttr(tag: String, name: String): String =
+    Regex("""\b${Regex.escape(name)}\s*=\s*["']([^"']*)["']""", RegexOption.IGNORE_CASE)
+        .find(tag)?.groupValues?.get(1)?.trim().orEmpty()
+
+private fun categoryLabel(html: String, kklxdm: String, xkkzId: String): String {
+    if (kklxdm.isBlank()) return ""
+    val needle = Regex(
+        """queryCourse\s*\(\s*['"]${Regex.escape(kklxdm)}['"]\s*,\s*['"]${Regex.escape(xkkzId)}['"][^)]*\)""",
+    ).find(html) ?: return ""
+    return Regex(""">\s*([^<>]{1,20}?)\s*<""")
+        .find(html, needle.range.last + 1)
+        ?.groupValues?.get(1)
+        ?.trim()
+        .orEmpty()
+        .takeIf { it.isNotBlank() && !it.contains("javascript", ignoreCase = true) }
+        .orEmpty()
+}
+
+private fun looksLikeCoursePickClosed(html: String): Boolean {
+    val text = html.replace(Regex("<[^>]+>"), " ")
+    return listOf("不属于选课", "当前不是选课", "不在选课时间", "未开放选课", "选课时间已过").any { text.contains(it) }
+}
+
+private fun stripXsxkHtml(raw: String): String =
+    raw.replace(Regex("""<br\s*/?>""", RegexOption.IGNORE_CASE), " · ")
+        .replace(Regex("<[^>]+>"), " ")
+        .replace("&nbsp;", " ")
+        .replace(Regex("\\s+"), " ")
+        .trim()
+        .trim('-', '·', ' ')
+
+private fun teacherFromJsxx(raw: String): String {
+    val parts = raw.split('/').map { it.trim() }.filter { it.isNotBlank() }
+    return when {
+        parts.size >= 2 -> parts[1]
+        else -> raw.trim()
+    }
+}
+
 private fun requireSession(text: String) {
     val body = text.trim()
     if (body.contains("用户登录") && (body.contains("name=\"yhm\"") || body.contains("name='yhm'"))) {
-        error("登录已过期，请重新登录")
+        error(SESSION_LOST_HINT)
     }
 }
 
@@ -635,24 +1012,21 @@ internal fun parseNoticeDetail(id: String, html: String): NoticeItem {
         .map { extractHtmlBlock(cleaned, it) }
         .firstOrNull { it.isNotBlank() }
         ?: cleaned
-    val content = htmlToText(bodyHtml).lines()
-        .map { it.trimEnd() }
-        .filter { line ->
-            val t = line.trim()
-            t.isNotBlank() &&
-                t != "通知详情" &&
-                t != title &&
-                !t.startsWith("版权所有") &&
-                !t.contains("正方软件股份有限公司")
-        }
-        .joinToString("\n")
-        .trim()
+    val (content, parts) = parseNoticeBody(bodyHtml) { line ->
+        val t = line.trim()
+        t.isBlank() ||
+            t == "通知详情" ||
+            t == title ||
+            t.startsWith("版权所有") ||
+            t.contains("正方软件股份有限公司")
+    }
     return NoticeItem(
         id = id,
         title = title,
         date = published.take(10),
         publisher = publisher,
         content = content,
+        parts = parts,
     )
 }
 
@@ -661,6 +1035,7 @@ internal fun NoticeItem.mergeDetail(other: NoticeItem): NoticeItem = copy(
     date = date.ifBlank { other.date },
     publisher = publisher.ifBlank { other.publisher },
     content = other.content.ifBlank { content },
+    parts = other.parts.ifEmpty { parts },
 )
 
 internal fun mergeNoticeLists(vararg lists: List<NoticeItem>): List<NoticeItem> {
@@ -693,6 +1068,7 @@ internal fun mergeNoticeCache(fresh: List<NoticeItem>, old: List<NoticeItem>): L
         if (item.content.isNotBlank()) item
         else item.copy(
             content = cached.content,
+            parts = if (item.parts.isNotEmpty()) item.parts else cached.parts,
             publisher = item.publisher.ifBlank { cached.publisher },
         )
     }
@@ -725,6 +1101,65 @@ private fun extractBalancedInner(html: String, tag: String, start: Int): String 
         }
     }
     return html.substring(start)
+}
+
+internal fun parseNoticeBody(html: String, drop: (String) -> Boolean = { false }): Pair<String, List<NoticePart>> {
+    val parts = mutableListOf<NoticePart>()
+    val tablePat = Regex("""<table\b[\s\S]*?</table>""", RegexOption.IGNORE_CASE)
+    var last = 0
+    for (match in tablePat.findAll(html)) {
+        val before = noticePlain(html.substring(last, match.range.first), drop)
+        if (before.isNotBlank()) parts += NoticePart.Text(before)
+        parseHtmlTable(match.value)?.let { parts += it }
+        last = match.range.last + 1
+    }
+    val after = noticePlain(html.substring(last), drop)
+    if (after.isNotBlank()) parts += NoticePart.Text(after)
+    val content = parts.joinToString("\n\n") { part ->
+        when (part) {
+            is NoticePart.Text -> part.text
+            is NoticePart.Table -> formatNoticeTable(part)
+        }
+    }
+    return content to parts
+}
+
+private fun noticePlain(html: String, drop: (String) -> Boolean): String =
+    htmlToText(html).lines()
+        .map { it.trimEnd() }
+        .filter { it.isNotBlank() && !drop(it) }
+        .joinToString("\n")
+        .trim()
+
+private fun parseHtmlTable(tableHtml: String): NoticePart.Table? {
+    val rows = Regex("""<tr\b[\s\S]*?</tr>""", RegexOption.IGNORE_CASE).findAll(tableHtml).map { row ->
+        Regex("""<t[hd]\b[^>]*>([\s\S]*?)</t[hd]>""", RegexOption.IGNORE_CASE)
+            .findAll(row.value)
+            .map { htmlUnescape(stripTags(it.groupValues[1])).trim() }
+            .toList()
+    }.filter { row -> row.any { it.isNotBlank() } }.toList()
+    if (rows.isEmpty()) return null
+    val header = if (
+        tableHtml.contains(Regex("""<th\b""", RegexOption.IGNORE_CASE)) ||
+        rows.size > 1 && rows.first().all { it.isNotBlank() }
+    ) {
+        rows.first()
+    } else {
+        emptyList()
+    }
+    val body = if (header.isNotEmpty()) rows.drop(1) else rows
+    return NoticePart.Table(headers = header, rows = body)
+}
+
+private fun formatNoticeTable(table: NoticePart.Table): String {
+    val cols = maxOf(table.headers.size, table.rows.maxOfOrNull { it.size } ?: 0)
+    val all = buildList {
+        if (table.headers.isNotEmpty()) add(table.headers)
+        addAll(table.rows)
+    }
+    return all.joinToString("\n") { row ->
+        (0 until cols).joinToString("  ") { index -> row.getOrElse(index) { "" } }
+    }
 }
 
 private fun htmlToText(html: String): String {

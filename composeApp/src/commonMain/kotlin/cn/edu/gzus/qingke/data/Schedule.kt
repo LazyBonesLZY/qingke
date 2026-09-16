@@ -137,6 +137,19 @@ fun periodStart(period: String): String {
     }
 }
 
+fun periodClockRange(period: String): String {
+    val first = period.substringBefore("-").toIntOrNull() ?: return ""
+    val last = period.substringAfter("-", period).toIntOrNull() ?: first
+    if (first !in 1..16 || last !in 1..16) return ""
+    return "${periodStart(period)}-${periodEnd(period)}"
+}
+
+fun formatPeriodWithClock(period: String, periodLabel: String = "", hasClock: Boolean): String {
+    val label = periodLabel.ifBlank { period }
+    val clock = if (hasClock) periodClockRange(period) else ""
+    return if (clock.isBlank()) label else "$label · $clock"
+}
+
 fun periodEnd(period: String): String {
     val last = period.substringAfter("-", period).toIntOrNull() ?: return "10:20"
     return when (last) {
@@ -168,9 +181,19 @@ data class LiveLesson(
     val inClass: Boolean get() = minutesToStart <= 0 && minutesToEnd > 0
 }
 
-fun nextLiveLesson(slots: List<LessonSlot>, week: Int, weekday: Int, time: LocalTime): LiveLesson? {
-    val today = slots.forDay(week, weekday)
-    today.forEach { slot ->
+fun nextLiveLesson(slots: List<LessonSlot>, week: Int, weekday: Int, time: LocalTime): LiveLesson? =
+    liveLessonFrom(slots.forDay(week, weekday), time)
+
+fun nextLiveLesson(
+    slots: List<LessonSlot>,
+    date: LocalDate,
+    settings: AppSettings,
+    today: LocalDate,
+    time: LocalTime,
+): LiveLesson? = liveLessonFrom(slots.forDate(date, settings, today), time)
+
+private fun liveLessonFrom(day: List<LessonSlot>, time: LocalTime): LiveLesson? {
+    day.forEach { slot ->
         val toStart = minutesUntil(time, periodStart(slot.period)) ?: return@forEach
         val toEnd = minutesUntil(time, periodEnd(slot.period)) ?: return@forEach
         if (toEnd > 0) return LiveLesson(slot, toStart, toEnd)
@@ -180,6 +203,17 @@ fun nextLiveLesson(slots: List<LessonSlot>, week: Int, weekday: Int, time: Local
 
 fun nextLesson(slots: List<LessonSlot>, week: Int, weekday: Int, time: LocalTime): Pair<LessonSlot, Int>? {
     val next = nextLiveLesson(slots, week, weekday, time) ?: return null
+    return next.slot to if (next.inClass) 0 else next.minutesToStart
+}
+
+fun nextLesson(
+    slots: List<LessonSlot>,
+    date: LocalDate,
+    settings: AppSettings,
+    today: LocalDate,
+    time: LocalTime,
+): Pair<LessonSlot, Int>? {
+    val next = nextLiveLesson(slots, date, settings, today, time) ?: return null
     return next.slot to if (next.inClass) 0 else next.minutesToStart
 }
 
@@ -377,8 +411,82 @@ fun List<LessonSlot>.forBlock(week: Int, weekday: Int, block: PeriodBlock): List
     filter { it.weekday == weekday && it.activeIn(week) && it.occupiesBlock(block) }
         .sortedBy { periodSortKey(it.period) }
 
+fun List<LessonSlot>.forBlockOnDate(
+    date: LocalDate,
+    block: PeriodBlock,
+    settings: AppSettings,
+    today: LocalDate,
+): List<LessonSlot> =
+    forDate(date, settings, today).filter { it.occupiesBlock(block) }.sortedBy { periodSortKey(it.period) }
+
+fun AppSettings.shiftFrom(date: LocalDate): ScheduleShift? =
+    scheduleShifts.firstOrNull { parseIsoDate(it.fromDate) == date }
+
+fun AppSettings.shiftsOnto(date: LocalDate): List<ScheduleShift> =
+    scheduleShifts.filter { parseIsoDate(it.toDate) == date }
+
+fun AppSettings.hasShift(date: LocalDate): Boolean =
+    shiftFrom(date) != null || shiftsOnto(date).isNotEmpty()
+
+fun AppSettings.shiftConflict(from: LocalDate, to: LocalDate): String? {
+    if (from == to) return "原上课日和调到的那天不能是同一天"
+    val fromIso = from.toString()
+    val toIso = to.toString()
+    if (scheduleShifts.any { it.fromDate == fromIso || it.toDate == fromIso }) return "原上课日已经有调课"
+    if (scheduleShifts.any { it.fromDate == toIso || it.toDate == toIso }) return "调到的那天已经有调课"
+    return null
+}
+
+fun formatShift(shift: ScheduleShift): String {
+    val from = parseIsoDate(shift.fromDate)
+    val to = parseIsoDate(shift.toDate)
+    if (from == null || to == null) return "${shift.fromDate} → ${shift.toDate}"
+    return "${formatMonthDay(from)}周${WeekdayNames.getOrElse(weekdayIndex(from) - 1) { "?" }} → ${formatMonthDay(to)}周${WeekdayNames.getOrElse(weekdayIndex(to) - 1) { "?" }}"
+}
+
+fun AppSettings.shiftNoteFor(slot: LessonSlot, today: LocalDate): String =
+    scheduleShifts.mapNotNull { shift ->
+        val from = parseIsoDate(shift.fromDate) ?: return@mapNotNull null
+        val to = parseIsoDate(shift.toDate) ?: return@mapNotNull null
+        if (weekdayIndex(from) != slot.weekday) return@mapNotNull null
+        if (!slot.activeIn(teachingWeekOn(from, this, today))) return@mapNotNull null
+        "${formatMonthDay(from)} 调到 ${formatMonthDay(to)}"
+    }.joinToString("；")
+
+fun holidayShiftHints(
+    holidays: HolidayCalendar,
+    settings: AppSettings,
+    slots: List<LessonSlot>,
+    today: LocalDate,
+): Pair<List<HolidayDay>, List<HolidayDay>> {
+    val start = settings.termStartMonday()
+    val end = start?.plus(DatePeriod(days = settings.resolvedWeekCount(slots).coerceIn(1, 30) * 7))
+    fun inTerm(date: LocalDate): Boolean = start == null || (date >= start && (end == null || date < end))
+    val offDays = holidays.days.filter { day ->
+        day.off && parseIsoDate(day.date)?.let { date ->
+            inTerm(date) && weekdayIndex(date) in 1..5
+        } == true
+    }
+    val makeupDays = holidays.days.filter { day ->
+        !day.off && parseIsoDate(day.date)?.let { date ->
+            inTerm(date) && weekdayIndex(date) >= 6
+        } == true
+    }
+    return offDays to makeupDays
+}
+
 fun List<LessonSlot>.forDate(date: LocalDate, settings: AppSettings, today: LocalDate): List<LessonSlot> {
+    if (settings.shiftFrom(date) != null) return emptyList()
+    val incoming = settings.shiftsOnto(date)
+    if (incoming.isNotEmpty()) {
+        return incoming.flatMap { shift ->
+            val src = parseIsoDate(shift.fromDate) ?: return@flatMap emptyList()
+            forDay(teachingWeekOn(src, settings, today), weekdayIndex(src))
+        }.distinctBy { "${it.courseId}/${it.period}/${it.weekday}/${it.weeks}" }
+            .sortedBy { periodSortKey(it.period) }
+    }
     val week = teachingWeekOn(date, settings, today)
+    if (week < 1) return emptyList()
     return forDay(week, weekdayIndex(date))
 }
 

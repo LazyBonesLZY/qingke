@@ -23,9 +23,7 @@ import cn.edu.gzus.qingke.data.uniqueCourses
 import cn.edu.gzus.qingke.nav.QingkeNavigator
 import cn.edu.gzus.qingke.nav.Route
 import cn.edu.gzus.qingke.nav.TabDest
-import cn.edu.gzus.qingke.ui.components.CanvasProfileHeight
 import cn.edu.gzus.qingke.ui.components.InfoCard
-import cn.edu.gzus.qingke.ui.components.ProgressLine
 import cn.edu.gzus.qingke.ui.components.ScreenHeader
 import cn.edu.gzus.qingke.ui.components.StatRow
 import cn.edu.gzus.qingke.ui.components.tabPagePadding
@@ -70,15 +68,19 @@ fun GradesScreen(
                 else -> "去「我的」登录${jwxt}。"
             },
             modifier = Modifier.padding(horizontal = 16.dp),
-            height = CanvasProfileHeight,
+            height = null,
+            progress = progress,
+            progressLabel = when {
+                planned > 0.0 -> "${formatScore(gpa.credits)}/${planned.toInt()}学分"
+                gpa.credits > 0.0 -> "${formatScore(gpa.credits)}学分"
+                else -> ""
+            },
             onClick = if (!snapshot.session.loggedIn) {
                 { nav.goTab(TabDest.Mine) }
             } else {
                 null
             },
         )
-        Spacer(Modifier.height(8.dp))
-        ProgressLine(progress)
         Spacer(Modifier.height(14.dp))
         StatRow(
             items = listOf(

@@ -204,6 +204,8 @@ fun InfoCard(
     tintTitle: Boolean = false,
     dimmed: Boolean = false,
     center: Boolean = false,
+    progress: Float? = null,
+    progressLabel: String = "",
     onClick: (() -> Unit)? = null,
 ) {
     val wrap = height == null
@@ -217,9 +219,10 @@ fun InfoCard(
         pressFeedbackType = if (onClick != null) PressFeedbackType.Sink else PressFeedbackType.None,
         onClick = onClick,
     ) {
-        Box(
+        Column(
             modifier = if (wrap) Modifier.fillMaxWidth() else Modifier.fillMaxSize(),
-            contentAlignment = if (center) Alignment.Center else Alignment.CenterStart,
+            verticalArrangement = if (progress != null && !wrap) Arrangement.SpaceBetween else Arrangement.Center,
+            horizontalAlignment = if (center) Alignment.CenterHorizontally else Alignment.Start,
         ) {
             Column(
                 modifier = Modifier.fillMaxWidth(),
@@ -264,6 +267,45 @@ fun InfoCard(
                     }
                 }
             }
+            if (progress != null) {
+                if (wrap) Spacer(Modifier.height(12.dp))
+                else Spacer(Modifier.height(8.dp))
+                CardProgressRow(progress = progress, progressLabel = progressLabel)
+            }
+        }
+    }
+}
+
+@Composable
+private fun CardProgressRow(
+    progress: Float,
+    progressLabel: String,
+    track: Color = MiuixTheme.colorScheme.primary.copy(alpha = 0.18f),
+    fill: Color = MiuixTheme.colorScheme.primary,
+    labelColor: Color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier
+                .weight(1f)
+                .height(4.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(track),
+        ) {
+            Box(
+                Modifier
+                    .fillMaxHeight()
+                    .fillMaxWidth(progress.coerceIn(0f, 1f))
+                    .background(fill),
+            )
+        }
+        if (progressLabel.isNotBlank()) {
+            Spacer(Modifier.width(8.dp))
+            Text(
+                progressLabel,
+                style = MiuixTheme.textStyles.footnote1,
+                color = labelColor,
+            )
         }
     }
 }

@@ -234,7 +234,25 @@ class AppRepository(
 
     suspend fun checkSession() {
         if (!_state.value.session.loggedIn) return
+        val snap = _state.value
+        if (snap.settings.school() == School.Gzus && snap.settings.gzusUsesCas()) {
+            if (!gzusCas.refreshTickets(force = true)) {
+                markSessionExpired()
+                error(SESSION_LOST_HINT)
+            }
+            return
+        }
         withLiveSession { }
+    }
+
+    suspend fun keepAlive() {
+        if (!_state.value.session.loggedIn) return
+        val snap = _state.value
+        if (snap.settings.school() != School.Gzus || !snap.settings.gzusUsesCas()) return
+        if (!gzusCas.refreshTickets(force = false)) {
+            markSessionExpired()
+            error(SESSION_LOST_HINT)
+        }
     }
 
     suspend fun sync() {
@@ -428,7 +446,29 @@ class AppRepository(
         } catch (failed: Throwable) {
             if (failed is JwxtNeedFirstLogin) throw failed
             if (isTransientNetwork(failed)) throw failed
-            if (isSessionLost(failed.message.orEmpty())) {
+            val message = failed.message.orEmpty()
+            val cas = _state.value.settings.school() == School.Gzus && _state.value.settings.gzusUsesCas()
+            if (cas && (isSessionLost(message) || isHallSessionHint(message))) {
+                val revived = runCatching { gzusCas.refreshTickets(force = true) }.getOrDefault(false)
+                if (revived) {
+                    return try {
+                        block()
+                    } catch (again: Throwable) {
+                        if (again is JwxtNeedFirstLogin || isTransientNetwork(again)) throw again
+                        if (isSessionLost(again.message.orEmpty()) && !gzusCas.hasTgt()) {
+                            markSessionExpired()
+                            error(SESSION_LOST_HINT)
+                        }
+                        throw again
+                    }
+                }
+                if (isSessionLost(message) && !gzusCas.hasTgt()) {
+                    markSessionExpired()
+                    error(SESSION_LOST_HINT)
+                }
+                if (isHallSessionHint(message)) throw failed
+            }
+            if (isSessionLost(message)) {
                 markSessionExpired()
                 error(SESSION_LOST_HINT)
             }

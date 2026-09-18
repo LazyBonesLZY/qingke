@@ -15,7 +15,7 @@
 
 ## 更新
 
-当前版本 **1.6.14**（versionCode 37）。Android 8.0（API 26）及以上。服务里的选课走正方自主选课（N253512），可搜索、立即选、排队到点提交。
+当前版本 **1.6.15**（versionCode 38）。Android 8.0（API 26）及以上。服务里的选课走正方自主选课（N253512），可搜索、立即选、排队到点提交。
 
 - GitHub Release：应用里检查 `LazyBonesLZY/qingke` 最新版，再跳到 Release / APK
 - 网盘：浏览器打开 [https://storage.lazzyy.cn/@s/KB](https://storage.lazzyy.cn/@s/KB)

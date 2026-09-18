@@ -218,6 +218,7 @@ interface SchoolPortal {
     suspend fun fetchFreeRooms(year: String, term: String, weekday: String, start: String, end: String): List<FreeRoom>
     suspend fun fetchNotices(): List<NoticeItem>
     suspend fun fetchNoticeDetail(id: String): NoticeItem
+    suspend fun keepAlive(): Boolean = true
     suspend fun fetchHall(): HallSnapshot? = null
     suspend fun fetchLeaveForm(affairId: String = ""): LeaveForm? = null
     suspend fun submitLeave(form: LeaveForm, values: Map<String, String>): String =

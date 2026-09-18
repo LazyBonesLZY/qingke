@@ -18,6 +18,8 @@ import io.ktor.http.Parameters
 import io.ktor.http.Url
 import io.ktor.http.contentType
 import io.ktor.http.decodeURLQueryComponent
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.datetime.Clock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -39,7 +41,9 @@ class GzusCasClient(
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val cas = GZUS_CAS_ORIGIN.trimEnd('/')
     private val ehall = GZUS_EHALL_ORIGIN.trimEnd('/')
+    private val keepMutex = Mutex()
     private var cachedTgt = ""
+    private var lastKeepAliveAt = 0L
     private var roomCatalog: List<EcardRoomRow> = emptyList()
 
     override suspend fun fetchCaptcha(): LoginCaptcha? {
@@ -95,11 +99,25 @@ class GzusCasClient(
         consumeJwxtTicket(st)
     }
 
+    override suspend fun keepAlive(): Boolean = refreshTickets(force = false)
+
     override suspend fun fetchHall(): HallSnapshot {
-        ensureEhall()
+        runCatching { ensureEhall() }.onFailure { failed ->
+            if (failed is JwxtNeedFirstLogin) throw failed
+            if (isTransientNetwork(failed)) throw failed
+            if (isSessionLost(failed.message.orEmpty()) && !hasTgt()) throw failed
+            if (isSessionLost(failed.message.orEmpty())) throw failed
+            return HallSnapshot(error = failed.message?.ifBlank { HALL_SESSION_HINT } ?: HALL_SESSION_HINT)
+        }
         runCatching { tryLoginEhall() }
-        val nameRoot = runCatching { hallGet("api/authc/users/name") }.getOrNull()
-        if (nameRoot != null && hallDenied(nameRoot)) error(SESSION_LOST_HINT)
+        var nameRoot = runCatching { hallGet("api/authc/users/name") }.getOrNull()
+        if (nameRoot != null && hallDenied(nameRoot) && hasTgt()) {
+            runCatching { openEhall(currentTgt()) }
+            nameRoot = runCatching { hallGet("api/authc/users/name") }.getOrNull()
+        }
+        if (nameRoot != null && hallDenied(nameRoot)) {
+            return HallSnapshot(error = HALL_SESSION_HINT)
+        }
         val userName = runCatching { hallUserName(nameRoot) }.getOrDefault("")
         val pending = runCatching { hallTodos("api/bpm/processes/tasks/pending", "待办") }.getOrDefault(emptyList())
         val apply = runCatching { hallTodos("api/bpm/processes/tasks/apply", "申请") }.getOrDefault(emptyList())
@@ -249,15 +267,51 @@ class GzusCasClient(
     }
 
     suspend fun requireLiveSession() {
+        if (!refreshTickets(force = false)) error(SESSION_LOST_HINT)
+    }
+
+    fun hasTgt(): Boolean = currentTgt().startsWith("TGT-")
+
+    suspend fun refreshTickets(force: Boolean = false): Boolean = keepMutex.withLock {
+        val now = Clock.System.now().toEpochMilliseconds()
+        if (!force && now - lastKeepAliveAt < 60_000L && hasTgt() && probeEhall()) {
+            return true
+        }
         val tgt = currentTgt()
-        if (!tgt.startsWith("TGT-")) error(SESSION_LOST_HINT)
-        consumeJwxtTicket(requestServiceTicket(tgt, GZUS_JWXT_SSO_SERVICE))
+        if (!tgt.startsWith("TGT-")) return false
+        val jwxt = runCatching {
+            consumeJwxtTicket(requestServiceTicket(tgt, GZUS_JWXT_SSO_SERVICE))
+        }
+        jwxt.exceptionOrNull()?.let { failed ->
+            if (failed is JwxtNeedFirstLogin || isTransientNetwork(failed)) throw failed
+            if (isSessionLost(failed.message.orEmpty())) return false
+        }
+        runCatching { refreshEhall() }
+        lastKeepAliveAt = now
+        rememberTgt(currentTgt())
+        true
     }
 
     private suspend fun ensureEhall() {
+        if (probeEhall()) return
         val tgt = currentTgt()
         if (!tgt.startsWith("TGT-")) error(SESSION_LOST_HINT)
         openEhall(tgt)
+        if (!probeEhall()) error(HALL_SESSION_HINT)
+    }
+
+    private suspend fun refreshEhall() {
+        if (probeEhall()) return
+        val tgt = currentTgt()
+        if (!tgt.startsWith("TGT-")) error(SESSION_LOST_HINT)
+        openEhall(tgt)
+        if (!probeEhall()) error(HALL_SESSION_HINT)
+    }
+
+    private suspend fun probeEhall(): Boolean {
+        runCatching { tryLoginEhall() }
+        val name = runCatching { hallGet("api/authc/users/name") }.getOrNull() ?: return false
+        return !hallDenied(name)
     }
 
     private suspend fun ensureEcard() {
@@ -276,6 +330,7 @@ class GzusCasClient(
 
     fun forgetTickets() {
         cachedTgt = ""
+        lastKeepAliveAt = 0L
     }
 
     override suspend fun logout() {
@@ -313,12 +368,13 @@ class GzusCasClient(
     }
 
     private suspend fun openEhall(tgt: String) {
+        rememberTgt(tgt)
         val st = requestServiceTicket(tgt, GZUS_EHALL_CAS_SERVICE)
-        val jump = client.get(GZUS_EHALL_CAS_SERVICE) {
-            header(HttpHeaders.UserAgent, UA)
-            parameter("ticket", st)
+        val (url, body) = getFollowing(GZUS_EHALL_CAS_SERVICE) { parameter("ticket", st) }
+        if (isCasFirstLogin(body, url)) throw JwxtNeedFirstLogin()
+        if (url.contains("lyuapServer/login") || body.contains("lyuapServer/login")) {
+            error(HALL_SESSION_HINT)
         }
-        if (isCasFirstLogin(jump.bodyAsText(), jump.request.url.toString())) throw JwxtNeedFirstLogin()
         tryLoginEhall()
     }
 
@@ -571,7 +627,7 @@ class GzusCasClient(
     }
 
     private fun hallFailMessage(root: JsonObject): String? {
-        if (hallDenied(root)) return "大厅会话失效，重新用统一身份认证登录"
+        if (hallDenied(root)) return HALL_SESSION_HINT
         val meta = root["meta"] as? JsonObject
         val success = meta?.get("success") ?: root["success"]
         val failed = when (success) {

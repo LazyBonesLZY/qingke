@@ -158,6 +158,9 @@ fun App() {
                         }
                     }
                 if (repo.state.value.session.loggedIn) {
+                    if (repo.state.value.settings.gzusUsesCas()) {
+                        runCatching { repo.keepAlive() }
+                    }
                     if (repo.state.value.settings.autoSyncOnStart) {
                         runCatching { repo.sync() }
                             .onFailure { failed ->
@@ -175,6 +178,22 @@ fun App() {
                         }
                     }
                 }
+            }
+        }
+
+        LaunchedEffect(snapshot.session.loggedIn, snapshot.settings.schoolId, snapshot.settings.gzusLoginChannel) {
+            if (!snapshot.session.loggedIn || !snapshot.settings.gzusUsesCas()) return@LaunchedEffect
+            while (isActive) {
+                delay(8 * 60_000L)
+                if (!repo.state.value.session.loggedIn || !repo.state.value.settings.gzusUsesCas()) break
+                runCatching { repo.keepAlive() }
+                    .onFailure { failed ->
+                        val message = failed.friendlyNetworkMessage()
+                        if (isSessionLost(message)) {
+                            loginError = message
+                            toast(message)
+                        }
+                    }
             }
         }
 

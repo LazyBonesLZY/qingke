@@ -91,6 +91,7 @@ class AppRepository(
 
     fun setSchool(school: School) {
         if (school.id == _state.value.settings.schoolId) return
+        clearReloginSecret()
         clearCookieStore()
         _captcha.value = null
         _captchaError.value = null
@@ -171,6 +172,7 @@ class AppRepository(
         val next = if (channel == GZUS_LOGIN_CAS) GZUS_LOGIN_CAS else GZUS_LOGIN_JWXT
         val snap = _state.value
         if (snap.settings.school() == School.Gzus && snap.settings.gzusLoginChannel == next) return
+        clearReloginSecret()
         clearCookieStore()
         _captcha.value = null
         _captchaError.value = null
@@ -204,6 +206,11 @@ class AppRepository(
         }
         _captcha.value = null
         markLoggedIn(studentId)
+        if (_state.value.settings.school() == School.Gzus && _state.value.settings.gzusUsesCas()) {
+            saveReloginSecret(studentId, password)
+        } else {
+            clearReloginSecret()
+        }
         runCatching { pullRemote(studentId = studentId, keepGradesIfFail = false) }
             .onFailure { error ->
                 if (error is JwxtNeedFirstLogin) throw error
@@ -236,7 +243,7 @@ class AppRepository(
         if (!_state.value.session.loggedIn) return
         val snap = _state.value
         if (snap.settings.school() == School.Gzus && snap.settings.gzusUsesCas()) {
-            if (!gzusCas.refreshTickets(force = true)) {
+            if (!ensureCasTickets(force = true)) {
                 markSessionExpired()
                 error(SESSION_LOST_HINT)
             }
@@ -249,7 +256,7 @@ class AppRepository(
         if (!_state.value.session.loggedIn) return
         val snap = _state.value
         if (snap.settings.school() != School.Gzus || !snap.settings.gzusUsesCas()) return
-        if (!gzusCas.refreshTickets(force = false)) {
+        if (!ensureCasTickets(force = false)) {
             markSessionExpired()
             error(SESSION_LOST_HINT)
         }
@@ -436,11 +443,53 @@ class AppRepository(
         }
     }
 
+    private suspend fun ensureCasTickets(force: Boolean): Boolean {
+        if (gzusCas.refreshTickets(force = force)) return true
+        return trySilentRelogin()
+    }
+
+    private suspend fun trySilentRelogin(): Boolean {
+        val snap = _state.value
+        if (snap.settings.school() != School.Gzus || !snap.settings.gzusUsesCas()) return false
+        val secret = loadReloginSecret() ?: return false
+        return runCatching {
+            gzusCas.loginSilent(secret.first, secret.second).getOrThrow()
+            markLoggedIn(secret.first)
+            true
+        }.getOrElse { failed ->
+            if (failed is JwxtNeedFirstLogin) {
+                clearReloginSecret()
+                throw failed
+            }
+            if (isTransientNetwork(failed)) throw failed
+            if (isReloginCredentialBad(failed.message.orEmpty())) {
+                clearReloginSecret()
+            }
+            false
+        }
+    }
+
+    private fun isReloginCredentialBad(message: String): Boolean {
+        val text = message
+        return text.contains("学号或密码") ||
+            text.contains("密码不正确") ||
+            text.contains("账号不存在") ||
+            text.contains("已停用") ||
+            text.contains("已锁定") ||
+            text.contains("没有教务权限") ||
+            text.contains("二次验证") ||
+            text.contains("绑定微信") ||
+            text.contains("网络承诺")
+    }
+
     private suspend fun <T> withLiveSession(probe: Boolean = true, block: suspend () -> T): T {
         try {
             val snap = _state.value
             if (probe && snap.session.loggedIn && snap.settings.school() == School.Gzus && snap.settings.gzusUsesCas()) {
-                gzusCas.requireLiveSession()
+                if (!ensureCasTickets(force = false)) {
+                    markSessionExpired()
+                    error(SESSION_LOST_HINT)
+                }
             }
             return block()
         } catch (failed: Throwable) {
@@ -449,7 +498,7 @@ class AppRepository(
             val message = failed.message.orEmpty()
             val cas = _state.value.settings.school() == School.Gzus && _state.value.settings.gzusUsesCas()
             if (cas && (isSessionLost(message) || isHallSessionHint(message))) {
-                val revived = runCatching { gzusCas.refreshTickets(force = true) }.getOrDefault(false)
+                val revived = runCatching { ensureCasTickets(force = true) }.getOrDefault(false)
                 if (revived) {
                     return try {
                         block()
@@ -491,6 +540,7 @@ class AppRepository(
 
     suspend fun logout() {
         runCatching { portal().logout() }
+        clearReloginSecret()
         clearCookieStore()
         commit {
             it.copy(

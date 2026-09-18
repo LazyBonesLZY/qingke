@@ -253,7 +253,7 @@ fun MineScreen(
                 )
                 ArrowPreference(
                     title = "退出登录",
-                    summary = "清除会话，课表留在本地",
+                    summary = "清除会话和本机自动重登密码，课表留在本地",
                     onClick = {
                         confirmLogout = !confirmLogout
                         pickingSchool = false
@@ -264,7 +264,7 @@ fun MineScreen(
                 if (confirmLogout) {
                     InlineConfirm(
                         title = "退出登录",
-                        body = "退出${school.jwxtName}会话。已经同步过的课表留在本地。",
+                        body = "退出${school.jwxtName}会话和本机保存的自动重登密码。已经同步过的课表留在本地。",
                         confirmLabel = "确定退出",
                         onConfirm = {
                             confirmLogout = false
@@ -518,6 +518,14 @@ private fun LoggedOutMine(
     ) {
         if (busy) InfiniteProgressIndicator()
         Text(if (busy) "正在登录" else "登录并同步")
+    }
+    if (snapshot.settings.school() == School.Gzus && snapshot.settings.gzusLoginChannel == GZUS_LOGIN_CAS) {
+        Text(
+            "登录后本机加密保存密码，门户过期会自动重登。退出登录会清掉。",
+            color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+            style = MiuixTheme.textStyles.footnote1,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+        )
     }
     if (snapshot.hasTimetable) {
         Spacer(Modifier.height(12.dp))

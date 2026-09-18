@@ -15,7 +15,7 @@
 
 ## 更新
 
-当前版本 **1.6.15**（versionCode 38）。Android 8.0（API 26）及以上。服务里的选课走正方自主选课（N253512），可搜索、立即选、排队到点提交。
+当前版本 **1.6.16**（versionCode 39）。Android 8.0（API 26）及以上。门户票过期后会用本机加密保存的密码自动重登；服务里的选课走正方自主选课（N253512）。
 
 - GitHub Release：应用里检查 `LazyBonesLZY/qingke` 最新版，再跳到 Release / APK
 - 网盘：浏览器打开 [https://storage.lazzyy.cn/@s/KB](https://storage.lazzyy.cn/@s/KB)

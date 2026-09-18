@@ -99,6 +99,19 @@ class GzusCasClient(
         consumeJwxtTicket(st)
     }
 
+    suspend fun loginSilent(studentId: String, password: String): Result<Unit> {
+        repeat(3) {
+            val image = runCatching { fetchCaptcha() }.getOrNull() ?: return@repeat
+            val code = solveLyuapCaptcha(image.bytes) ?: return@repeat
+            val result = login(studentId, password, code, image.id)
+            if (result.isSuccess) return result
+            val message = result.exceptionOrNull()?.message.orEmpty()
+            if (isCaptchaTip(message)) return@repeat
+            return result
+        }
+        return Result.failure(IllegalStateException("验证码没解开"))
+    }
+
     override suspend fun keepAlive(): Boolean = refreshTickets(force = false)
 
     override suspend fun fetchHall(): HallSnapshot {

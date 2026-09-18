@@ -16,6 +16,8 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import cn.edu.gzus.qingke.EXTRA_LIVE_DISMISS
@@ -33,9 +35,13 @@ import io.ktor.client.plugins.cookies.HttpCookies
 import java.io.File
 import java.math.BigInteger
 import java.security.KeyFactory
+import java.security.KeyStore
 import java.security.spec.RSAPublicKeySpec
 import java.util.Base64
 import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 
 private const val LIVE_CHANNEL = "qingke_live_class"
 private const val LIVE_ID = 1001
@@ -84,6 +90,77 @@ actual fun md5Hex(text: String): String {
 actual fun decodeImageBytes(bytes: ByteArray): ImageBitmap =
     BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
         ?: error("验证码图片坏了，点一下换一张")
+
+internal actual fun decodePngGray(bytes: ByteArray): GrayPng? {
+    val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+    val width = bmp.width
+    val height = bmp.height
+    val pixels = IntArray(width * height)
+    bmp.getPixels(pixels, 0, width, 0, 0, width, height)
+    val gray = IntArray(width * height) { i ->
+        val c = pixels[i]
+        val r = (c shr 16) and 0xff
+        val g = (c shr 8) and 0xff
+        val b = c and 0xff
+        (r * 30 + g * 59 + b * 11) / 100
+    }
+    return GrayPng(width, height, gray)
+}
+
+private const val RELOGIN_FILE = "qingke-relogin.bin"
+private const val RELOGIN_ALIAS = "qingke_relogin"
+
+private fun reloginKey(): SecretKey? = runCatching {
+    val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+    (store.getEntry(RELOGIN_ALIAS, null) as? KeyStore.SecretKeyEntry)?.secretKey?.let { return it }
+    val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+    generator.init(
+        KeyGenParameterSpec.Builder(
+            RELOGIN_ALIAS,
+            KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+        )
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setKeySize(256)
+            .build(),
+    )
+    generator.generateKey()
+}.getOrNull()
+
+internal actual fun saveReloginSecret(studentId: String, password: String) {
+    val id = studentId.trim()
+    if (id.isBlank() || password.isEmpty()) return
+    val key = reloginKey() ?: return
+    runCatching {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, key)
+        val packed = cipher.iv + cipher.doFinal("$id\n$password".toByteArray(Charsets.UTF_8))
+        File(QingkeApp.app.filesDir, RELOGIN_FILE).writeBytes(packed)
+    }
+}
+
+internal actual fun loadReloginSecret(): Pair<String, String>? {
+    val file = File(QingkeApp.app.filesDir, RELOGIN_FILE)
+    if (!file.exists()) return null
+    val key = reloginKey() ?: return null
+    val raw = runCatching { file.readBytes() }.getOrNull() ?: return null
+    if (raw.size <= 12) return null
+    return runCatching {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, raw.copyOfRange(0, 12)))
+        val text = cipher.doFinal(raw.copyOfRange(12, raw.size)).toString(Charsets.UTF_8)
+        val split = text.indexOf('\n')
+        if (split <= 0) null else text.substring(0, split) to text.substring(split + 1)
+    }.getOrNull()
+}
+
+internal actual fun clearReloginSecret() {
+    File(QingkeApp.app.filesDir, RELOGIN_FILE).delete()
+    runCatching {
+        val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        if (store.containsAlias(RELOGIN_ALIAS)) store.deleteEntry(RELOGIN_ALIAS)
+    }
+}
 
 actual fun rsaEncrypt(password: String, modulusB64: String, exponentB64: String): String {
     val decoder = Base64.getDecoder()

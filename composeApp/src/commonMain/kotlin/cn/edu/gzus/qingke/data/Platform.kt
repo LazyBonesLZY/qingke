@@ -15,6 +15,14 @@ expect fun md5Hex(text: String): String
 
 expect fun decodeImageBytes(bytes: ByteArray): ImageBitmap
 
+internal expect fun decodePngGray(bytes: ByteArray): GrayPng?
+
+internal expect fun saveReloginSecret(studentId: String, password: String)
+
+internal expect fun loadReloginSecret(): Pair<String, String>?
+
+internal expect fun clearReloginSecret()
+
 expect fun readStore(name: String): String?
 
 expect fun writeStore(name: String, value: String)

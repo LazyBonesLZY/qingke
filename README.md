@@ -15,7 +15,7 @@
 
 ## 更新
 
-当前版本 **1.6.16**（versionCode 39）。Android 8.0（API 26）及以上。门户票过期后会用本机加密保存的密码自动重登；服务里的选课走正方自主选课（N253512）。
+当前版本 **1.6.17**（versionCode 40）。Android 8.0（API 26）及以上。办事大厅和校园卡会话分开，大厅过期不会清掉水电。门户票没了会自动重登。
 
 - GitHub Release：应用里检查 `LazyBonesLZY/qingke` 最新版，再跳到 Release / APK
 - 网盘：浏览器打开 [https://storage.lazzyy.cn/@s/KB](https://storage.lazzyy.cn/@s/KB)

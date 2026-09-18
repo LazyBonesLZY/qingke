@@ -118,8 +118,6 @@ class GzusCasClient(
         runCatching { ensureEhall() }.onFailure { failed ->
             if (failed is JwxtNeedFirstLogin) throw failed
             if (isTransientNetwork(failed)) throw failed
-            if (isSessionLost(failed.message.orEmpty()) && !hasTgt()) throw failed
-            if (isSessionLost(failed.message.orEmpty())) throw failed
             return HallSnapshot(error = failed.message?.ifBlank { HALL_SESSION_HINT } ?: HALL_SESSION_HINT)
         }
         runCatching { tryLoginEhall() }
@@ -218,12 +216,18 @@ class GzusCasClient(
     }
 
     override suspend fun fetchUtility(bind: UtilityBind, sno: String): UtilitySnapshot {
-        runCatching { ensureEcard() }
+        val ecardReady = runCatching {
+            ensureEcard()
+            true
+        }.getOrElse { failed ->
+            if (failed is JwxtNeedFirstLogin || isTransientNetwork(failed)) throw failed
+            false
+        }
         val member = runCatching { ecardMemberRoot() }.getOrNull()?.ecardMemberBag()
         val ecardBind = member?.toUtilityBind() ?: UtilityBind()
         val used = mergeUtilityBind(bind, ecardBind)
         if (!used.hasRoom()) {
-            return UtilitySnapshot(error = "未绑定宿舍")
+            return UtilitySnapshot(error = if (ecardReady) "未绑定宿舍" else ECARD_SESSION_HINT)
         }
         val catalog = runCatching { loadRoomCatalog() }.getOrDefault(emptyList())
         val row = catalog.firstOrNull { it.matchesBind(used) }
@@ -257,7 +261,7 @@ class GzusCasClient(
             power = power,
             coldWater = cold,
             hotWater = hot,
-            error = if (ready) "" else "查询失败",
+            error = if (ready) "" else if (ecardReady) "查询失败" else ECARD_SESSION_HINT,
             bind = used,
         )
     }
@@ -287,7 +291,7 @@ class GzusCasClient(
 
     suspend fun refreshTickets(force: Boolean = false): Boolean = keepMutex.withLock {
         val now = Clock.System.now().toEpochMilliseconds()
-        if (!force && now - lastKeepAliveAt < 60_000L && hasTgt() && probeEhall()) {
+        if (!force && now - lastKeepAliveAt < 60_000L && hasTgt()) {
             return true
         }
         val tgt = currentTgt()
@@ -300,6 +304,7 @@ class GzusCasClient(
             if (isSessionLost(failed.message.orEmpty())) return false
         }
         runCatching { refreshEhall() }
+        runCatching { refreshEcard() }
         lastKeepAliveAt = now
         rememberTgt(currentTgt())
         true
@@ -308,7 +313,7 @@ class GzusCasClient(
     private suspend fun ensureEhall() {
         if (probeEhall()) return
         val tgt = currentTgt()
-        if (!tgt.startsWith("TGT-")) error(SESSION_LOST_HINT)
+        if (!tgt.startsWith("TGT-")) error(HALL_SESSION_HINT)
         openEhall(tgt)
         if (!probeEhall()) error(HALL_SESSION_HINT)
     }
@@ -316,7 +321,7 @@ class GzusCasClient(
     private suspend fun refreshEhall() {
         if (probeEhall()) return
         val tgt = currentTgt()
-        if (!tgt.startsWith("TGT-")) error(SESSION_LOST_HINT)
+        if (!tgt.startsWith("TGT-")) error(HALL_SESSION_HINT)
         openEhall(tgt)
         if (!probeEhall()) error(HALL_SESSION_HINT)
     }
@@ -327,12 +332,34 @@ class GzusCasClient(
         return !hallDenied(name)
     }
 
+    suspend fun probeEcard(): Boolean = runCatching { ecardMemberRoot() != null }.getOrDefault(false)
+
+    suspend fun probeJwxt(): Boolean = runCatching {
+        val home = client.get("$JWXT_ORIGIN/jwglxt/xtgl/index_initMenu.html") {
+            header(HttpHeaders.UserAgent, UA)
+            parameter("jsdm", "xs")
+        }
+        val body = home.bodyAsText()
+        val url = home.request.url.toString()
+        !isLoginForm(body) && !url.contains("login_slogin") && !isPasswordChangePage(body, url)
+    }.getOrDefault(false)
+
     private suspend fun ensureEcard() {
+        if (probeEcard()) return
         val tgt = currentTgt()
-        if (!tgt.startsWith("TGT-")) error(SESSION_LOST_HINT)
-        if (ecardMemberRoot() != null) return
+        if (tgt.startsWith("TGT-")) {
+            runCatching { openEcard(tgt) }
+            if (probeEcard()) return
+        }
+        error(ECARD_SESSION_HINT)
+    }
+
+    private suspend fun refreshEcard() {
+        if (probeEcard()) return
+        val tgt = currentTgt()
+        if (!tgt.startsWith("TGT-")) error(ECARD_SESSION_HINT)
         openEcard(tgt)
-        if (ecardMemberRoot() == null) error(SESSION_LOST_HINT)
+        if (!probeEcard()) error(ECARD_SESSION_HINT)
     }
 
     private suspend fun ecardMemberRoot(): JsonObject? {
@@ -400,7 +427,7 @@ class GzusCasClient(
         if (isCasFirstLogin(body, url)) throw JwxtNeedFirstLogin()
         if (ecardMemberRoot() != null) return
         getFollowing("$GZUS_ECARD_ORIGIN/")
-        if (ecardMemberRoot() == null) error(SESSION_LOST_HINT)
+        if (ecardMemberRoot() == null) error(ECARD_SESSION_HINT)
     }
 
     private suspend fun getFollowing(start: String, configure: HttpRequestBuilder.() -> Unit = {}): Pair<String, String> {

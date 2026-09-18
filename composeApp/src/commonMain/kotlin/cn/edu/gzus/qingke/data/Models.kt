@@ -367,7 +367,7 @@ fun AppSettings.hasUtilityBind(): Boolean {
 
 fun AppSnapshot.utilityBrief(): String {
     if (!settings.hasUtilityBind()) return "未绑定宿舍"
-    if (!utility.ready) return "查询失败"
+    if (!utility.ready) return utility.error.ifBlank { "查询失败" }
     val waterPrice = settings.resolvedWaterPrice()
     val electricPrice = settings.resolvedElectricPrice()
     return buildList {

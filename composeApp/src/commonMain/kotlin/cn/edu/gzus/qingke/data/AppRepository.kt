@@ -243,7 +243,7 @@ class AppRepository(
         if (!_state.value.session.loggedIn) return
         val snap = _state.value
         if (snap.settings.school() == School.Gzus && snap.settings.gzusUsesCas()) {
-            if (!ensureCasTickets(force = true)) {
+            if (!ensureCasTickets(force = true) && shouldExpireWholeSession()) {
                 markSessionExpired()
                 error(SESSION_LOST_HINT)
             }
@@ -256,7 +256,7 @@ class AppRepository(
         if (!_state.value.session.loggedIn) return
         val snap = _state.value
         if (snap.settings.school() != School.Gzus || !snap.settings.gzusUsesCas()) return
-        if (!ensureCasTickets(force = false)) {
+        if (!ensureCasTickets(force = false) && shouldExpireWholeSession()) {
             markSessionExpired()
             error(SESSION_LOST_HINT)
         }
@@ -362,9 +362,9 @@ class AppRepository(
         return when {
             snap.settings.school() != School.Gzus -> HallSnapshot()
             !snap.settings.gzusUsesCas() -> HallSnapshot(error = "要用统一身份认证登录才能看办事大厅")
-            else -> runCatching { portal().fetchHall() ?: error(SESSION_LOST_HINT) }
+            else -> runCatching { portal().fetchHall() ?: HallSnapshot(error = HALL_SESSION_HINT) }
                 .getOrElse { error ->
-                    if (isSessionLost(error.message.orEmpty())) throw error
+                    if (error is JwxtNeedFirstLogin || isTransientNetwork(error)) throw error
                     if (keepGradesIfFail && snap.hall.ready) {
                         snap.hall.copy(error = error.message ?: "办事大厅同步失败")
                     } else {
@@ -383,13 +383,13 @@ class AppRepository(
                 portal().fetchUtility(
                     snap.settings.resolvedUtilityBind(),
                     snap.session.studentId.ifBlank { snap.profile.studentId },
-                ) ?: error(SESSION_LOST_HINT)
+                ) ?: UtilitySnapshot(error = "查询失败")
             }.getOrElse { error ->
-                if (isSessionLost(error.message.orEmpty())) throw error
+                if (error is JwxtNeedFirstLogin || isTransientNetwork(error)) throw error
                 if (keepGradesIfFail && snap.utility.ready) {
-                    snap.utility.copy(error = error.message ?: "水电同步失败")
+                    snap.utility.copy(error = error.message ?: "查询失败")
                 } else {
-                    UtilitySnapshot(error = error.message ?: "水电同步失败")
+                    UtilitySnapshot(error = error.message ?: "查询失败")
                 }
             }
         }
@@ -469,6 +469,13 @@ class AppRepository(
         }
     }
 
+    private suspend fun shouldExpireWholeSession(): Boolean {
+        if (gzusCas.hasTgt()) return false
+        if (runCatching { gzusCas.probeEcard() }.getOrDefault(false)) return false
+        if (runCatching { gzusCas.probeJwxt() }.getOrDefault(false)) return false
+        return true
+    }
+
     private fun isReloginCredentialBad(message: String): Boolean {
         val text = message
         return text.contains("学号或密码") ||
@@ -486,38 +493,39 @@ class AppRepository(
         try {
             val snap = _state.value
             if (probe && snap.session.loggedIn && snap.settings.school() == School.Gzus && snap.settings.gzusUsesCas()) {
-                if (!ensureCasTickets(force = false)) {
-                    markSessionExpired()
-                    error(SESSION_LOST_HINT)
-                }
+                runCatching { ensureCasTickets(force = false) }
             }
             return block()
         } catch (failed: Throwable) {
             if (failed is JwxtNeedFirstLogin) throw failed
             if (isTransientNetwork(failed)) throw failed
             val message = failed.message.orEmpty()
+            if (isHallSessionHint(message) || isEcardSessionHint(message)) throw failed
             val cas = _state.value.settings.school() == School.Gzus && _state.value.settings.gzusUsesCas()
-            if (cas && (isSessionLost(message) || isHallSessionHint(message))) {
+            if (cas && isSessionLost(message)) {
                 val revived = runCatching { ensureCasTickets(force = true) }.getOrDefault(false)
                 if (revived) {
                     return try {
                         block()
                     } catch (again: Throwable) {
                         if (again is JwxtNeedFirstLogin || isTransientNetwork(again)) throw again
-                        if (isSessionLost(again.message.orEmpty()) && !gzusCas.hasTgt()) {
+                        if (isHallSessionHint(again.message.orEmpty()) || isEcardSessionHint(again.message.orEmpty())) {
+                            throw again
+                        }
+                        if (isSessionLost(again.message.orEmpty()) && shouldExpireWholeSession()) {
                             markSessionExpired()
                             error(SESSION_LOST_HINT)
                         }
                         throw again
                     }
                 }
-                if (isSessionLost(message) && !gzusCas.hasTgt()) {
+                if (shouldExpireWholeSession()) {
                     markSessionExpired()
                     error(SESSION_LOST_HINT)
                 }
-                if (isHallSessionHint(message)) throw failed
+                throw failed
             }
-            if (isSessionLost(message)) {
+            if (isSessionLost(message) && shouldExpireWholeSession()) {
                 markSessionExpired()
                 error(SESSION_LOST_HINT)
             }
@@ -599,9 +607,9 @@ class AppRepository(
         if (!snap.session.loggedIn) error("登录后才能同步办事大厅")
         if (!snap.settings.gzusUsesCas()) error("要用统一身份认证登录才能同步办事大厅")
         withLiveSession {
-            val hall = portal().fetchHall() ?: error(SESSION_LOST_HINT)
-            if (isSessionLost(hall.error) && !hall.ready) error(SESSION_LOST_HINT)
+            val hall = portal().fetchHall() ?: HallSnapshot(error = HALL_SESSION_HINT)
             commit { it.copy(hall = hall) }
+            if (!hall.ready && hall.error.isNotBlank()) error(hall.error)
         }
     }
 

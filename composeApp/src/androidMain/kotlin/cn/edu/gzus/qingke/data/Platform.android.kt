@@ -18,6 +18,7 @@ import android.os.Build
 import android.os.Bundle
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import cn.edu.gzus.qingke.EXTRA_LIVE_DISMISS
@@ -304,12 +305,18 @@ actual fun notifyLiveClass(
         else -> (((now - startMillis) * 100L) / (endMillis - startMillis)).toInt().coerceIn(0, 100)
     }
     val whenMillis = if (inClass) endMillis else startMillis
+    val status = if (inClass) "上课中" else "下一节"
     val chipText = chip.ifBlank {
         when {
-            inClass -> "下课${etaMinutes}分"
-            etaMinutes > 0 -> "${etaMinutes}分"
+            inClass -> "下课 ${etaMinutes}′"
+            etaMinutes > 0 -> "${etaMinutes}′后"
             else -> "即将"
         }
+    }
+    val etaText = when {
+        inClass -> "还剩 ${etaMinutes.coerceAtLeast(0)} 分"
+        etaMinutes > 0 -> "${etaMinutes} 分后上课"
+        else -> "即将上课"
     }
     val launch = PendingIntent.getActivity(
         ctx,
@@ -323,27 +330,26 @@ actual fun notifyLiveClass(
         Intent(ctx, LiveDismissReceiver::class.java).putExtra(EXTRA_LIVE_DISMISS, key),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
+    val blue = 0xFF3482FF.toInt()
+    val track = 0xFFB7D2FF.toInt()
     if (Build.VERSION.SDK_INT >= 36) {
-        val tracker = android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_stat_live)
-        val blue = 0xFF3482FF.toInt()
+        val done = pct.coerceIn(0, 100)
+        val left = (100 - done).coerceAtLeast(1)
         val style = Notification.ProgressStyle()
             .setStyledByProgress(true)
-            .setProgress(pct)
+            .setProgress(done)
             .setProgressSegments(
-                listOf(Notification.ProgressStyle.Segment(100).setColor(blue)),
-            )
-            .setProgressPoints(
                 listOf(
-                    Notification.ProgressStyle.Point(0).setColor(blue),
-                    Notification.ProgressStyle.Point(100).setColor(blue),
+                    Notification.ProgressStyle.Segment(done.coerceAtLeast(1)).setColor(blue),
+                    Notification.ProgressStyle.Segment(left).setColor(track),
                 ),
             )
-            .setProgressTrackerIcon(tracker)
-            .setProgressStartIcon(tracker)
-            .setProgressEndIcon(tracker)
+            .setProgressTrackerIcon(android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_live_now))
+            .setProgressStartIcon(android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_live_start))
+            .setProgressEndIcon(android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_live_end))
         val builder = Notification.Builder(ctx, LIVE_CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_live)
-            .setContentTitle(if (inClass) "正在上课 · $title" else "下一节 · $title")
+            .setContentTitle(title)
             .setContentText(detail)
             .setStyle(style)
             .setOngoing(true)
@@ -357,30 +363,38 @@ actual fun notifyLiveClass(
             .setShowWhen(true)
             .setUsesChronometer(true)
             .setChronometerCountDown(true)
-            .setSubText(if (inClass) "上课中" else "即将上课")
+            .setSubText(status)
         builder.setShortCriticalText(chipText)
         builder.addExtras(Bundle().apply { putBoolean("android.requestPromotedOngoing", true) })
         nm.notify(LIVE_ID, builder.build())
         return true
     }
+    val card = RemoteViews(ctx.packageName, R.layout.qingke_live_notification).apply {
+        setTextViewText(R.id.qingke_live_title, title)
+        setTextViewText(R.id.qingke_live_badge, status)
+        setTextViewText(R.id.qingke_live_meta, detail.replace("\n", " · "))
+        setTextViewText(R.id.qingke_live_eta, etaText)
+        setProgressBar(R.id.qingke_live_progress, 100, pct, false)
+    }
     val builder = NotificationCompat.Builder(ctx, LIVE_CHANNEL)
         .setSmallIcon(R.drawable.ic_stat_live)
-        .setContentTitle(if (inClass) "正在上课 · $title" else "下一节 · $title")
+        .setContentTitle(title)
         .setContentText(detail)
-        .setStyle(NotificationCompat.BigTextStyle().bigText(detail))
-        .setSubText(if (inClass) "上课中" else "即将上课")
+        .setCustomContentView(card)
+        .setCustomBigContentView(card)
+        .setStyle(NotificationCompat.DecoratedCustomViewStyle())
+        .setSubText(status)
         .setOngoing(true)
         .setOnlyAlertOnce(true)
         .setContentIntent(launch)
         .setDeleteIntent(dismiss)
         .setCategory(NotificationCompat.CATEGORY_PROGRESS)
-        .setProgress(100, pct, false)
         .setSilent(true)
         .setWhen(whenMillis)
         .setShowWhen(true)
         .setUsesChronometer(true)
         .setChronometerCountDown(true)
-        .setColor(0xFF3482FF.toInt())
+        .setColor(blue)
         .setRequestPromotedOngoing(true)
     nm.notify(LIVE_ID, builder.build())
     return true

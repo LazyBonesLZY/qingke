@@ -844,17 +844,13 @@ class AppRepository(
             val inClass = nowMs >= testStartMillis
             val remainEnd = ((testEndMillis - nowMs) / 60_000L).toInt().coerceAtLeast(0)
             return notifyLiveClass(
-                title = "下一节（测试）",
-                detail = if (inClass) {
-                    "测试下课 · 3-4节 · 测试教室\n还剩 ${formatRemain(remainEnd.coerceAtLeast(1))}"
-                } else {
-                    "测试上课 · 3-4节 · 测试教室\n还有 ${formatRemain(remain.coerceAtLeast(1))}"
-                },
+                title = if (inClass) "正在上课（测试）" else "下一节（测试）",
+                detail = "3-4节 · 测试教室",
                 progress = progress,
                 etaMinutes = if (inClass) remainEnd else remain.coerceAtLeast(0),
                 startMillis = testStartMillis,
                 endMillis = testEndMillis,
-                chip = if (inClass) "下课${remainEnd}分" else "${remain.coerceAtLeast(1)}分",
+                chip = if (inClass) "下课 ${remainEnd}′" else "${remain.coerceAtLeast(1)}′后",
             )
         }
         if (testEndMillis > 0L && nowMs >= testEndMillis) {
@@ -893,18 +889,17 @@ class AppRepository(
             nowMs >= endMillis -> 1f
             else -> ((nowMs - startMillis).toFloat() / (endMillis - startMillis).toFloat()).coerceIn(0f, 1f)
         }
-        val period = slot.periodLabel.ifBlank { slot.period }
+        val period = slot.periodLabel.ifBlank { slot.period }.let { if (it.endsWith("节")) it else "${it}节" }
+        val clock = periodClockRange(slot.period).replace("-", "–")
         val room = slot.room.ifBlank { "教室待定" }
-        val detail: String
+        val detail = listOf(period, clock, room).filter { it.isNotBlank() }.joinToString(" · ")
         val chip: String
         val etaMinutes: Int
         if (next.inClass) {
-            detail = "${periodEnd(slot.period)} 下课 · $period · $room\n还剩 ${formatRemain(next.minutesToEnd)}"
-            chip = "下课${next.minutesToEnd}分"
+            chip = "下课 ${next.minutesToEnd}′"
             etaMinutes = next.minutesToEnd
         } else {
-            detail = "${periodStart(slot.period)} 上课 · $period · $room\n还有 ${formatRemain(next.minutesToStart)}"
-            chip = "${next.minutesToStart}分"
+            chip = "${next.minutesToStart}′后"
             etaMinutes = next.minutesToStart
         }
         return notifyLiveClass(

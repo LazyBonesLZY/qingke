@@ -15,7 +15,7 @@
 
 ## 更新
 
-当前版本 **1.6.17**（versionCode 40）。Android 8.0（API 26）及以上。办事大厅和校园卡会话分开，大厅过期不会清掉水电。门户票没了会自动重登。
+当前版本 **1.6.18**（versionCode 41）。Android 8.0（API 26）及以上。小组件和 Live 通知按首页课卡重排了外观。
 
 - GitHub Release：应用里检查 `LazyBonesLZY/qingke` 最新版，再跳到 Release / APK
 - 网盘：浏览器打开 [https://storage.lazzyy.cn/@s/KB](https://storage.lazzyy.cn/@s/KB)

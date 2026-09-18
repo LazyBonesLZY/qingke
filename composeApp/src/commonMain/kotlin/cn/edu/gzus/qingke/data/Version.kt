@@ -1,7 +1,7 @@
 package cn.edu.gzus.qingke.data
 
-const val APP_VERSION_NAME = "1.6.17"
-const val APP_VERSION_CODE = 40
+const val APP_VERSION_NAME = "1.6.18"
+const val APP_VERSION_CODE = 41
 const val GITHUB_REPO = "LazyBonesLZY/qingke"
 const val GITHUB_RELEASES_URL = "https://github.com/$GITHUB_REPO/releases"
 const val DRIVE_UPDATE_URL = "https://storage.lazzyy.cn/@s/KB"

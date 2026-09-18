@@ -14,5 +14,5 @@
         android:adjustViewBounds="false"
         android:background="@android:color/transparent"
         android:contentDescription="@string/widget_day_name"
-        android:scaleType="fitCenter" />
+        android:scaleType="fitXY" />
 </FrameLayout>

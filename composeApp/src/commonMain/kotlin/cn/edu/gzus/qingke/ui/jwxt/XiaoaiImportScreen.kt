@@ -68,14 +68,14 @@ fun XiaoaiImportScreen(
     ) {
         Spacer(Modifier.height(8.dp))
         Text(
-            "把青课里的课写进小爱课程表。现在用 UserInfo 授权，不用再找已经拿掉的 PC 编辑。",
+            "把青课的课写进小爱课程表。",
             modifier = Modifier.padding(horizontal = 16.dp),
             color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
             style = MiuixTheme.textStyles.body2,
         )
         Spacer(Modifier.height(12.dp))
         if (converted.apiCourses.isEmpty()) {
-            EmptyHint("本地还没有能导入的课。先在「我的」同步${snapshot.resolved().jwxtName}课表。")
+            EmptyHint("还没有课可导。先到「我的」同步课表。")
         } else {
             FactsCard(
                 title = "将导入 ${converted.apiCourses.size} 门",

@@ -21,6 +21,8 @@ import androidx.compose.ui.unit.dp
 import cn.edu.gzus.qingke.data.AppSnapshot
 import cn.edu.gzus.qingke.data.LeaveField
 import cn.edu.gzus.qingke.data.LeaveForm
+import cn.edu.gzus.qingke.data.LeaveStep
+import cn.edu.gzus.qingke.data.brief
 import cn.edu.gzus.qingke.data.defaultLeaveFields
 import cn.edu.gzus.qingke.data.gzusUsesCas
 import cn.edu.gzus.qingke.data.leaveAffairs
@@ -51,6 +53,9 @@ fun LeaveScreen(
     onLoadForm: (String) -> Unit,
     onSubmit: (LeaveForm, Map<String, String>) -> Unit,
     onRefresh: () -> Unit,
+    traces: Map<String, List<LeaveStep>> = emptyMap(),
+    traceBusy: String = "",
+    onLoadTrace: (String) -> Unit = {},
 ) {
     val hall = snapshot.hall
     val cas = snapshot.settings.gzusUsesCas()
@@ -60,6 +65,7 @@ fun LeaveScreen(
         mutableStateOf(fields.associate { it.key to it.value })
     }
     var picking by remember { mutableStateOf<String?>(null) }
+    var openedTrace by remember { mutableStateOf("") }
 
     LaunchedEffect(snapshot.session.loggedIn, cas, hall.leaveAffairs().firstOrNull()?.id) {
         if (snapshot.session.loggedIn && cas) {
@@ -158,6 +164,8 @@ fun LeaveScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     hall.leaves.forEach { item ->
+                        val traceId = item.traceId()
+                        val open = openedTrace == traceId
                         InfoCard(
                             title = item.title,
                             summary = listOf(
@@ -166,9 +174,37 @@ fun LeaveScreen(
                                 item.time,
                                 listOf(item.start, item.end).filter { it.isNotBlank() }.joinToString(" ~ "),
                                 item.reason,
+                                if (open) "" else "点开看审批到哪了",
                             ).filter { it.isNotBlank() }.joinToString("\n"),
                             height = null,
+                            tintTitle = open,
+                            onClick = {
+                                openedTrace = if (open) "" else traceId
+                                if (!open && traces[traceId] == null) onLoadTrace(traceId)
+                            },
                         )
+                        if (open) {
+                            val steps = traces[traceId]
+                            when {
+                                traceBusy == traceId && steps == null -> Text(
+                                    "正在读审批进度",
+                                    color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                                    style = MiuixTheme.textStyles.footnote1,
+                                )
+                                steps.isNullOrEmpty() -> Text(
+                                    "大厅没有返回审批环节",
+                                    color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                                    style = MiuixTheme.textStyles.footnote1,
+                                )
+                                else -> steps.forEach { step ->
+                                    InfoCard(
+                                        title = step.name.ifBlank { step.handler.ifBlank { "审批" } },
+                                        summary = step.brief(),
+                                        height = null,
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }

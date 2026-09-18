@@ -46,7 +46,7 @@ fun HallScreen(
     ) {
         Spacer(Modifier.height(8.dp))
         Text(
-            "办事大厅只属于广软事务中心。请假走大厅接口，课表、成绩、考试仍走正方。",
+            "广软事务中心的待办、消息和办事。",
             modifier = Modifier.padding(horizontal = 16.dp),
             color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
             style = MiuixTheme.textStyles.body2,

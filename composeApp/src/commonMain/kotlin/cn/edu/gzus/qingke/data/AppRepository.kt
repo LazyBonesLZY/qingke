@@ -13,7 +13,9 @@ private const val STORE = "qingke-snapshot.json"
 
 class AppRepository(
     private val gzus: JwxtClient = JwxtClient(),
-    private val gzusCas: GzusCasClient = GzusCasClient(),
+    // 宿舍表有几千条，整个应用只留一份缓存，所以 ecard 要先声明再传给门户客户端。
+    private val ecard: GzusEcardClient = GzusEcardClient(),
+    private val gzusCas: GzusCasClient = GzusCasClient(ecard = ecard),
     private val zhku: ZhkuClient = ZhkuClient(),
     private val gzist: GzistClient = GzistClient(),
     private val xiaoai: XiaoaiClient = XiaoaiClient(),
@@ -59,6 +61,7 @@ class AppRepository(
     val captchaError: StateFlow<String?> = _captchaError.asStateFlow()
     private var testStartMillis = 0L
     private var testEndMillis = 0L
+    private var liveWidgetKey = ""
     private val pickMutex = Mutex()
 
     fun hasLiveTest(): Boolean = testEndMillis > nowMillis()
@@ -74,9 +77,17 @@ class AppRepository(
         return parsed
     }
 
+    private var widgetSignature = 0
+
     private fun persist(snapshot: AppSnapshot) {
         writeStore(STORE, json.encodeToString(AppSnapshot.serializer(), snapshot))
-        refreshHomeWidgets()
+        // 一次同步会 commit 四五回，但小组件只看课表那几样。
+        // 没变就别重画，不然每次都是几张整屏位图。
+        val signature = snapshot.widgetSignature()
+        if (signature != widgetSignature) {
+            widgetSignature = signature
+            refreshHomeWidgets()
+        }
     }
 
     private fun commit(transform: (AppSnapshot) -> AppSnapshot) {
@@ -98,34 +109,7 @@ class AppRepository(
         cancelLiveClass()
         commit {
             AppSnapshot(
-                settings = AppSettings(
-                    remindBeforeClass = it.settings.remindBeforeClass,
-                    darkModeFollowSystem = it.settings.darkModeFollowSystem,
-                    schoolId = school.id,
-                    yearCode = when {
-                        school == School.Zhku -> ""
-                        school == School.Custom && it.settings.customJwxt.normalizedKind() == "kingosoft" -> ""
-                        else -> "2026"
-                    },
-                    termCode = when {
-                        school == School.Zhku -> ""
-                        school == School.Custom && it.settings.customJwxt.normalizedKind() == "kingosoft" -> ""
-                        else -> "3"
-                    },
-                    xiaoaiEditUrl = it.settings.xiaoaiEditUrl,
-                    courseAliases = it.settings.courseAliases,
-                    scheduleShifts = it.settings.scheduleShifts,
-                    remindLeadMinutes = it.settings.remindLeadMinutes,
-                    gzusLoginChannel = it.settings.gzusLoginChannel,
-                    customJwxt = it.settings.customJwxt,
-                    utilityUseCustomPrice = it.settings.utilityUseCustomPrice,
-                    utilityWaterPrice = it.settings.utilityWaterPrice,
-                    utilityElectricPrice = it.settings.utilityElectricPrice,
-                    utilityBuilding = it.settings.utilityBuilding,
-                    utilityRoom = it.settings.utilityRoom,
-                    utilityBind = it.settings.utilityBind,
-                    autoSyncOnStart = it.settings.autoSyncOnStart,
-                ),
+                settings = it.settings.forSchool(school),
                 holidays = it.holidays,
             )
         }
@@ -185,7 +169,6 @@ class AppRepository(
                 ),
                 session = SessionState(studentId = it.session.studentId),
                 hall = HallSnapshot(),
-                utility = UtilitySnapshot(),
                 grades = emptyList(),
                 exams = emptyList(),
                 rooms = emptyList(),
@@ -376,23 +359,31 @@ class AppRepository(
 
     private suspend fun pullUtility(keepGradesIfFail: Boolean): UtilitySnapshot {
         val snap = _state.value
-        return when {
-            snap.settings.school() != School.Gzus -> UtilitySnapshot()
-            !snap.settings.gzusUsesCas() -> UtilitySnapshot(error = "要用统一身份认证登录才能看宿舍水电")
-            else -> runCatching {
-                portal().fetchUtility(
-                    snap.settings.resolvedUtilityBind(),
-                    snap.session.studentId.ifBlank { snap.profile.studentId },
-                ) ?: UtilitySnapshot(error = "查询失败")
-            }.getOrElse { error ->
-                if (error is JwxtNeedFirstLogin || isTransientNetwork(error)) throw error
-                if (keepGradesIfFail && snap.utility.ready) {
-                    snap.utility.copy(error = error.message ?: "查询失败")
-                } else {
-                    UtilitySnapshot(error = error.message ?: "查询失败")
-                }
+        if (snap.settings.school() != School.Gzus) return UtilitySnapshot()
+        return runCatching { queryUtility(snap) }.getOrElse { error ->
+            if (error is JwxtNeedFirstLogin || isTransientNetwork(error)) throw error
+            if (keepGradesIfFail && snap.utility.ready) {
+                snap.utility.copy(error = error.message ?: "查询失败")
+            } else {
+                UtilitySnapshot(error = error.message ?: "查询失败")
             }
         }
+    }
+
+    /**
+     * 一卡通的余额接口是公开的，不登录也能查。
+     * 用统一身份认证登录时先走门户，好顺带认出本人宿舍；其余情况直接公开查询。
+     */
+    private suspend fun queryUtility(snap: AppSnapshot): UtilitySnapshot {
+        val bind = snap.settings.resolvedUtilityBind()
+        if (snap.session.loggedIn && snap.settings.gzusUsesCas()) {
+            // 门户那条路会顺带认出本人宿舍，拿得到结果就用它的。
+            runCatching {
+                portal().fetchUtility(bind, snap.session.studentId.ifBlank { snap.profile.studentId })
+            }.getOrNull()?.let { return it }
+        }
+        if (!bind.hasRoom()) return UtilitySnapshot(error = "未绑定宿舍")
+        return ecard.balance(bind)
     }
 
     fun saveXiaoaiEditUrl(url: String) {
@@ -541,7 +532,6 @@ class AppRepository(
             it.copy(
                 session = SessionState(studentId = it.session.studentId),
                 hall = HallSnapshot(),
-                utility = UtilitySnapshot(),
             )
         }
     }
@@ -557,7 +547,6 @@ class AppRepository(
                 exams = emptyList(),
                 rooms = emptyList(),
                 hall = HallSnapshot(),
-                utility = UtilitySnapshot(),
             )
         }
         cancelLiveClass()
@@ -584,11 +573,12 @@ class AppRepository(
     }
 
     suspend fun listUtilityOptions(level: String, parentId: String = ""): List<UtilityOption> {
-        val snap = _state.value
-        if (snap.settings.school() != School.Gzus) error("宿舍选择只属于广软")
-        if (!snap.session.loggedIn) error("登录后才能选宿舍")
-        if (!snap.settings.gzusUsesCas()) error("要用统一身份认证登录才能选宿舍")
-        return portal().fetchUtilityOptions(level, parentId)
+        if (_state.value.settings.school() != School.Gzus) error("宿舍选择只属于广软")
+        val query = parentId.trim()
+        if (query.isBlank()) error("请输入楼栋或房间号。")
+        val hit = ecard.search(query)
+        if (hit.isEmpty()) error("未找到宿舍")
+        return hit.map { it.toOption() }
     }
 
     fun saveUtilityPrice(useCustom: Boolean, water: Double, electric: Double) {
@@ -621,6 +611,14 @@ class AppRepository(
         return withLiveSession { portal().fetchLeaveForm(affairId) ?: error("大厅没有返回请假表单") }
     }
 
+    suspend fun loadLeaveTrace(instanceId: String): List<LeaveStep> {
+        val snap = _state.value
+        if (snap.settings.school() != School.Gzus) error("请假只属于广软")
+        if (!snap.session.loggedIn) error("登录后才能看审批进度")
+        if (!snap.settings.gzusUsesCas()) error("要用统一身份认证登录才能看审批进度")
+        return withLiveSession { portal().fetchLeaveTrace(instanceId) }
+    }
+
     suspend fun submitLeave(form: LeaveForm, values: Map<String, String>): String {
         val snap = _state.value
         if (snap.settings.school() != School.Gzus) error("请假只属于广软")
@@ -648,7 +646,7 @@ class AppRepository(
     }
 
     fun scheduleCoursePick(id: String, fireAt: Long) {
-        if (fireAt <= 0L) error("先填开选时间")
+        if (fireAt <= 0L) error("时间填成 2026-09-01 和 13:00:00")
         patchCoursePick(id) {
             it.copy(fireAt = fireAt, status = "waiting", message = "到点自动提交")
         }
@@ -784,25 +782,34 @@ class AppRepository(
     suspend fun syncUtility() {
         val snap = _state.value
         if (snap.settings.school() != School.Gzus) error("宿舍水电只属于广软")
-        if (!snap.session.loggedIn) error("登录后才能看水电")
-        if (!snap.settings.gzusUsesCas()) error("要用统一身份认证登录才能看宿舍水电")
-        val utility = portal().fetchUtility(
-            snap.settings.resolvedUtilityBind(),
-            snap.session.studentId.ifBlank { snap.profile.studentId },
-        ) ?: error("宿舍水电还没查到")
+        val utility = queryUtility(snap)
         commitUtility(utility)
+        if (!utility.ready && utility.error.isNotBlank()) error(utility.error)
     }
 
     private fun commitUtility(utility: UtilitySnapshot) {
         commit { current ->
-            val nextSettings = if (!current.settings.hasUtilityBind() && utility.bind.hasRoom()) {
-                current.settings.copy(
+            // 查到的宿舍号补进设置里：没绑过就整份存，绑过就只补上缺的 id，
+            // 这样下次刷新能直接查余额，不用再拉整份宿舍表。
+            val nextSettings = when {
+                !utility.bind.hasRoom() -> current.settings
+                !current.settings.hasUtilityBind() -> current.settings.copy(
                     utilityBind = utility.bind,
                     utilityBuilding = utility.bind.buildingName,
                     utilityRoom = utility.bind.roomName,
                 )
-            } else {
-                current.settings
+                else -> {
+                    val merged = current.settings.resolvedUtilityBind().fillIdsFrom(utility.bind)
+                    if (merged == current.settings.utilityBind) {
+                        current.settings
+                    } else {
+                        current.settings.copy(
+                            utilityBind = merged,
+                            utilityBuilding = merged.buildingName,
+                            utilityRoom = merged.roomName,
+                        )
+                    }
+                }
             }
             current.copy(utility = utility, settings = nextSettings)
         }
@@ -902,6 +909,12 @@ class AppRepository(
             chip = "${next.minutesToStart}′后"
             etaMinutes = next.minutesToStart
         }
+        // 小组件上的"上课中/下一节"要跟着走，但没换课就别重画位图。
+        val widgetKey = "${slot.courseId}/${slot.period}/${next.inClass}"
+        if (widgetKey != liveWidgetKey) {
+            liveWidgetKey = widgetKey
+            refreshHomeWidgets()
+        }
         return notifyLiveClass(
             title = slot.courseName,
             detail = detail,
@@ -985,6 +998,18 @@ fun formatSync(ts: Long): String {
         delta < 86400 -> "同步于 ${delta / 3600} 小时前"
         else -> "同步于 ${delta / 86400} 天前"
     }
+}
+
+private fun AppSnapshot.widgetSignature(): Int {
+    var h = slots.hashCode()
+    h = 31 * h + holidays.days.hashCode()
+    h = 31 * h + settings.termStart.hashCode()
+    h = 31 * h + settings.currentWeek
+    h = 31 * h + settings.weekCount
+    h = 31 * h + settings.schoolId.hashCode()
+    h = 31 * h + settings.courseAliases.hashCode()
+    h = 31 * h + settings.scheduleShifts.hashCode()
+    return h
 }
 
 private fun nowMillis(): Long = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()

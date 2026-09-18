@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import cn.edu.gzus.qingke.data.AppSnapshot
 import cn.edu.gzus.qingke.data.coursePickBrief
+import cn.edu.gzus.qingke.data.isLow
 import cn.edu.gzus.qingke.data.leaveSummary
 import cn.edu.gzus.qingke.data.resolved
 import cn.edu.gzus.qingke.data.showsGzusHall
@@ -48,13 +49,13 @@ fun JwxtScreen(
         ScreenHeader(
             "",
             "服务",
-            if (snapshot.session.loggedIn) "校园常用功能" else "登录后同步",
+            if (snapshot.session.loggedIn) "" else "多数功能要先登录",
         )
         if (!snapshot.session.loggedIn && !snapshot.hasTimetable) {
             Spacer(Modifier.height(12.dp))
             InfoCard(
                 title = "还没有服务数据",
-                summary = "去「我的」登录$jwxt。课表、成绩、考试同步进来之后，再在这里查。",
+                summary = "去「我的」登录$jwxt。",
                 modifier = Modifier.padding(horizontal = 16.dp),
                 onClick = { nav.goTab(TabDest.Mine) },
             )
@@ -69,15 +70,16 @@ fun JwxtScreen(
                     title = "请假",
                     summary = when {
                         snapshot.hall.leaves.isNotEmpty() || snapshot.session.loggedIn -> snapshot.hall.leaveSummary()
-                        else -> "广软常用功能，门户登录后同步"
+                        else -> "门户登录后同步"
                     },
                     onClick = { nav.open(Route.Leave) },
                 )
                 InfoCard(
-                    title = "宿舍水电",
+                    title = if (snapshot.utility.isLow()) "宿舍水电 · 该充值了" else "宿舍水电",
                     summary = snapshot.utilityBrief(),
                     height = null,
                     center = true,
+                    tintTitle = snapshot.utility.isLow(),
                     onClick = { nav.open(Route.Utility) },
                 )
             }
@@ -136,7 +138,7 @@ fun JwxtScreen(
                         snapshot.hall.ready -> "消息、办事、日程"
                         snapshot.hall.error.isNotBlank() -> snapshot.hall.error
                         snapshot.session.loggedIn -> "要用统一身份认证登录才能同步"
-                        else -> "广软事务中心，门户登录后同步"
+                        else -> "门户登录后同步"
                     },
                     onClick = { nav.open(Route.Hall) },
                 )

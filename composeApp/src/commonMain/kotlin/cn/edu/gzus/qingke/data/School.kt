@@ -223,6 +223,7 @@ interface SchoolPortal {
     suspend fun fetchLeaveForm(affairId: String = ""): LeaveForm? = null
     suspend fun submitLeave(form: LeaveForm, values: Map<String, String>): String =
         error("这所学校没有请假接口")
+    suspend fun fetchLeaveTrace(instanceId: String): List<LeaveStep> = emptyList()
     suspend fun fetchUtility(bind: UtilityBind = UtilityBind(), sno: String = ""): UtilitySnapshot? = null
     suspend fun fetchUtilityOptions(level: String, parentId: String = ""): List<UtilityOption> = emptyList()
     val supportsCoursePick: Boolean get() = false

@@ -82,7 +82,7 @@ fun ScheduleShiftsScreen(
     ) {
         Spacer(Modifier.height(8.dp))
         Text(
-            "按学校调课通知填写。国务院安排只标休和班，不会自动改课表。",
+            "按学校的调课通知填。下面的节假日只是参考，不会自动改课表。",
             modifier = Modifier.padding(horizontal = 16.dp),
             color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
             style = MiuixTheme.textStyles.body2,

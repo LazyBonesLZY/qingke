@@ -1,5 +1,9 @@
 package cn.edu.gzus.qingke.data
 
+/** 所有教务/门户请求统一用这个 UA。一卡通那边另有微信 UA。 */
+const val QINGKE_UA =
+    "Mozilla/5.0 (Linux; Android 15; Qingke) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
+
 const val JWXT_ORIGIN = "https://jwxt.gzus.edu.cn"
 const val JWXT_LOGIN_URL = "$JWXT_ORIGIN/jwglxt/xtgl/login_slogin.html"
 const val JWXT_CHANGE_PASSWORD_URL = "$JWXT_ORIGIN/jwglxt/xtgl/mmgl_xgMm.html"
@@ -53,16 +57,6 @@ internal fun isPasswordChangeUrl(url: String): Boolean {
         u.contains("xgmm.html") ||
         u.contains("loginfirst") ||
         u.contains("/aqzx/")
-}
-
-internal fun isWrongPasswordTip(tip: String): Boolean {
-    val t = tip.replace(" ", "")
-    return t.contains("用户名或密码") ||
-        t.contains("学号或密码") ||
-        t.contains("账号或密码") ||
-        t.contains("密码不正确") ||
-        t.contains("密码错误") ||
-        t.contains("用户不存在")
 }
 
 internal fun isCasFirstLogin(text: String, url: String = ""): Boolean {

@@ -33,6 +33,7 @@ import cn.edu.gzus.qingke.data.ScheduleShift
 import cn.edu.gzus.qingke.data.DRIVE_UPDATE_URL
 import cn.edu.gzus.qingke.data.FreeRoom
 import cn.edu.gzus.qingke.data.LeaveForm
+import cn.edu.gzus.qingke.data.LeaveStep
 import cn.edu.gzus.qingke.data.UtilityOption
 import cn.edu.gzus.qingke.data.GITHUB_RELEASES_URL
 import cn.edu.gzus.qingke.data.GZUS_LOGIN_CAS
@@ -114,6 +115,8 @@ fun App() {
         var leaveForm by remember { mutableStateOf<LeaveForm?>(null) }
         var leaveFormBusy by remember { mutableStateOf(false) }
         var leaveFormError by remember { mutableStateOf<String?>(null) }
+        var leaveTraces by remember { mutableStateOf<Map<String, List<LeaveStep>>>(emptyMap()) }
+        var leaveTraceBusy by remember { mutableStateOf("") }
         var update by remember { mutableStateOf<AppUpdate?>(null) }
         var updateBusy by remember { mutableStateOf(false) }
         var updateError by remember { mutableStateOf<String?>(null) }
@@ -130,7 +133,7 @@ fun App() {
             scope.launch { snackbar.showSnackbar(message) }
         }
 
-        fun runJob(block: suspend () -> Unit) {
+        fun runJob(login: Boolean = false, block: suspend () -> Unit) {
             scope.launch {
                 busy = true
                 runCatching { block() }
@@ -138,10 +141,13 @@ fun App() {
                         if (failed is JwxtNeedFirstLogin) {
                             firstLogin = true
                             loginError = failed.message
-                        } else {
-                            loginError = failed.friendlyNetworkMessage()
-                            toast(loginError ?: "操作失败")
+                            return@onFailure
                         }
+                        val message = failed.friendlyNetworkMessage()
+                        // 登录表单上的红字只留给登录本身和掉线，
+                        // 同步水电失败不该一直挂在那里。
+                        if (login || isSessionLost(message)) loginError = message
+                        toast(message)
                     }
                 busy = false
             }
@@ -218,7 +224,14 @@ fun App() {
                 if (waiting.isEmpty()) break
                 val wait = waiting.minOf { it.fireAt } - Clock.System.now().toEpochMilliseconds()
                 if (wait > 0) {
-                    delay(wait.coerceAtMost(15_000))
+                    // 离开选还早就慢慢看，快到点了就睡准确的时间，别差十几秒。
+                    delay(
+                        when {
+                            wait > 120_000 -> 60_000
+                            wait > 30_000 -> 15_000
+                            else -> wait
+                        },
+                    )
                     continue
                 }
                 runCatching { repo.runDueCoursePicks() }
@@ -344,7 +357,7 @@ fun App() {
                                 return@MineScreen
                             }
                             loginError = null
-                            runJob {
+                            runJob(login = true) {
                                 repo.loginAndSync(id, pwd, code, captcha?.id.orEmpty())
                                 firstLogin = false
                                 val after = repo.state.value
@@ -543,6 +556,17 @@ fun App() {
                                     runJob {
                                         repo.syncHall()
                                         toast("请假已同步")
+                                    }
+                                },
+                                traces = leaveTraces,
+                                traceBusy = leaveTraceBusy,
+                                onLoadTrace = { id ->
+                                    scope.launch {
+                                        leaveTraceBusy = id
+                                        runCatching { repo.loadLeaveTrace(id) }
+                                            .onSuccess { leaveTraces = leaveTraces + (id to it) }
+                                            .onFailure { toast(it.friendlyNetworkMessage()) }
+                                        leaveTraceBusy = ""
                                     }
                                 },
                             )

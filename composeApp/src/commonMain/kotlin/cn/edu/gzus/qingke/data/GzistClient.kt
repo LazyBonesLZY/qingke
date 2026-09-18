@@ -12,9 +12,6 @@ import io.ktor.http.Parameters
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 
-private const val UA =
-    "Mozilla/5.0 (Linux; Android 15; Qingke) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
-
 class GzistClient(
     private val client: HttpClient = createHttpClient(),
     private val casOrigin: String = "https://ids.gzist.edu.cn/lyuapServer",
@@ -36,11 +33,11 @@ class GzistClient(
 
     override suspend fun fetchCaptcha(): LoginCaptcha? {
         client.get("$CAS/login") {
-            header(HttpHeaders.UserAgent, UA)
+            header(HttpHeaders.UserAgent, QINGKE_UA)
             parameter("service", service)
         }
         val text = client.get("$CAS/kaptcha") {
-            header(HttpHeaders.UserAgent, UA)
+            header(HttpHeaders.UserAgent, QINGKE_UA)
             header(HttpHeaders.Referrer, "$CAS/login?service=$service")
         }.bodyAsText()
         val root = json.parseToJsonElement(text).jsonObject
@@ -70,7 +67,7 @@ class GzistClient(
                 append("code", captcha.trim())
             },
         ) {
-            header(HttpHeaders.UserAgent, UA)
+            header(HttpHeaders.UserAgent, QINGKE_UA)
             header(HttpHeaders.Referrer, "$CAS/login?service=$service")
             header(HttpHeaders.Origin, CAS.substringBefore("/lyuapServer").ifBlank { CAS })
         }.bodyAsText()
@@ -78,7 +75,7 @@ class GzistClient(
         val ticket = tickets.serviceTicket
         if (!ticket.startsWith("ST-")) error("门户没有返回票据")
         val jump = client.get(service) {
-            header(HttpHeaders.UserAgent, UA)
+            header(HttpHeaders.UserAgent, QINGKE_UA)
             parameter("ticket", ticket)
         }
         val body = jump.bodyAsText()
@@ -89,7 +86,7 @@ class GzistClient(
         }
         if (!url.contains("initMenu") && !body.contains("index_initMenu") && !body.contains("gnmkdm")) {
             val home = client.get("$jwOrigin/jwglxt/xtgl/index_initMenu.html") {
-                header(HttpHeaders.UserAgent, UA)
+                header(HttpHeaders.UserAgent, QINGKE_UA)
                 parameter("jsdm", "xs")
             }
             val homeBody = home.bodyAsText()
@@ -103,7 +100,7 @@ class GzistClient(
         runCatching { jwxt.logout() }
         runCatching {
             client.get("$CAS/logout") {
-                header(HttpHeaders.UserAgent, UA)
+                header(HttpHeaders.UserAgent, QINGKE_UA)
             }
         }
     }

@@ -45,12 +45,12 @@ import cn.edu.gzus.qingke.data.resolved
 import cn.edu.gzus.qingke.data.activeIn
 import cn.edu.gzus.qingke.data.compactCourseLines
 import cn.edu.gzus.qingke.data.compactRoomName
-import cn.edu.gzus.qingke.data.forBlockOnDate
 import cn.edu.gzus.qingke.data.hasShift
 import cn.edu.gzus.qingke.data.HolidayCalendar
 import cn.edu.gzus.qingke.data.HolidayDay
 import cn.edu.gzus.qingke.data.chip
 import cn.edu.gzus.qingke.data.forDate
+import cn.edu.gzus.qingke.data.occupiesBlock
 import cn.edu.gzus.qingke.data.formatMonthDayRange
 import cn.edu.gzus.qingke.data.formatYearMonth
 import cn.edu.gzus.qingke.data.hasTermStart
@@ -437,6 +437,10 @@ private fun WeekGrid(
     val shape = RoundedCornerShape(CellRadius)
     val workColor = if (isSystemInDarkTheme()) Color(0xFFE8B86D) else Color(0xFFC9782A)
     val slotCol = if (hasClock && blocks.any { it.start.isNotBlank() }) SlotColWithClock else SlotCol
+    // 一周七列，每列算一次就够。原来是每个格子都把整张课表过一遍。
+    val dayColumns = remember(slots, monday, settings, today) {
+        (0..6).map { offset -> slots.forDate(monday.plus(DatePeriod(days = offset)), settings, today) }
+    }
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         insideMargin = PaddingValues(6.dp),
@@ -523,7 +527,7 @@ private fun WeekGrid(
                     }
                     for (weekday in 1..7) {
                         val date = monday.plus(DatePeriod(days = weekday - 1))
-                        val cell = slots.forBlockOnDate(date, block, settings, today)
+                        val cell = dayColumns[weekday - 1].filter { it.occupiesBlock(block) }
                         WeekCell(
                             slots = cell,
                             today = date == today,
@@ -624,6 +628,20 @@ private fun MonthGrid(
     val daysInMonth = first.plus(DatePeriod(months = 1)).minus(DatePeriod(days = 1)).dayOfMonth
     val total = ((lead + daysInMonth + 6) / 7) * 7
     val start = first.minus(DatePeriod(days = lead))
+    // 四十多格，每格都重算一次课表太亏，整月一次算完。
+    val dots = remember(slots, month, settings, today, dark) {
+        (0 until total).associate { index ->
+            val date = start.plus(DatePeriod(days = index))
+            date to if (date.monthNumber != month.monthNumber) {
+                emptyList()
+            } else {
+                slots.forDate(date, settings, today)
+                    .map { courseTint(it.courseId.ifBlank { it.courseName }, dark) }
+                    .distinct()
+                    .take(4)
+            }
+        }
+    }
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         insideMargin = PaddingValues(6.dp),
@@ -662,14 +680,13 @@ private fun MonthGrid(
                     for (col in 0..6) {
                         val date = monday.plus(DatePeriod(days = col))
                         val inMonth = date.monthNumber == month.monthNumber
-                        val daySlots = if (inMonth) slots.forDate(date, settings, today) else emptyList()
                         MonthCell(
                             date = date,
                             inMonth = inMonth,
                             isToday = date == today,
                             isSelected = date == selected,
                             holiday = holidays.lookup(date),
-                            dots = daySlots.map { courseTint(it.courseId.ifBlank { it.courseName }, dark) }.distinct().take(4),
+                            dots = dots[date].orEmpty(),
                             modifier = Modifier.weight(1f).fillMaxHeight(),
                             onClick = { onSelect(date) },
                         )

@@ -6,7 +6,7 @@
 
 ## 学校
 
-- 广州软件学院：默认统一身份认证（cas.gzus.edu.cn），可进正方、办事大厅、请假、宿舍水电和选课；也可改回正方直接登录
+- 广州软件学院：默认统一身份认证（cas.gzus.edu.cn），可进正方、办事大厅、请假、宿舍水电和选课；也可改回正方直接登录。宿舍水电走一卡通的公开接口，不登录也能查
 - 仲恺农业工程学院：强智
 - 广州理工学院：联奕门户
 - 自定义教务：开发者选项里选类型、填 origin，正方可覆盖路径
@@ -15,7 +15,7 @@
 
 ## 更新
 
-当前版本 **1.6.18**（versionCode 41）。Android 8.0（API 26）及以上。小组件和 Live 通知按首页课卡重排了外观。
+当前版本 **1.7.0**（versionCode 42）。Android 8.0（API 26）及以上。宿舍水电不登录也能查，请假能看审批到哪一步，小组件到点自动刷新。
 
 - GitHub Release：应用里检查 `LazyBonesLZY/qingke` 最新版，再跳到 Release / APK
 - 网盘：浏览器打开 [https://storage.lazzyy.cn/@s/KB](https://storage.lazzyy.cn/@s/KB)

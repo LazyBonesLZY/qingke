@@ -28,10 +28,10 @@ import cn.edu.gzus.qingke.data.UtilityOption
 import cn.edu.gzus.qingke.data.gzusUsesCas
 import cn.edu.gzus.qingke.data.hasUtilityBind
 import cn.edu.gzus.qingke.data.openUrl
-import cn.edu.gzus.qingke.data.resolvedElectricPrice
+import cn.edu.gzus.qingke.data.isLow
 import cn.edu.gzus.qingke.data.resolvedUtilityBind
-import cn.edu.gzus.qingke.data.resolvedWaterPrice
 import cn.edu.gzus.qingke.data.utilityBrief
+import cn.edu.gzus.qingke.data.utilityPriceLabel
 import cn.edu.gzus.qingke.nav.QingkeNavigator
 import cn.edu.gzus.qingke.nav.TabDest
 import cn.edu.gzus.qingke.ui.components.InfoCard
@@ -62,8 +62,6 @@ fun UtilityScreen(
     onPeekBind: () -> Unit = {},
 ) {
     val bind = snapshot.settings.resolvedUtilityBind()
-    val waterPrice = snapshot.settings.resolvedWaterPrice()
-    val electricPrice = snapshot.settings.resolvedElectricPrice()
     var custom by remember(snapshot.settings.utilityUseCustomPrice) { mutableStateOf(snapshot.settings.utilityUseCustomPrice) }
     var waterText by remember(snapshot.settings.utilityWaterPrice) {
         mutableStateOf(snapshot.settings.utilityWaterPrice.toString())
@@ -99,32 +97,27 @@ fun UtilityScreen(
     ) {
         Spacer(Modifier.height(8.dp))
         Text(
-            "绑定后可查看电费、冷水和热水余额。",
+            "绑定宿舍后看电和水的余额，不用登录。",
             modifier = Modifier.padding(horizontal = 16.dp),
             color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
             style = MiuixTheme.textStyles.body2,
         )
         Spacer(Modifier.height(12.dp))
-        if (!snapshot.settings.gzusUsesCas()) {
+        InfoCard(
+            title = if (!bound) "未绑定宿舍" else bind.label.ifBlank { "已绑定宿舍" },
+            summary = if (!bound) "搜索楼栋或房间号，直接选" else snapshot.utilityBrief(),
+            modifier = Modifier.padding(horizontal = 16.dp),
+            height = null,
+            tintTitle = snapshot.utility.isLow(),
+        )
+        if (!snapshot.session.loggedIn || !snapshot.settings.gzusUsesCas()) {
+            Spacer(Modifier.height(8.dp))
             InfoCard(
-                title = "还不能看水电",
-                summary = "「我的」里用统一身份认证登录。",
-                modifier = Modifier.padding(horizontal = 16.dp),
-                onClick = { nav.goTab(TabDest.Mine) },
-            )
-        } else if (!snapshot.session.loggedIn) {
-            InfoCard(
-                title = "未绑定宿舍",
-                summary = "登录后再搜索宿舍。",
-                modifier = Modifier.padding(horizontal = 16.dp),
-                onClick = { nav.goTab(TabDest.Mine) },
-            )
-        } else {
-            InfoCard(
-                title = if (!bound) "未绑定宿舍" else bind.label.ifBlank { "已绑定宿舍" },
-                summary = if (!bound) "搜索并选择你的宿舍" else snapshot.utilityBrief(),
+                title = "不想手动搜？",
+                summary = "用统一身份认证登录，自动认出你绑定的宿舍。",
                 modifier = Modifier.padding(horizontal = 16.dp),
                 height = null,
+                onClick = { nav.goTab(TabDest.Mine) },
             )
         }
         SmallTitle(text = "宿舍")
@@ -134,18 +127,11 @@ fun UtilityScreen(
                 insideMargin = PaddingValues(0.dp),
             ) {
                 ArrowPreference(
-                    title = "已绑定：${bind.label}",
-                    summary = "点更换宿舍重新搜索",
+                    title = bind.label,
+                    summary = "点这里换宿舍",
                     onClick = { searching = true },
                 )
             }
-            Spacer(Modifier.height(8.dp))
-            Button(
-                onClick = { searching = true },
-                enabled = snapshot.session.loggedIn,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                minHeight = 44.dp,
-            ) { Text("更换宿舍") }
         } else {
             TextField(
                 value = query,
@@ -174,7 +160,7 @@ fun UtilityScreen(
                 when {
                     optionsBusy -> ArrowPreference(title = "正在搜索", summary = query.trim(), onClick = {})
                     !optionsError.isNullOrBlank() -> ArrowPreference(
-                        title = optionsError ?: "宿舍列表加载失败",
+                        title = optionsError,
                         summary = "换个楼栋或房间号再搜",
                         onClick = {},
                     )
@@ -218,7 +204,7 @@ fun UtilityScreen(
         ) {
             SwitchPreference(
                 title = "自定义单价",
-                summary = if (custom) "按下面填的算" else "江门校区 · 水 ${JIANGMEN_WATER_PRICE} 元/吨 · 电 ${JIANGMEN_ELECTRIC_PRICE} 元/度",
+                summary = snapshot.settings.utilityPriceLabel(bind),
                 checked = custom,
                 onCheckedChange = { on ->
                     custom = on
@@ -262,7 +248,7 @@ fun UtilityScreen(
         Spacer(Modifier.height(12.dp))
         Button(
             onClick = onRefresh,
-            enabled = !busy && snapshot.session.loggedIn,
+            enabled = !busy && bound,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             minHeight = 44.dp,
             colors = ButtonDefaults.buttonColorsPrimary(),

@@ -29,25 +29,19 @@ class WidgetConfigActivity : ComponentActivity() {
             return
         }
         setResult(RESULT_CANCELED, Intent().putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id))
-        val range = QingkeWidgets.rangeOf(this, id)
-        val rangeLabel = when (range) {
-            WidgetRange.Day -> "今日"
-            WidgetRange.Week -> "本周"
-            WidgetRange.Month -> "本月"
-        }
         setContent {
             QingkeTheme {
                 Column(Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 24.dp)) {
                     Spacer(Modifier.height(16.dp))
-                    ScreenHeader("", "小组件样式", "先选一种外观，再放到桌面。" + rangeLabel + "课表可以拉大小。")
+                    ScreenHeader("", "小组件样式", "选一种外观。放上桌面后可以拉大小。")
                     Spacer(Modifier.height(16.dp))
                     Column(
                         modifier = Modifier.padding(horizontal = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        InfoCard("纯色", "不透明卡片，字最清楚", height = null, onClick = { finishWith(id, WidgetStyle.Solid) })
-                        InfoCard("模糊", "半透明雾面，桌面壁纸会透出来", height = null, onClick = { finishWith(id, WidgetStyle.Blur) })
-                        InfoCard("玻璃", "更透的玻璃，带一圈高光边", height = null, onClick = { finishWith(id, WidgetStyle.Glass) })
+                        InfoCard("纯色", "不透明，字最清楚", height = null, onClick = { finishWith(id, WidgetStyle.Solid) })
+                        InfoCard("模糊", "半透明雾面，透出壁纸", height = null, onClick = { finishWith(id, WidgetStyle.Blur) })
+                        InfoCard("玻璃", "更透，带一圈高光边", height = null, onClick = { finishWith(id, WidgetStyle.Glass) })
                     }
                 }
             }

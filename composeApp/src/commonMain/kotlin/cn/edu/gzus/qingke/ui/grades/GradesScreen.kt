@@ -10,13 +10,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import cn.edu.gzus.qingke.data.AppSnapshot
 import cn.edu.gzus.qingke.data.formatGpa
 import cn.edu.gzus.qingke.data.resolved
 import cn.edu.gzus.qingke.data.formatScore
-import cn.edu.gzus.qingke.data.plannedCredits
 import cn.edu.gzus.qingke.data.resolvedGpa
 import cn.edu.gzus.qingke.data.summarizeGpa
 import cn.edu.gzus.qingke.data.uniqueCourses
@@ -35,11 +35,18 @@ fun GradesScreen(
     nav: QingkeNavigator,
     contentPadding: PaddingValues,
 ) {
-    val planned = plannedCredits(snapshot.slots)
-    val scored = snapshot.grades.filter { it.score.isNotBlank() || it.gpa.isNotBlank() }
-    val gpa = summarizeGpa(snapshot.grades)
-    val courses = uniqueCourses(snapshot.slots)
-    val progress = if (planned <= 0.0) 0f else (gpa.credits / planned).toFloat().coerceIn(0f, 1f)
+    val courses = remember(snapshot.slots) { uniqueCourses(snapshot.slots) }
+    val planned = remember(courses) { courses.sumOf { it.credit.toDoubleOrNull() ?: 0.0 } }
+    val scored = remember(snapshot.grades) {
+        snapshot.grades.filter { it.score.isNotBlank() || it.gpa.isNotBlank() }
+    }
+    val gpa = remember(snapshot.grades) { summarizeGpa(snapshot.grades) }
+    // 进度条要比的是本学期：拿全部学年的已修学分去除本学期计划学分没有意义。
+    val termGpa = remember(snapshot.grades, courses) {
+        val ids = courses.mapNotNull { it.courseId.takeIf(String::isNotBlank) }.toSet()
+        summarizeGpa(snapshot.grades.filter { it.courseId in ids })
+    }
+    val progress = if (planned <= 0.0) null else (termGpa.credits / planned).toFloat().coerceIn(0f, 1f)
     val jwxt = snapshot.resolved().jwxtName
 
     Column(
@@ -53,27 +60,27 @@ fun GradesScreen(
             "",
             "成绩",
             when {
-                snapshot.grades.isNotEmpty() -> "学分绩点按${jwxt}绩点加权"
-                snapshot.session.loggedIn -> "出分后按学期收进这里"
-                else -> "登录后同步，未登录不展示预置数据"
+                snapshot.grades.isNotEmpty() -> "绩点按学分加权"
+                snapshot.session.loggedIn -> "出分后自动同步"
+                else -> "登录后同步"
             },
         )
         Spacer(Modifier.height(12.dp))
         InfoCard(
             title = gpa.weighted?.let { "学分绩点  ${formatGpa(it)}" } ?: "学分绩点  —",
             summary = when {
-                gpa.counted > 0 -> "Σ(绩点 × 学分) / Σ学分 · 已计 ${gpa.counted} 门 ${formatScore(gpa.credits)} 学分"
-                planned > 0.0 -> "本学期课表约 ${planned.toInt()} 学分，出分后按学分加权。"
-                snapshot.session.loggedIn -> "${jwxt}还没有可同步的成绩。"
-                else -> "去「我的」登录${jwxt}。"
+                gpa.counted > 0 -> "已计 ${gpa.counted} 门 · ${formatScore(gpa.credits)} 学分"
+                planned > 0.0 -> "本学期 ${planned.toInt()} 学分，出分后统计"
+                snapshot.session.loggedIn -> "${jwxt}还没有成绩"
+                else -> "去「我的」登录${jwxt}"
             },
             modifier = Modifier.padding(horizontal = 16.dp),
             height = null,
             progress = progress,
-            progressLabel = when {
-                planned > 0.0 -> "${formatScore(gpa.credits)}/${planned.toInt()}学分"
-                gpa.credits > 0.0 -> "${formatScore(gpa.credits)}学分"
-                else -> ""
+            progressLabel = if (planned > 0.0) {
+                "本学期 ${formatScore(termGpa.credits)}/${planned.toInt()} 学分"
+            } else {
+                ""
             },
             onClick = if (!snapshot.session.loggedIn) {
                 { nav.goTab(TabDest.Mine) }

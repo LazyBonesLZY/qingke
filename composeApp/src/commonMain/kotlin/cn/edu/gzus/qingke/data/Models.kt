@@ -128,13 +128,23 @@ const val GZUS_LOGIN_JWXT = "jwxt"
 const val GZUS_LOGIN_CAS = "cas"
 const val JIANGMEN_WATER_PRICE = 1.7
 const val JIANGMEN_ELECTRIC_PRICE = 0.629
+const val GZUS_AREA_GUANGZHOU = "81"
+const val UTILITY_LOW_POWER = 10.0
+const val UTILITY_LOW_WATER = 1.0
+
+/** 正方学年代码：9 月到次年 1 月是上学期（xqm=3），2 月到 7 月是下学期（xqm=12）。 */
+fun defaultZfYearCode(today: LocalDate = nowDateTime().date): String =
+    (if (today.monthNumber >= 8) today.year else today.year - 1).toString()
+
+fun defaultZfTermCode(today: LocalDate = nowDateTime().date): String =
+    if (today.monthNumber >= 8 || today.monthNumber <= 1) "3" else "12"
 
 @Serializable
 data class AppSettings(
     val remindBeforeClass: Boolean = true,
     val darkModeFollowSystem: Boolean = false,
-    val yearCode: String = "2026",
-    val termCode: String = "3",
+    val yearCode: String = defaultZfYearCode(),
+    val termCode: String = defaultZfTermCode(),
     val currentWeek: Int = 1,
     val termStart: String = "",
     val weekCount: Int = 0,
@@ -190,6 +200,24 @@ fun CustomJwxt.pathMap(): Map<String, String> =
     }.toMap()
 
 fun CustomJwxt.originClean(): String = origin.trim().trimEnd('/')
+
+/**
+ * 换学校时保留所有个人偏好，只清掉跟原学校教务绑在一起的东西：
+ * 学年学期、周历、选课队列。课表缩写和调课留着，换回去还能用。
+ */
+fun AppSettings.forSchool(school: School): AppSettings {
+    val kingosoft = school == School.Zhku ||
+        (school == School.Custom && customJwxt.normalizedKind() == "kingosoft")
+    return copy(
+        schoolId = school.id,
+        yearCode = if (kingosoft) "" else defaultZfYearCode(),
+        termCode = if (kingosoft) "" else defaultZfTermCode(),
+        currentWeek = 1,
+        termStart = "",
+        weekCount = 0,
+        coursePickQueue = emptyList(),
+    )
+}
 
 fun AppSettings.resolvedRemindLead(): Int =
     if (remindLeadMinutes in RemindLeadMinutes) remindLeadMinutes else DefaultRemindLeadMinutes
@@ -297,7 +325,24 @@ data class LeaveApplication(
     val end: String = "",
     val reason: String = "",
     val node: String = "",
-)
+    /** 大厅流程实例号（orunid/docUnid），查审批进度要用。 */
+    val instanceId: String = "",
+) {
+    fun traceId(): String = instanceId.ifBlank { id }
+}
+
+/** 审批流程里的一步。 */
+@Serializable
+data class LeaveStep(
+    val name: String = "",
+    val handler: String = "",
+    val status: String = "",
+    val time: String = "",
+    val comment: String = "",
+) {
+    fun brief(): String =
+        listOf(handler, status, time, comment).filter { it.isNotBlank() }.joinToString(" · ")
+}
 
 @Serializable
 data class LeaveField(
@@ -368,18 +413,34 @@ fun AppSettings.hasUtilityBind(): Boolean {
 fun AppSnapshot.utilityBrief(): String {
     if (!settings.hasUtilityBind()) return "未绑定宿舍"
     if (!utility.ready) return utility.error.ifBlank { "查询失败" }
-    val waterPrice = settings.resolvedWaterPrice()
-    val electricPrice = settings.resolvedElectricPrice()
+    val bind = utility.bind.takeIf { it.hasRoom() } ?: settings.resolvedUtilityBind()
+    val waterPrice = settings.resolvedWaterPrice(bind)
+    val electricPrice = settings.resolvedElectricPrice(bind)
     return buildList {
         utilityLine("电", utility.power, "度", electricPrice)?.let(::add)
         utilityLine("冷水", utility.coldWater, "吨", waterPrice)?.let(::add)
         utilityLine("热水", utility.hotWater, "吨", waterPrice)?.let(::add)
+        if (utility.lowPower()) add("电量不到 ${UTILITY_LOW_POWER.toInt()} 度，记得充值")
+        else if (utility.lowWater()) add("水量不到 ${UTILITY_LOW_WATER.toInt()} 吨，记得充值")
     }.joinToString("\n").ifBlank { "查询失败" }
 }
 
-private fun utilityLine(name: String, amount: String, unit: String, price: Double): String? {
+fun UtilitySnapshot.lowPower(): Boolean = parseAmount(power)?.let { it < UTILITY_LOW_POWER } == true
+
+fun UtilitySnapshot.lowWater(): Boolean {
+    val cold = parseAmount(coldWater) ?: return false
+    return cold < UTILITY_LOW_WATER
+}
+
+fun UtilitySnapshot.isLow(): Boolean = ready && (lowPower() || lowWater())
+
+/** 一卡通里 81 是广州校区，82 是江门校区。只有江门公布了单价。 */
+fun UtilityBind.isGuangzhou(): Boolean =
+    areaId.trim() == GZUS_AREA_GUANGZHOU || areaName.contains("广州")
+
+private fun utilityLine(name: String, amount: String, unit: String, price: Double?): String? {
     if (amount.isBlank()) return null
-    val yuan = parseAmount(amount)?.times(price)
+    val yuan = if (price == null) null else parseAmount(amount)?.times(price)
     return buildString {
         append(name)
         append(' ')
@@ -408,11 +469,24 @@ data class UtilitySnapshot(
 
 fun UtilityBind.hasRoom(): Boolean = roomId.isNotBlank() || roomName.isNotBlank()
 
-fun AppSettings.resolvedWaterPrice(): Double =
-    if (utilityUseCustomPrice && utilityWaterPrice > 0) utilityWaterPrice else JIANGMEN_WATER_PRICE
+/** 只有江门校区有公布的默认单价；广州校区没自定义就不折算成钱。 */
+fun AppSettings.resolvedWaterPrice(bind: UtilityBind): Double? = when {
+    utilityUseCustomPrice && utilityWaterPrice > 0 -> utilityWaterPrice
+    bind.isGuangzhou() -> null
+    else -> JIANGMEN_WATER_PRICE
+}
 
-fun AppSettings.resolvedElectricPrice(): Double =
-    if (utilityUseCustomPrice && utilityElectricPrice > 0) utilityElectricPrice else JIANGMEN_ELECTRIC_PRICE
+fun AppSettings.resolvedElectricPrice(bind: UtilityBind): Double? = when {
+    utilityUseCustomPrice && utilityElectricPrice > 0 -> utilityElectricPrice
+    bind.isGuangzhou() -> null
+    else -> JIANGMEN_ELECTRIC_PRICE
+}
+
+fun AppSettings.utilityPriceLabel(bind: UtilityBind): String = when {
+    utilityUseCustomPrice -> "按下面填的算"
+    bind.isGuangzhou() -> "广州校区没有公布单价，只显示度数和吨数；要算钱就自定义"
+    else -> "江门校区 · 水 $JIANGMEN_WATER_PRICE 元/吨 · 电 $JIANGMEN_ELECTRIC_PRICE 元/度"
+}
 
 fun formatMoney(value: Double): String {
     val cents = kotlin.math.round(value * 100.0).toLong()
@@ -426,15 +500,6 @@ fun parseAmount(text: String): Double? {
     val compact = text.trim().replace(",", "")
     val match = Regex("""-?\d+(?:\.\d+)?""").find(compact) ?: return null
     return match.value.toDoubleOrNull()
-}
-
-fun UtilitySnapshot.powerYuan(price: Double): Double? = parseAmount(power)?.times(price)
-
-fun UtilitySnapshot.waterYuan(price: Double): Double? {
-    val cold = parseAmount(coldWater)
-    val hot = parseAmount(hotWater)
-    if (cold == null && hot == null) return null
-    return ((cold ?: 0.0) + (hot ?: 0.0)) * price
 }
 
 @Serializable
@@ -574,17 +639,31 @@ fun formatCoursePickWhen(millis: Long): String {
     return "${dt.date} $h:$m:$s"
 }
 
+/** 解析手填的开选时间。填错返回 0，由调用方提示，别在点击回调里抛异常。 */
 fun parseCoursePickWhen(date: String, time: String): Long {
-    val day = LocalDate.parse(date.trim())
+    val day = runCatching { LocalDate.parse(date.trim()) }.getOrNull() ?: return 0L
     val parts = time.trim().split(':', '：', '.', '-', ' ')
         .mapNotNull { it.toIntOrNull() }
-    if (parts.isEmpty()) error("时间写成 13:00:00")
+    if (parts.isEmpty()) return 0L
     val clock = LocalTime(
         hour = parts[0].coerceIn(0, 23),
         minute = parts.getOrElse(1) { 0 }.coerceIn(0, 59),
         second = parts.getOrElse(2) { 0 }.coerceIn(0, 59),
     )
-    return LocalDateTime(day, clock).toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds()
+    return runCatching {
+        LocalDateTime(day, clock).toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds()
+    }.getOrDefault(0L)
+}
+
+/** 最近一场还没过去的考试和距今天数；解析不出日期的排最后。 */
+fun nextExam(exams: List<ExamItem>, today: LocalDate): Pair<ExamItem, Int>? {
+    val todayKey = today.toEpochDays().toLong()
+    return exams
+        .mapNotNull { exam ->
+            val key = examSortKey(exam.time)
+            if (key == Long.MAX_VALUE || key < todayKey) null else exam to (key - todayKey).toInt()
+        }
+        .minByOrNull { it.second }
 }
 
 data class CourseDetail(

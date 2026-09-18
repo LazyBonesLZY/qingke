@@ -253,7 +253,7 @@ fun MineScreen(
                 )
                 ArrowPreference(
                     title = "退出登录",
-                    summary = "清除会话和本机自动重登密码，课表留在本地",
+                    summary = "清除会话和本机密码，课表留在本地",
                     onClick = {
                         confirmLogout = !confirmLogout
                         pickingSchool = false
@@ -482,7 +482,7 @@ private fun LoggedOutMine(
             Text("需要首登认证", style = MiuixTheme.textStyles.title3, color = MiuixTheme.colorScheme.onBackground)
             Spacer(Modifier.height(8.dp))
             Text(
-                "${school.loginName}判定这是初始密码，或者必须先改密。办事大厅和教务都会拦。青课不能代改。打开官方登录页按提示改完，再回到这里登录。",
+                "${school.loginName}要求先改密码，改完才能登录。青课改不了，打开官方页面按提示改。",
                 style = MiuixTheme.textStyles.body2,
                 color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
             )
@@ -521,7 +521,7 @@ private fun LoggedOutMine(
     }
     if (snapshot.settings.school() == School.Gzus && snapshot.settings.gzusLoginChannel == GZUS_LOGIN_CAS) {
         Text(
-            "登录后本机加密保存密码，门户过期会自动重登。退出登录会清掉。",
+            "密码会加密存在本机，用于门户过期后自动重登；退出登录即清除。",
             color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
             style = MiuixTheme.textStyles.footnote1,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
@@ -579,7 +579,7 @@ private fun SchoolExtras(
         InlineConfirm(
             title = "换成 ${confirm.label}",
             body = if (hasLocalData) {
-                "会退出当前登录，并清掉课表、成绩、考试、学期周次和课表缩写。之后用 ${confirm.jwxtName}。"
+                "会退出当前登录，清掉课表、成绩和学期周次。课表缩写和调课留着。"
             } else {
                 "之后用 ${confirm.jwxtName} 登录。"
             },
@@ -689,7 +689,7 @@ private fun SemesterBlock(
     ) {
         ArrowPreference(
             title = "第1周周一",
-            summary = start?.let { formatLongDate(it) } ?: "同步${school.jwxtName}后自动写入，也可以自己选",
+            summary = start?.let { formatLongDate(it) } ?: "同步后自动写入，也可以自己选",
             onClick = onToggleDate,
         )
         if (pickingDate) {
@@ -704,7 +704,7 @@ private fun SemesterBlock(
             summary = if (snapshot.settings.hasTermStart()) {
                 "${school.jwxtName}周表对齐 · 今天第${week}周"
             } else {
-                "登录后按${school.jwxtName}周表自动对齐，也可以点开改"
+                "登录后自动对齐，也可以点开改"
             },
             onClick = onToggleWeek,
         )
@@ -888,7 +888,7 @@ private fun RemindBlock(
         }
         ArrowPreference(
             title = if (liveTesting) "停止 Live 测试" else "测试 Live 通知",
-            summary = if (liveTesting) "进度条约 8 分钟，点这里停" else "发出一条上课中进度，用来看 Live 好不好用",
+            summary = if (liveTesting) "进度条约 8 分钟，点这里停" else "发一条上课中的进度通知，看看效果",
             onClick = { if (liveTesting) onStopLiveTest() else onLiveTest() },
         )
         if (liveStatus.contains("未开启") || liveStatus.contains("权限") || liveStatus.contains("还没开")) {
@@ -1000,7 +1000,7 @@ private fun DeveloperBlock(
         if (expanded) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp)) {
                 Text(
-                    "只改请求地址和路径。学校没公布的作息、空教室、验证码规则，青课不会编。",
+                    "只改请求地址和路径。作息、空教室这些得学校自己有。",
                     style = MiuixTheme.textStyles.footnote1,
                     color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
                 )

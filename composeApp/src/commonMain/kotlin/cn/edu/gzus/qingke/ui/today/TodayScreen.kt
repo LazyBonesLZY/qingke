@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import cn.edu.gzus.qingke.data.AppSnapshot
@@ -21,6 +22,8 @@ import cn.edu.gzus.qingke.data.forDate
 import cn.edu.gzus.qingke.data.formatRemain
 import cn.edu.gzus.qingke.data.greeting
 import cn.edu.gzus.qingke.data.hasTermStart
+import cn.edu.gzus.qingke.data.isLow
+import cn.edu.gzus.qingke.data.nextExam
 import cn.edu.gzus.qingke.data.nextLesson
 import cn.edu.gzus.qingke.data.nowDateTime
 import cn.edu.gzus.qingke.data.formatPeriodWithClock
@@ -77,6 +80,10 @@ fun TodayScreen(
         else -> ((nowMs - startMillis).toFloat() / (endMillis - startMillis).toFloat()).coerceIn(0f, 1f)
     }
     val weekdayLabel = WeekdayFull.getOrElse(weekday - 1) { "" }.replace("星期", "周")
+    val courseCount = remember(snapshot.slots) { uniqueCourses(snapshot.slots).size }
+    val termWeeks = remember(snapshot.slots) { teachingWeeks(snapshot.slots) }
+    val soonestExam = remember(snapshot.exams, now.date) { nextExam(snapshot.exams, now.date) }
+    val sortedExams = remember(snapshot.exams) { snapshot.exams.sortedBy { examSortKey(it.time) } }
     val source = when {
         snapshot.session.loggedIn -> "已同步"
         snapshot.hasTimetable -> "本地课表"
@@ -173,7 +180,7 @@ fun TodayScreen(
             Spacer(Modifier.height(8.dp))
             InfoCard(
                 title = "先选第1周周一",
-                summary = "「我的」里选开学那周的周一，首页和课表的日期才准。",
+                summary = "到「我的」选开学那周的周一，日期才对得上。",
                 modifier = Modifier.padding(horizontal = 16.dp),
                 onClick = { nav.goTab(TabDest.Mine) },
             )
@@ -181,9 +188,10 @@ fun TodayScreen(
         if (snapshot.showsGzusHall()) {
             Spacer(Modifier.height(12.dp))
             InfoCard(
-                title = "宿舍水电",
+                title = if (snapshot.utility.isLow()) "宿舍水电 · 该充值了" else "宿舍水电",
                 height = null,
                 center = true,
+                tintTitle = snapshot.utility.isLow(),
                 summary = snapshot.utilityBrief(),
                 modifier = Modifier.padding(horizontal = 16.dp),
                 onClick = { nav.open(Route.Utility) },
@@ -206,22 +214,30 @@ fun TodayScreen(
         Spacer(Modifier.height(14.dp))
         val stats = buildList {
             add(todaySlots.size.toString() to "今天课程")
-            add(uniqueCourses(snapshot.slots).size.toString() to "学期课程")
-            add(teachingWeeks(snapshot.slots).toString() to "教学周")
-            if (snapshot.exams.isNotEmpty()) add(snapshot.exams.size.toString() to "考试")
+            add(courseCount.toString() to "学期课程")
+            add(termWeeks.toString() to "教学周")
+            if (snapshot.exams.isNotEmpty()) {
+                val days = soonestExam?.second
+                add(
+                    when {
+                        days == null -> snapshot.exams.size.toString() to "考试"
+                        days == 0 -> "今天" to "最近考试"
+                        else -> days.toString() to "天后考试"
+                    },
+                )
+            }
         }
         StatRow(
             items = stats,
             onClicks = if (snapshot.exams.isEmpty()) emptyList() else listOf(null, null, null, { nav.open(Route.Exams) }),
         )
         if (snapshot.exams.isNotEmpty()) {
-            SmallTitle(text = "考试")
+            SmallTitle(text = "考试 · ${snapshot.exams.size} 场")
             Column(
                 modifier = Modifier.padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                val exams = snapshot.exams.sortedBy { examSortKey(it.time) }
-                exams.take(5).forEach { exam ->
+                sortedExams.take(5).forEach { exam ->
                     InfoCard(
                         title = exam.courseName,
                         summary = listOf(exam.time, exam.room, exam.seat, exam.status)
@@ -231,10 +247,10 @@ fun TodayScreen(
                         onClick = { nav.open(Route.Exams) },
                     )
                 }
-                if (exams.size > 5) {
+                if (sortedExams.size > 5) {
                     InfoCard(
                         title = "全部考试",
-                        summary = "还有 ${exams.size - 5} 场",
+                        summary = "还有 ${sortedExams.size - 5} 场",
                         onClick = { nav.open(Route.Exams) },
                     )
                 }

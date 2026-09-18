@@ -97,14 +97,14 @@ fun CoursePickScreen(
     ) {
         Spacer(Modifier.height(8.dp))
         Text(
-            "走正方自主选课（N253512）。搜到课可以立刻提交，也可以排队，到点再按官方接口提交一次。青课不会连打。应用要开着才会到点提交。",
+            "搜到课可以立刻提交，也可以排队到点自动提交。到点那一刻应用要开着。",
             modifier = Modifier.padding(horizontal = 16.dp),
             color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
             style = MiuixTheme.textStyles.body2,
         )
         if (!school.supportsCoursePick) {
             Spacer(Modifier.height(12.dp))
-            EmptyHint("${school.jwxtName}没有正方自主选课。")
+            EmptyHint("${school.jwxtName}没有自主选课。")
         } else if (!snapshot.session.loggedIn) {
             Spacer(Modifier.height(12.dp))
             InfoCard(

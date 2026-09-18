@@ -15,8 +15,6 @@ import kotlinx.datetime.plus
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 
-private const val UA =
-    "Mozilla/5.0 (Linux; Android 15; Qingke) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
 private const val DEFAULT_KBJCMSID = "3831EE04599D452CBFD0532E01DE52BA"
 
 class ZhkuClient(
@@ -44,7 +42,7 @@ class ZhkuClient(
 
     private suspend fun loginJsxsd(studentId: String, password: String): String {
         client.get("$BASE/") {
-            header(HttpHeaders.UserAgent, UA)
+            header(HttpHeaders.UserAgent, QINGKE_UA)
         }
         val result = client.submitForm(
             url = "$BASE/xk/LoginToXk",
@@ -55,7 +53,7 @@ class ZhkuClient(
                 append("encoded", zhkuEncoded(studentId, password))
             },
         ) {
-            header(HttpHeaders.UserAgent, UA)
+            header(HttpHeaders.UserAgent, QINGKE_UA)
             header(HttpHeaders.Referrer, "$BASE/")
             header(HttpHeaders.Origin, HOST)
         }
@@ -66,13 +64,13 @@ class ZhkuClient(
 
     private suspend fun loginOfficial(studentId: String, password: String): String {
         client.get("$HOST/Logon.do?method=logon") {
-            header(HttpHeaders.UserAgent, UA)
+            header(HttpHeaders.UserAgent, QINGKE_UA)
         }
         val sess = client.submitForm(
             url = "$HOST/Logon.do?method=logon&flag=sess",
             formParameters = Parameters.build {},
         ) {
-            header(HttpHeaders.UserAgent, UA)
+            header(HttpHeaders.UserAgent, QINGKE_UA)
             header(HttpHeaders.Referrer, "$HOST/Logon.do?method=logon")
             header(HttpHeaders.Origin, HOST)
         }.bodyAsText().trim()
@@ -87,7 +85,7 @@ class ZhkuClient(
                 append("encoded", encoded)
             },
         ) {
-            header(HttpHeaders.UserAgent, UA)
+            header(HttpHeaders.UserAgent, QINGKE_UA)
             header(HttpHeaders.Referrer, "$HOST/Logon.do?method=logon")
             header(HttpHeaders.Origin, HOST)
         }
@@ -107,7 +105,7 @@ class ZhkuClient(
 
     private suspend fun fetchHome(): ZhkuPage {
         val home = client.get("$BASE/framework/xsMain.htmlx") {
-            header(HttpHeaders.UserAgent, UA)
+            header(HttpHeaders.UserAgent, QINGKE_UA)
             header(HttpHeaders.Referrer, "$BASE/")
         }
         return ZhkuPage(home.bodyAsText(), home.request.url.toString())
@@ -240,7 +238,7 @@ class ZhkuClient(
     override suspend fun logout() {
         runCatching {
             client.get("$BASE/xk/LoginToXk") {
-                header(HttpHeaders.UserAgent, UA)
+                header(HttpHeaders.UserAgent, QINGKE_UA)
                 parameter("method", "exit")
             }
         }
@@ -248,7 +246,7 @@ class ZhkuClient(
 
     private suspend fun get(url: String): String =
         client.get(url) {
-            header(HttpHeaders.UserAgent, UA)
+            header(HttpHeaders.UserAgent, QINGKE_UA)
             header(HttpHeaders.Referrer, "$BASE/framework/xsMain.htmlx")
         }.bodyAsText()
 
@@ -259,7 +257,7 @@ class ZhkuClient(
                 fields.forEach { (k, v) -> append(k, v) }
             },
         ) {
-            header(HttpHeaders.UserAgent, UA)
+            header(HttpHeaders.UserAgent, QINGKE_UA)
             header(HttpHeaders.Referrer, "$BASE/framework/xsMain.htmlx")
             header(HttpHeaders.Origin, HOST)
         }.bodyAsText()
@@ -518,7 +516,8 @@ internal fun parseZhkuPractices(
 
 internal fun parseZhkuProfile(html: String, xnxq: String, slots: List<LessonSlot>): StudentProfile {
     val (year, term) = parseZhkuTerm(xnxq)
-    val yearName = if (year.length == 4) "$year-${year.toInt() + 1}" else xnxq.substringBeforeLast("-").ifBlank { year }
+    val yearStart = year.takeIf { it.length == 4 }?.toIntOrNull()
+    val yearName = if (yearStart != null) "$year-${yearStart + 1}" else xnxq.substringBeforeLast("-").ifBlank { year }
     val campus = slots.map { it.campus }.firstOrNull { it.isNotBlank() }.orEmpty()
     return StudentProfile(
         name = fieldAfter(html, "姓名").ifBlank { labeled(html, "姓名") },

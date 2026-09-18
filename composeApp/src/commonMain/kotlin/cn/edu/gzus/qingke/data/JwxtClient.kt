@@ -23,9 +23,6 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-private const val UA =
-    "Mozilla/5.0 (Linux; Android 15; Qingke) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
-
 class JwxtClient(
     private val origin: String = "https://jwxt.gzus.edu.cn",
     private val client: HttpClient = createHttpClient(),
@@ -47,10 +44,10 @@ class JwxtClient(
 
     override suspend fun fetchCaptcha(): LoginCaptcha? {
         client.get(api("loginPage", "xtgl/login_slogin.html")) {
-            header(HttpHeaders.UserAgent, UA)
+            header(HttpHeaders.UserAgent, QINGKE_UA)
         }
         val bytes = client.get(api("captcha", "kaptcha")) {
-            header(HttpHeaders.UserAgent, UA)
+            header(HttpHeaders.UserAgent, QINGKE_UA)
             header(HttpHeaders.Referrer, "$BASE/xtgl/login_slogin.html")
             parameter("time", nowMillis())
         }.readRawBytes()
@@ -65,12 +62,12 @@ class JwxtClient(
         captchaId: String,
     ): Result<Unit> = runCatching {
         val loginPage = client.get(api("loginPage", "xtgl/login_slogin.html")) {
-            header(HttpHeaders.UserAgent, UA)
+            header(HttpHeaders.UserAgent, QINGKE_UA)
         }.bodyAsText()
         val csrf = Regex("""id="csrftoken"[^>]*value="([^"]+)"""").find(loginPage)?.groupValues?.get(1)
             ?: error("登录页没有 csrftoken，教务可能在维护")
         val pkText = client.get(api("publicKey", "xtgl/login_getPublicKey.html")) {
-            header(HttpHeaders.UserAgent, UA)
+            header(HttpHeaders.UserAgent, QINGKE_UA)
             header(HttpHeaders.Referrer, api("loginPage", "xtgl/login_slogin.html"))
             parameter("time", nowMillis())
         }.bodyAsText()
@@ -93,7 +90,7 @@ class JwxtClient(
                 if (captcha.isNotBlank()) append("yzm", captcha.trim())
             },
         ) {
-            header(HttpHeaders.UserAgent, UA)
+            header(HttpHeaders.UserAgent, QINGKE_UA)
             header(HttpHeaders.Referrer, "$BASE/xtgl/login_slogin.html")
             header(HttpHeaders.Origin, origin)
         }
@@ -109,7 +106,7 @@ class JwxtClient(
             }
         }
         val home = client.get("$BASE/xtgl/index_initMenu.html") {
-            header(HttpHeaders.UserAgent, UA)
+            header(HttpHeaders.UserAgent, QINGKE_UA)
             parameter("jsdm", "xs")
         }
         val homeBody = home.bodyAsText()
@@ -123,7 +120,7 @@ class JwxtClient(
 
     override suspend fun fetchTermCalendar(): TermCalendar {
         val page = client.get(api("calendar", "kbcx/xskbcxZccx_cxXskbcxIndex.html")) {
-            header(HttpHeaders.UserAgent, UA)
+            header(HttpHeaders.UserAgent, QINGKE_UA)
             header(HttpHeaders.Referrer, "$BASE/xtgl/index_initMenu.html?jsdm=xs")
             parameter("gnmkdm", "N2154")
             parameter("layout", "default")
@@ -148,7 +145,7 @@ class JwxtClient(
         }
         if (year.isBlank() || term.isBlank() || current <= 0) {
             val home = client.get("$BASE/xtgl/index_cxAreaOne.html") {
-                header(HttpHeaders.UserAgent, UA)
+                header(HttpHeaders.UserAgent, QINGKE_UA)
                 header("X-Requested-With", "XMLHttpRequest")
             }.bodyAsText()
             if (current <= 0) current = htmlInputValue(home, "dqzc").toIntOrNull() ?: 0
@@ -175,7 +172,7 @@ class JwxtClient(
                 append("kzlx", "ck")
             },
         ) {
-            header(HttpHeaders.UserAgent, UA)
+            header(HttpHeaders.UserAgent, QINGKE_UA)
             header(HttpHeaders.Referrer, "$BASE/kbcx/xskbcx_cxXskbcxIndex.html?gnmkdm=N2151")
             header("X-Requested-With", "XMLHttpRequest")
         }.bodyAsText()
@@ -309,7 +306,7 @@ class JwxtClient(
 
     override suspend fun fetchNoticeDetail(id: String): NoticeItem {
         val page = client.get(api("noticeDetail", "xtgl/xwck_ckXw.html")) {
-            header(HttpHeaders.UserAgent, UA)
+            header(HttpHeaders.UserAgent, QINGKE_UA)
             header(HttpHeaders.Referrer, "$BASE/xtgl/index_cxNews.html")
             parameter("xwbh", id)
             parameter("doType", "save")
@@ -321,7 +318,7 @@ class JwxtClient(
     override suspend fun logout() {
         runCatching {
             client.post(api("logout", "xtgl/login_logout.html")) {
-                header(HttpHeaders.UserAgent, UA)
+                header(HttpHeaders.UserAgent, QINGKE_UA)
             }
         }
     }
@@ -330,7 +327,7 @@ class JwxtClient(
         val gnmkdm = xsxkGnmkdm()
         val indexUrl = api("courseIndex", "xsxk/zzxkyzb_cxZzxkYzbIndex.html")
         val index = client.get(indexUrl) {
-            header(HttpHeaders.UserAgent, UA)
+            header(HttpHeaders.UserAgent, QINGKE_UA)
             header(HttpHeaders.Referrer, "$BASE/xtgl/index_initMenu.html?jsdm=xs")
             parameter("gnmkdm", gnmkdm)
             parameter("layout", "default")
@@ -483,7 +480,7 @@ class JwxtClient(
             url,
             Parameters.build { fields.forEach { (k, v) -> append(k, v) } },
         ) {
-            header(HttpHeaders.UserAgent, UA)
+            header(HttpHeaders.UserAgent, QINGKE_UA)
             header("X-Requested-With", "XMLHttpRequest")
             header(HttpHeaders.Accept, "application/json, text/javascript, */*; q=0.01")
             header(HttpHeaders.Referrer, "$BASE/xsxk/zzxkyzb_cxZzxkYzbIndex.html?gnmkdm=$gnmkdm&layout=default")
@@ -634,7 +631,7 @@ class JwxtClient(
                     append("limit", "200")
                 },
             ) {
-                header(HttpHeaders.UserAgent, UA)
+                header(HttpHeaders.UserAgent, QINGKE_UA)
                 header(HttpHeaders.Referrer, "$BASE/xtgl/index_initMenu.html?jsdm=xs")
                 header("X-Requested-With", "XMLHttpRequest")
             }.bodyAsText()
@@ -642,7 +639,7 @@ class JwxtClient(
             parseNewsList(page)
         }.getOrDefault(emptyList())
         val page = client.get(api("news", "xtgl/index_cxNews.html")) {
-            header(HttpHeaders.UserAgent, UA)
+            header(HttpHeaders.UserAgent, QINGKE_UA)
             header(HttpHeaders.Referrer, "$BASE/xtgl/index_initMenu.html?jsdm=xs")
             header("X-Requested-With", "XMLHttpRequest")
             parameter("localeKey", "zh_CN")
@@ -655,7 +652,7 @@ class JwxtClient(
 
     private suspend fun fetchNewsMorePage(): List<NoticeItem> {
         val page = client.get(api("newsMore", "xtgl/xwck_cxMoreXwList.html")) {
-            header(HttpHeaders.UserAgent, UA)
+            header(HttpHeaders.UserAgent, QINGKE_UA)
             header(HttpHeaders.Referrer, "$BASE/xtgl/index_initMenu.html?jsdm=xs")
             parameter("localeKey", "zh_CN")
             parameter("gnmkdm", "index")
@@ -721,7 +718,7 @@ class JwxtClient(
             append("time", "0")
         }
         return client.submitForm(url, params) {
-            header(HttpHeaders.UserAgent, UA)
+            header(HttpHeaders.UserAgent, QINGKE_UA)
             header("X-Requested-With", "XMLHttpRequest")
             header(HttpHeaders.Referrer, "$BASE/xtgl/index_initMenu.html")
         }.bodyAsText()
@@ -876,6 +873,8 @@ private fun parseWeekSpans(html: String): List<WeekSpan> {
 
 private fun nowMillis(): Long = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
 
+private val NoticeJson = Json { ignoreUnknownKeys = true; isLenient = true }
+
 private val NewsLink = Regex(
     """<a\b[^>]*\bhref="([^"]*xwck_ckXw\.html[^"]*)"[^>]*>([\s\S]*?)</a>""",
     RegexOption.IGNORE_CASE,
@@ -922,7 +921,7 @@ internal fun parseNewsList(html: String): List<NoticeItem> =
 internal fun parseNewsJson(text: String): List<NoticeItem> {
     val body = text.trim()
     if (body.isEmpty() || body == "null" || body.startsWith("<")) return emptyList()
-    val root = runCatching { Json { ignoreUnknownKeys = true; isLenient = true }.parseToJsonElement(body).jsonObject }
+    val root = runCatching { NoticeJson.parseToJsonElement(body).jsonObject }
         .getOrNull() ?: return emptyList()
     val items = root["items"] as? JsonArray ?: return emptyList()
     return items.mapNotNull { el ->
@@ -947,7 +946,7 @@ internal fun parseNewsJson(text: String): List<NoticeItem> {
 internal fun parseDbsyJson(text: String): List<NoticeItem> {
     val body = text.trim()
     if (body.isEmpty() || body == "null" || body.startsWith("<")) return emptyList()
-    val root = runCatching { Json { ignoreUnknownKeys = true; isLenient = true }.parseToJsonElement(body).jsonObject }
+    val root = runCatching { NoticeJson.parseToJsonElement(body).jsonObject }
         .getOrNull() ?: return emptyList()
     val items = root["items"] as? JsonArray ?: return emptyList()
     return items.mapNotNull { el ->

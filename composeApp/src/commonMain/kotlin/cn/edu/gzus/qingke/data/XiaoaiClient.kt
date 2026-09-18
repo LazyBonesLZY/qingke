@@ -23,8 +23,6 @@ import kotlinx.serialization.json.longOrNull
 
 private const val MULTI = "https://i.ai.mi.com/course-multi"
 private const val MULTI_AUTH = "https://i.ai.mi.com/course-multi-auth"
-private const val UA =
-    "Mozilla/5.0 (Linux; Android 15; Qingke) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
 
 class XiaoaiClient(
     private val client: HttpClient = createHttpClient(),
@@ -205,7 +203,7 @@ class XiaoaiClient(
         }
 
     private fun io.ktor.client.request.HttpRequestBuilder.xiaoaiHeaders(token: XiaoaiToken) {
-        header(HttpHeaders.UserAgent, UA)
+        header(HttpHeaders.UserAgent, QINGKE_UA)
         header(HttpHeaders.Accept, "application/json")
         header(HttpHeaders.Origin, "https://i.ai.mi.com")
         header(HttpHeaders.Referrer, "https://i.ai.mi.com/h5/precache/ai-schedule/")

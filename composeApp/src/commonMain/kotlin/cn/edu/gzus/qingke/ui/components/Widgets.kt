@@ -2,7 +2,6 @@ package cn.edu.gzus.qingke.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,10 +37,8 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.PressFeedbackType
 
 val CanvasStatHeight = 72.dp
-val CanvasQuickHeight = 72.dp
 val CanvasRowHeight = 88.dp
 val CanvasHeroHeight = 120.dp
-val CanvasProfileHeight = 100.dp
 private val TileGap = 8.dp
 
 @Composable
@@ -172,26 +169,6 @@ fun HeroCard(
                 }
             }
         }
-    }
-}
-
-@Composable
-fun ProgressLine(progress: Float) {
-    val color = MiuixTheme.colorScheme.primary
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 32.dp)
-            .height(6.dp)
-            .clip(RoundedCornerShape(3.dp))
-            .background(color.copy(alpha = 0.18f)),
-    ) {
-        Box(
-            Modifier
-                .fillMaxHeight()
-                .fillMaxWidth(progress.coerceIn(0f, 1f))
-                .background(color),
-        )
     }
 }
 
@@ -347,43 +324,6 @@ fun StatRow(items: List<Pair<String, String>>, onClicks: List<(() -> Unit)?> = e
 }
 
 @Composable
-fun QuickRow(items: List<Triple<String, String, () -> Unit>>) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(CanvasQuickHeight),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        items.forEach { (title, summary, onClick) ->
-            Card(
-                modifier = Modifier.weight(1f).fillMaxHeight(),
-                insideMargin = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
-                pressFeedbackType = PressFeedbackType.Sink,
-                onClick = onClick,
-            ) {
-                Column(
-                    Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    ScrollText(
-                        title,
-                        style = MiuixTheme.textStyles.title3,
-                        color = MiuixTheme.colorScheme.onBackground,
-                        textAlign = TextAlign.Center,
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    ScrollText(
-                        summary,
-                        style = MiuixTheme.textStyles.footnote1,
-                        color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
-                        textAlign = TextAlign.Center,
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
 fun FactsCard(
     fields: List<Pair<String, String>>,
     modifier: Modifier = Modifier,
@@ -450,25 +390,6 @@ fun FactGrid(
                 if (row.size == 1) Spacer(Modifier.weight(1f))
             }
         }
-    }
-}
-
-@Composable
-fun FieldRow(
-    label: String,
-    value: String,
-    modifier: Modifier = Modifier,
-    onClick: (() -> Unit)? = null,
-) {
-    Column(
-        modifier
-            .fillMaxWidth()
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-    ) {
-        Text(label, style = MiuixTheme.textStyles.footnote1, color = MiuixTheme.colorScheme.onSurfaceContainerVariant)
-        Spacer(Modifier.height(4.dp))
-        Text(value.ifBlank { "—" }, style = MiuixTheme.textStyles.body2, color = MiuixTheme.colorScheme.onBackground)
     }
 }
 

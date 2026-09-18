@@ -11,7 +11,21 @@ import kotlinx.datetime.plus
 import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
 
+/**
+ * 周次串（"1-16周"、"3,5,7周(单)"）解析一次就缓存。
+ * 课表网格一次重组会问上千次，每次都跑一遍替换加正则太亏。
+ */
+private var weekSetCache: Map<String, Set<Int>> = emptyMap()
+
 fun parseWeekSet(raw: String): Set<Int> {
+    weekSetCache[raw]?.let { return it }
+    val parsed = computeWeekSet(raw)
+    val cache = weekSetCache
+    weekSetCache = if (cache.size >= 512) mapOf(raw to parsed) else cache + (raw to parsed)
+    return parsed
+}
+
+private fun computeWeekSet(raw: String): Set<Int> {
     var text = raw
         .replace("周", "")
         .replace("第", "")
@@ -77,9 +91,6 @@ fun List<LessonSlot>.forDay(week: Int, weekday: Int): List<LessonSlot> =
     filter { it.weekday == weekday && it.activeIn(week) }
         .sortedBy { periodSortKey(it.period) }
 
-fun List<LessonSlot>.forWeekdayAnyWeek(weekday: Int): List<LessonSlot> =
-    filter { it.weekday == weekday }.sortedBy { periodSortKey(it.period) }
-
 fun periodSortKey(period: String): Int =
     period.substringBefore("-").toIntOrNull() ?: 99
 
@@ -109,9 +120,9 @@ fun weekdayIndex(date: LocalDate): Int = date.dayOfWeek.ordinal + 1 // 1=Mon
 fun minutesUntil(now: LocalTime, start: String): Int? {
     val parts = start.split(":")
     if (parts.size < 2) return null
-    val target = parts[0].toInt() * 60 + parts[1].toInt()
-    val cur = now.hour * 60 + now.minute
-    return target - cur
+    val hour = parts[0].toIntOrNull() ?: return null
+    val minute = parts[1].toIntOrNull() ?: return null
+    return hour * 60 + minute - (now.hour * 60 + now.minute)
 }
 
 fun periodStart(period: String): String {
@@ -302,24 +313,6 @@ fun List<LessonSlot>.toCourseDetail(courseId: String): CourseDetail {
     )
 }
 
-fun upcomingWeekPreview(slots: List<LessonSlot>, currentWeek: Int): Pair<String, String>? {
-    if (slots.isEmpty()) return null
-    val later = (currentWeek + 1..20).firstOrNull { week ->
-        slots.any { it.activeIn(week) && !it.activeIn(currentWeek) }
-    } ?: return null
-    val names = slots.filter { it.activeIn(later) }.map { it.courseName }.distinct().take(3)
-    if (names.isEmpty()) return null
-    val nextAfter = (later + 1..20).firstOrNull { week ->
-        slots.any { it.activeIn(week) && !it.activeIn(later) && !it.activeIn(currentWeek) }
-    }
-    val more = nextAfter?.let { week ->
-        slots.filter { it.activeIn(week) && !it.activeIn(later) }.map { it.courseName }.distinct().take(4)
-    }.orEmpty()
-    val title = "第${later}周 · ${names.joinToString(" / ")}"
-    val sub = if (more.isEmpty() || nextAfter == null) "之后课程会陆续开始" else "第${nextAfter}周再加${more.joinToString("、")}"
-    return title to sub
-}
-
 fun teachingWeeks(slots: List<LessonSlot>): Int =
     slots.flatMap { parseWeekSet(it.weeks) }.maxOrNull() ?: 0
 
@@ -336,14 +329,20 @@ fun combineMillis(date: LocalDate, hm: String): Long {
         .toEpochMilliseconds()
 }
 
-fun plannedCredits(slots: List<LessonSlot>): Double =
-    uniqueCourses(slots).sumOf { it.credit.toDoubleOrNull() ?: 0.0 }
-
 fun mondayOf(date: LocalDate): LocalDate =
     date.minus(DatePeriod(days = weekdayIndex(date) - 1))
 
-fun parseIsoDate(raw: String): LocalDate? =
-    raw.takeIf { it.isNotBlank() }?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+/** 同理：开学日和调课日期每格都要解析一次，缓存住。 */
+private var isoDateCache: Map<String, LocalDate?> = emptyMap()
+
+fun parseIsoDate(raw: String): LocalDate? {
+    if (raw.isBlank()) return null
+    val cache = isoDateCache
+    if (cache.containsKey(raw)) return cache[raw]
+    val parsed = runCatching { LocalDate.parse(raw) }.getOrNull()
+    isoDateCache = if (cache.size >= 512) mapOf(raw to parsed) else cache + (raw to parsed)
+    return parsed
+}
 
 fun AppSettings.termStartMonday(): LocalDate? = parseIsoDate(termStart)?.let { mondayOf(it) }
 
@@ -359,7 +358,7 @@ fun formatLongDate(date: LocalDate): String =
 
 fun teachingWeekFromStart(date: LocalDate, termStart: LocalDate): Int {
     val days = mondayOf(date).toEpochDays() - mondayOf(termStart).toEpochDays()
-    return 1 + (days / 7).toInt()
+    return 1 + days / 7
 }
 
 fun resolvedCurrentWeek(settings: AppSettings, today: LocalDate): Int {
@@ -386,7 +385,7 @@ fun teachingWeekOn(date: LocalDate, settings: AppSettings, today: LocalDate): In
     val start = settings.termStartMonday()
     if (start != null) return teachingWeekFromStart(date, start)
     val days = mondayOf(date).toEpochDays() - mondayOf(today).toEpochDays()
-    return resolvedCurrentWeek(settings, today) + (days / 7).toInt()
+    return resolvedCurrentWeek(settings, today) + days / 7
 }
 
 fun formatMonthDayRange(start: LocalDate, end: LocalDate): String =
@@ -410,14 +409,6 @@ fun LessonSlot.occupiesBlock(block: PeriodBlock): Boolean {
 fun List<LessonSlot>.forBlock(week: Int, weekday: Int, block: PeriodBlock): List<LessonSlot> =
     filter { it.weekday == weekday && it.activeIn(week) && it.occupiesBlock(block) }
         .sortedBy { periodSortKey(it.period) }
-
-fun List<LessonSlot>.forBlockOnDate(
-    date: LocalDate,
-    block: PeriodBlock,
-    settings: AppSettings,
-    today: LocalDate,
-): List<LessonSlot> =
-    forDate(date, settings, today).filter { it.occupiesBlock(block) }.sortedBy { periodSortKey(it.period) }
 
 fun AppSettings.shiftFrom(date: LocalDate): ScheduleShift? =
     scheduleShifts.firstOrNull { parseIsoDate(it.fromDate) == date }
@@ -580,4 +571,3 @@ fun examSortKey(time: String): Long {
     return runCatching { LocalDate(year, month, day).toEpochDays().toLong() }.getOrDefault(Long.MAX_VALUE)
 }
 
-fun shortRoom(room: String): String = compactRoomName(room)

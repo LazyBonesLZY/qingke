@@ -1,5 +1,6 @@
 package cn.edu.gzus.qingke.widget
 
+import android.app.AlarmManager
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
@@ -28,8 +29,11 @@ import cn.edu.gzus.qingke.data.forBlock
 import cn.edu.gzus.qingke.data.forDate
 import cn.edu.gzus.qingke.data.lookup
 import cn.edu.gzus.qingke.data.mondayOfTeachingWeek
+import cn.edu.gzus.qingke.data.combineMillis
 import cn.edu.gzus.qingke.data.nextLiveLesson
 import cn.edu.gzus.qingke.data.nowDateTime
+import cn.edu.gzus.qingke.data.periodEnd
+import cn.edu.gzus.qingke.data.periodStart
 import cn.edu.gzus.qingke.data.periodClockRange
 import cn.edu.gzus.qingke.data.resolvedCurrentWeek
 import cn.edu.gzus.qingke.data.shortCourseName
@@ -51,6 +55,7 @@ object QingkeWidgets {
     private const val PREFS = "qingke_widgets"
     private const val STORE = "qingke-snapshot.json"
     private val ACCENT = 0xFF3482FF.toInt()
+    private const val MAX_WIDGET_PIXELS = 1_600_000L
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     fun styleOf(context: Context, id: Int): WidgetStyle {
@@ -91,15 +96,52 @@ object QingkeWidgets {
 
     fun refreshAll(context: Context) {
         val manager = AppWidgetManager.getInstance(context)
+        var any = false
         listOf(
             DayWidgetReceiver::class.java to WidgetRange.Day,
             WeekWidgetReceiver::class.java to WidgetRange.Week,
             MonthWidgetReceiver::class.java to WidgetRange.Month,
         ).forEach { (cls, range) ->
             manager.getAppWidgetIds(ComponentName(context, cls)).forEach { id ->
+                any = true
                 update(context, manager, id, range)
             }
         }
+        if (any) scheduleNextTick(context)
+    }
+
+    /**
+     * 系统给小组件的自动刷新最快也就半小时一次，"上课中 / 下一节"会一直挂着过期的状态。
+     * 所以自己在下一个上下课点再叫醒一次。用非精确闹钟，不要额外权限。
+     */
+    private fun scheduleNextTick(context: Context) {
+        runCatching {
+            val alarms = context.getSystemService(AlarmManager::class.java) ?: return
+            val at = nextBoundaryMillis() ?: return
+            val intent = Intent(context, WidgetTickReceiver::class.java)
+                .setAction(ACTION_TICK)
+            val pending = PendingIntent.getBroadcast(
+                context,
+                0,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            alarms.set(AlarmManager.RTC, at, pending)
+        }
+    }
+
+    /** 今天下一个上课或下课的时刻；今天都过完了就等明天零点过五分。 */
+    private fun nextBoundaryMillis(): Long? {
+        val now = nowDateTime()
+        val nowMs = System.currentTimeMillis()
+        val today = now.date
+        val next = (1..16)
+            .flatMap { listOf(periodStart("$it-$it"), periodEnd("$it-$it")) }
+            .mapNotNull { combineMillis(today, it).takeIf { ms -> ms > nowMs } }
+            .minOrNull()
+        if (next != null) return next + 5_000
+        return combineMillis(today.plus(DatePeriod(days = 1)), "00:05")
+            .takeIf { it > nowMs }
     }
 
     fun update(context: Context, manager: AppWidgetManager, id: Int, range: WidgetRange) {
@@ -136,7 +178,14 @@ object QingkeWidgets {
         val heightDp = fromSizes?.maxOfOrNull { it.height }
             ?: listOf(maxH, minH).firstOrNull { it > 0 }?.toFloat()
             ?: 180f
-        return (widthDp * density).roundToSize() to (heightDp * density).roundToSize()
+        val width = (widthDp * density).roundToSize()
+        val height = (heightDp * density).roundToSize()
+        // RemoteViews 传位图有大小限制，平板上拉满的组件能到十几 MB，缩到能过的范围。
+        val pixels = width.toLong() * height
+        if (pixels <= MAX_WIDGET_PIXELS) return width to height
+        val shrink = kotlin.math.sqrt(MAX_WIDGET_PIXELS.toDouble() / pixels)
+        return (width * shrink).toInt().coerceAtLeast(160) to
+            (height * shrink).toInt().coerceAtLeast(160)
     }
 
     @Suppress("DEPRECATION")
@@ -611,6 +660,15 @@ object QingkeWidgets {
         return if (end <= 0) ellipsis else text.take(end) + ellipsis
     }
 
+}
+
+internal const val ACTION_TICK = "cn.edu.gzus.qingke.widget.TICK"
+
+/** 到点叫醒：重画一次，顺便把下一次闹钟排上。 */
+class WidgetTickReceiver : android.content.BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        runCatching { QingkeWidgets.refreshAll(context) }
+    }
 }
 
 abstract class QingkeWidgetReceiver : AppWidgetProvider() {

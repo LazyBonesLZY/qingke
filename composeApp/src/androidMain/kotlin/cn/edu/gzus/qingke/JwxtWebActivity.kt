@@ -74,7 +74,6 @@ class JwxtWebActivity : ComponentActivity() {
                                 CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                                 settings.javaScriptEnabled = true
                                 settings.domStorageEnabled = true
-                                settings.databaseEnabled = true
                                 settings.useWideViewPort = true
                                 settings.loadWithOverviewMode = true
                                 settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE

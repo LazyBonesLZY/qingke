@@ -46,7 +46,7 @@ fun CourseAliasesScreen(
     ) {
         Spacer(Modifier.height(8.dp))
         Text(
-            "只改课表格子里的简称，完整课名还在课程详情里。",
+            "只改课表格子里的简称。",
             modifier = Modifier.padding(horizontal = 16.dp),
             color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
             style = MiuixTheme.textStyles.body2,

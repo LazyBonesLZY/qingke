@@ -8,9 +8,6 @@ import io.ktor.http.HttpHeaders
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
-private const val UA =
-    "Mozilla/5.0 (Linux; Android 15; Qingke) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
-
 class HolidayClient(
     private val client: HttpClient = createHttpClient(),
 ) {
@@ -25,7 +22,7 @@ class HolidayClient(
         var last: Throwable? = null
         for (url in urls) {
             val text = runCatching {
-                client.get(url) { header(HttpHeaders.UserAgent, UA) }.bodyAsText()
+                client.get(url) { header(HttpHeaders.UserAgent, QINGKE_UA) }.bodyAsText()
             }.onFailure { last = it }.getOrNull() ?: continue
             val parsed = runCatching { parseYear(text, year) }.getOrNull()
             if (parsed != null && parsed.days.isNotEmpty()) return parsed

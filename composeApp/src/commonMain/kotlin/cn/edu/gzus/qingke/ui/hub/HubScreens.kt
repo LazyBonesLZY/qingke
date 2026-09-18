@@ -63,13 +63,13 @@ fun EmptyRoomScreen(
         ) {
             Spacer(Modifier.height(8.dp))
             Text(
-                "${school.jwxtName}没有空教室接口，青课不会编一份假的查询。",
+                "${school.jwxtName}的教务没有空教室查询。",
                 modifier = Modifier.padding(horizontal = 16.dp),
                 color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
                 style = MiuixTheme.textStyles.body2,
             )
             Spacer(Modifier.height(12.dp))
-            EmptyHint("这所学校的教务没有空教室。")
+            EmptyHint("换回广软才能查空教室。")
         }
         return
     }
@@ -87,7 +87,7 @@ fun EmptyRoomScreen(
     ) {
         Spacer(Modifier.height(8.dp))
         Text(
-            "按星期和大节向${school.jwxtName}查空闲教室。",
+            "选星期和大节，查当下空着的教室。",
             modifier = Modifier.padding(horizontal = 16.dp),
             color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
             style = MiuixTheme.textStyles.body2,
@@ -177,13 +177,6 @@ fun NoticesScreen(
     }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(contentPadding).padding(bottom = 24.dp)) {
         Spacer(Modifier.height(8.dp))
-        Text(
-            "点一条看正文。",
-            modifier = Modifier.padding(horizontal = 16.dp),
-            color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
-            style = MiuixTheme.textStyles.body2,
-        )
-        Spacer(Modifier.height(12.dp))
         if (snapshot.notices.isEmpty()) {
             EmptyHint(if (snapshot.session.loggedIn) "暂时没有通知" else "登录后同步通知")
         } else {
@@ -296,13 +289,6 @@ private fun NoticeTableRow(
 fun ExamsScreen(snapshot: AppSnapshot, contentPadding: PaddingValues) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(contentPadding).padding(bottom = 24.dp)) {
         Spacer(Modifier.height(8.dp))
-        Text(
-            "考试安排来自${snapshot.resolved().jwxtName}同步。本学期还没出安排时保持空状态。",
-            modifier = Modifier.padding(horizontal = 16.dp),
-            color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
-            style = MiuixTheme.textStyles.body2,
-        )
-        Spacer(Modifier.height(12.dp))
         if (snapshot.exams.isEmpty()) {
             EmptyHint(if (snapshot.session.loggedIn) "暂无考试安排" else "登录后同步考试")
         } else {

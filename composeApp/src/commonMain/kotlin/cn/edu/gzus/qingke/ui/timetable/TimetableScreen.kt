@@ -45,7 +45,8 @@ import cn.edu.gzus.qingke.data.resolved
 import cn.edu.gzus.qingke.data.activeIn
 import cn.edu.gzus.qingke.data.compactCourseLines
 import cn.edu.gzus.qingke.data.compactRoomName
-import cn.edu.gzus.qingke.data.hasShift
+import cn.edu.gzus.qingke.data.CloudScheduleAdjust
+import cn.edu.gzus.qingke.data.adjustDayLabel
 import cn.edu.gzus.qingke.data.HolidayCalendar
 import cn.edu.gzus.qingke.data.HolidayDay
 import cn.edu.gzus.qingke.data.chip
@@ -151,7 +152,14 @@ fun TimetableScreen(
 
     val monday = mondayOfTeachingWeek(viewWeek.coerceAtLeast(1), settings, today)
     val sunday = monday.plus(DatePeriod(days = 6))
-    val weekSessions = snapshot.slots.count { it.activeIn(viewWeek) }
+    val weekSessions = (0..6).sumOf { offset ->
+        snapshot.slots.forDate(
+            monday.plus(DatePeriod(days = offset)),
+            settings,
+            today,
+            snapshot.scheduleAdjust,
+        ).size
+    }
     val weekPractices = snapshot.practices.filter { it.activeIn(viewWeek) }
     val dated = settings.hasTermStart()
     val subtitle = when {
@@ -221,6 +229,7 @@ fun TimetableScreen(
                 blocks = snapshot.resolved().periodBlocks,
                 hasClock = snapshot.resolved().hasPeriodClock,
                 settings = settings,
+                adjust = snapshot.scheduleAdjust,
                 onOpen = { nav.open(Route.Course(it)) },
             )
             if (weekSessions == 0 && weekPractices.isEmpty()) {
@@ -261,6 +270,7 @@ fun TimetableScreen(
                 weekLo = weekLo,
                 weekHi = weekHi,
                 slots = snapshot.slots,
+                adjust = snapshot.scheduleAdjust,
                 holidays = snapshot.holidays,
                 onSelect = { date ->
                     selectedDate = date
@@ -269,14 +279,16 @@ fun TimetableScreen(
                     }
                 },
             )
-            val daySlots = snapshot.slots.forDate(selectedDate, settings, today)
+            val daySlots = snapshot.slots.forDate(selectedDate, settings, today, snapshot.scheduleAdjust)
             val dayWeek = teachingWeekOn(selectedDate, settings, today)
             SmallTitle(
                 text = buildString {
                     append("${selectedDate.monthNumber}月${selectedDate.dayOfMonth}日 · 周${WeekdayNames.getOrElse(weekdayIndex(selectedDate) - 1) { "?" }}")
                     if (dayWeek in weekLo..weekHi) append(" · 第${dayWeek}周")
                     snapshot.holidays.lookup(selectedDate)?.let { append(" · ").append(it.chip()) }
-                    if (settings.hasShift(selectedDate)) append(" · 调课")
+                    adjustDayLabel(selectedDate, settings, snapshot.scheduleAdjust, today)
+                        .takeIf { it.isNotBlank() }
+                        ?.let { append(" · ").append(it) }
                 },
             )
             if (daySlots.isEmpty()) {
@@ -432,14 +444,15 @@ private fun WeekGrid(
     blocks: List<PeriodBlock>,
     hasClock: Boolean,
     settings: AppSettings,
+    adjust: CloudScheduleAdjust,
     onOpen: (String) -> Unit,
 ) {
     val shape = RoundedCornerShape(CellRadius)
     val workColor = if (isSystemInDarkTheme()) Color(0xFFE8B86D) else Color(0xFFC9782A)
     val slotCol = if (hasClock && blocks.any { it.start.isNotBlank() }) SlotColWithClock else SlotCol
     // 一周七列，每列算一次就够。原来是每个格子都把整张课表过一遍。
-    val dayColumns = remember(slots, monday, settings, today) {
-        (0..6).map { offset -> slots.forDate(monday.plus(DatePeriod(days = offset)), settings, today) }
+    val dayColumns = remember(slots, monday, settings, today, adjust) {
+        (0..6).map { offset -> slots.forDate(monday.plus(DatePeriod(days = offset)), settings, today, adjust) }
     }
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -479,9 +492,10 @@ private fun WeekGrid(
                                 color = if (holiday.off) MiuixTheme.colorScheme.primary else workColor,
                             )
                         }
-                        if (settings.hasShift(date)) {
+                        val mark = adjustDayLabel(date, settings, adjust, today)
+                        if (mark.isNotBlank()) {
                             Text(
-                                "调",
+                                if (mark == "放假") "假" else "调",
                                 textAlign = TextAlign.Center,
                                 fontSize = 9.sp,
                                 fontWeight = FontWeight.Medium,
@@ -619,6 +633,7 @@ private fun MonthGrid(
     weekLo: Int,
     weekHi: Int,
     slots: List<LessonSlot>,
+    adjust: CloudScheduleAdjust,
     holidays: HolidayCalendar,
     onSelect: (LocalDate) -> Unit,
 ) {
@@ -629,13 +644,13 @@ private fun MonthGrid(
     val total = ((lead + daysInMonth + 6) / 7) * 7
     val start = first.minus(DatePeriod(days = lead))
     // 四十多格，每格都重算一次课表太亏，整月一次算完。
-    val dots = remember(slots, month, settings, today, dark) {
+    val dots = remember(slots, month, settings, today, dark, adjust) {
         (0 until total).associate { index ->
             val date = start.plus(DatePeriod(days = index))
             date to if (date.monthNumber != month.monthNumber) {
                 emptyList()
             } else {
-                slots.forDate(date, settings, today)
+                slots.forDate(date, settings, today, adjust)
                     .map { courseTint(it.courseId.ifBlank { it.courseName }, dark) }
                     .distinct()
                     .take(4)

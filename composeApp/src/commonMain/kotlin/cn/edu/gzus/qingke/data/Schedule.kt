@@ -201,7 +201,8 @@ fun nextLiveLesson(
     settings: AppSettings,
     today: LocalDate,
     time: LocalTime,
-): LiveLesson? = liveLessonFrom(slots.forDate(date, settings, today), time)
+    adjust: CloudScheduleAdjust = CloudScheduleAdjust(),
+): LiveLesson? = liveLessonFrom(slots.forDate(date, settings, today, adjust), time)
 
 private fun liveLessonFrom(day: List<LessonSlot>, time: LocalTime): LiveLesson? {
     day.forEach { slot ->
@@ -223,8 +224,9 @@ fun nextLesson(
     settings: AppSettings,
     today: LocalDate,
     time: LocalTime,
+    adjust: CloudScheduleAdjust = CloudScheduleAdjust(),
 ): Pair<LessonSlot, Int>? {
-    val next = nextLiveLesson(slots, date, settings, today, time) ?: return null
+    val next = nextLiveLesson(slots, date, settings, today, time, adjust) ?: return null
     return next.slot to if (next.inClass) 0 else next.minutesToStart
 }
 
@@ -410,21 +412,82 @@ fun List<LessonSlot>.forBlock(week: Int, weekday: Int, block: PeriodBlock): List
     filter { it.weekday == weekday && it.activeIn(week) && it.occupiesBlock(block) }
         .sortedBy { periodSortKey(it.period) }
 
+fun applicableAdjust(settings: AppSettings, adjust: CloudScheduleAdjust): CloudScheduleAdjust {
+    if (!settings.autoPullScheduleAdjust) return CloudScheduleAdjust()
+    if (settings.school() != School.Gzus) return CloudScheduleAdjust()
+    if (adjust.schoolId.isNotBlank() && adjust.schoolId != School.Gzus.id) return CloudScheduleAdjust()
+    return adjust
+}
+
+fun CloudShiftRule.resolve(settings: AppSettings, today: LocalDate): ScheduleShift? {
+    if (week < 1 || weekday !in 1..7) return null
+    val to = parseIsoDate(toDate) ?: return null
+    val from = mondayOfTeachingWeek(week, settings, today).plus(DatePeriod(days = weekday - 1))
+    if (from == to) return null
+    return ScheduleShift(
+        id = id.ifBlank { "cloud-$week-$weekday-$toDate" },
+        fromDate = from.toString(),
+        toDate = to.toString(),
+    )
+}
+
+fun resolvedScheduleShifts(
+    settings: AppSettings,
+    adjust: CloudScheduleAdjust,
+    today: LocalDate,
+): List<ScheduleShift> {
+    val manualDates = settings.scheduleShifts.flatMap { listOf(it.fromDate, it.toDate) }.toSet()
+    val cloud = applicableAdjust(settings, adjust).shifts.mapNotNull { rule ->
+        rule.resolve(settings, today)?.takeIf { it.fromDate !in manualDates && it.toDate !in manualDates }
+    }
+    return settings.scheduleShifts + cloud
+}
+
+fun isAdjustOff(date: LocalDate, settings: AppSettings, adjust: CloudScheduleAdjust): Boolean =
+    applicableAdjust(settings, adjust).offs.any { parseIsoDate(it.date) == date }
+
+fun adjustDayLabel(
+    date: LocalDate,
+    settings: AppSettings,
+    adjust: CloudScheduleAdjust,
+    today: LocalDate,
+): String {
+    val shifts = resolvedScheduleShifts(settings, adjust, today)
+    return when {
+        shifts.any { parseIsoDate(it.toDate) == date } -> "调课"
+        isAdjustOff(date, settings, adjust) -> "放假"
+        shifts.any { parseIsoDate(it.fromDate) == date } -> "调课"
+        else -> ""
+    }
+}
+
 fun AppSettings.shiftFrom(date: LocalDate): ScheduleShift? =
     scheduleShifts.firstOrNull { parseIsoDate(it.fromDate) == date }
 
 fun AppSettings.shiftsOnto(date: LocalDate): List<ScheduleShift> =
     scheduleShifts.filter { parseIsoDate(it.toDate) == date }
 
-fun AppSettings.hasShift(date: LocalDate): Boolean =
-    shiftFrom(date) != null || shiftsOnto(date).isNotEmpty()
+fun AppSettings.hasShift(
+    date: LocalDate,
+    adjust: CloudScheduleAdjust = CloudScheduleAdjust(),
+    today: LocalDate = date,
+): Boolean {
+    val shifts = resolvedScheduleShifts(this, adjust, today)
+    return shifts.any { parseIsoDate(it.fromDate) == date || parseIsoDate(it.toDate) == date }
+}
 
-fun AppSettings.shiftConflict(from: LocalDate, to: LocalDate): String? {
+fun AppSettings.shiftConflict(
+    from: LocalDate,
+    to: LocalDate,
+    adjust: CloudScheduleAdjust = CloudScheduleAdjust(),
+    today: LocalDate = from,
+): String? {
     if (from == to) return "原上课日和调到的那天不能是同一天"
     val fromIso = from.toString()
     val toIso = to.toString()
-    if (scheduleShifts.any { it.fromDate == fromIso || it.toDate == fromIso }) return "原上课日已经有调课"
-    if (scheduleShifts.any { it.fromDate == toIso || it.toDate == toIso }) return "调到的那天已经有调课"
+    val shifts = resolvedScheduleShifts(this, adjust, today)
+    if (shifts.any { it.fromDate == fromIso || it.toDate == fromIso }) return "原上课日已经有调课"
+    if (shifts.any { it.fromDate == toIso || it.toDate == toIso }) return "调到的那天已经有调课"
     return null
 }
 
@@ -435,8 +498,12 @@ fun formatShift(shift: ScheduleShift): String {
     return "${formatMonthDay(from)}周${WeekdayNames.getOrElse(weekdayIndex(from) - 1) { "?" }} → ${formatMonthDay(to)}周${WeekdayNames.getOrElse(weekdayIndex(to) - 1) { "?" }}"
 }
 
-fun AppSettings.shiftNoteFor(slot: LessonSlot, today: LocalDate): String =
-    scheduleShifts.mapNotNull { shift ->
+fun AppSettings.shiftNoteFor(
+    slot: LessonSlot,
+    today: LocalDate,
+    adjust: CloudScheduleAdjust = CloudScheduleAdjust(),
+): String =
+    resolvedScheduleShifts(this, adjust, today).mapNotNull { shift ->
         val from = parseIsoDate(shift.fromDate) ?: return@mapNotNull null
         val to = parseIsoDate(shift.toDate) ?: return@mapNotNull null
         if (weekdayIndex(from) != slot.weekday) return@mapNotNull null
@@ -466,9 +533,15 @@ fun holidayShiftHints(
     return offDays to makeupDays
 }
 
-fun List<LessonSlot>.forDate(date: LocalDate, settings: AppSettings, today: LocalDate): List<LessonSlot> {
-    if (settings.shiftFrom(date) != null) return emptyList()
-    val incoming = settings.shiftsOnto(date)
+fun List<LessonSlot>.forDate(
+    date: LocalDate,
+    settings: AppSettings,
+    today: LocalDate,
+    adjust: CloudScheduleAdjust = CloudScheduleAdjust(),
+): List<LessonSlot> {
+    val shifts = resolvedScheduleShifts(settings, adjust, today)
+    if (shifts.any { parseIsoDate(it.fromDate) == date }) return emptyList()
+    val incoming = shifts.filter { parseIsoDate(it.toDate) == date }
     if (incoming.isNotEmpty()) {
         return incoming.flatMap { shift ->
             val src = parseIsoDate(shift.fromDate) ?: return@flatMap emptyList()
@@ -476,6 +549,7 @@ fun List<LessonSlot>.forDate(date: LocalDate, settings: AppSettings, today: Loca
         }.distinctBy { "${it.courseId}/${it.period}/${it.weekday}/${it.weeks}" }
             .sortedBy { periodSortKey(it.period) }
     }
+    if (isAdjustOff(date, settings, adjust)) return emptyList()
     val week = teachingWeekOn(date, settings, today)
     if (week < 1) return emptyList()
     return forDay(week, weekdayIndex(date))

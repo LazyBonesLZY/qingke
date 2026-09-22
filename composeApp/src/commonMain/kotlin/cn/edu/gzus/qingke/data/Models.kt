@@ -161,6 +161,8 @@ data class AppSettings(
     val utilityRoom: String = "",
     val utilityBind: UtilityBind = UtilityBind(),
     val scheduleShifts: List<ScheduleShift> = emptyList(),
+    val autoPullScheduleAdjust: Boolean = true,
+    val autoCheckUpdate: Boolean = true,
     val autoSyncOnStart: Boolean = false,
     val coursePickQueue: List<CoursePickTask> = emptyList(),
 )
@@ -230,6 +232,32 @@ data class ScheduleShift(
 )
 
 @Serializable
+data class CloudOffDay(
+    val date: String = "",
+    val name: String = "",
+)
+
+@Serializable
+data class CloudShiftRule(
+    val id: String = "",
+    val week: Int = 0,
+    val weekday: Int = 0,
+    val toDate: String = "",
+    val name: String = "",
+)
+
+@Serializable
+data class CloudScheduleAdjust(
+    val version: Int = 0,
+    val schoolId: String = "",
+    val title: String = "",
+    val updated: String = "",
+    val offs: List<CloudOffDay> = emptyList(),
+    val shifts: List<CloudShiftRule> = emptyList(),
+    val fetchedAt: Long = 0L,
+)
+
+@Serializable
 data class HolidayDay(
     val date: String,
     val name: String,
@@ -264,6 +292,7 @@ data class AppSnapshot(
     val rooms: List<FreeRoom> = emptyList(),
     val settings: AppSettings = AppSettings(),
     val holidays: HolidayCalendar = HolidayCalendar(),
+    val scheduleAdjust: CloudScheduleAdjust = CloudScheduleAdjust(),
     val session: SessionState = SessionState(),
     val seeded: Boolean = false,
 ) {

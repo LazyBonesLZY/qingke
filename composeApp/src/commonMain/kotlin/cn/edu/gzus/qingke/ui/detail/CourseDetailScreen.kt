@@ -13,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import cn.edu.gzus.qingke.data.AppSettings
+import cn.edu.gzus.qingke.data.CloudScheduleAdjust
 import cn.edu.gzus.qingke.data.CourseDetail
 import cn.edu.gzus.qingke.data.WeekdayNames
 import cn.edu.gzus.qingke.data.periodClockRange
@@ -30,6 +31,7 @@ fun CourseDetailScreen(
     hasClock: Boolean = false,
     settings: AppSettings = AppSettings(),
     today: LocalDate? = null,
+    adjust: CloudScheduleAdjust = CloudScheduleAdjust(),
 ) {
     Column(
         modifier = Modifier
@@ -84,7 +86,7 @@ fun CourseDetailScreen(
                         title = "$weekday  ${slot.periodLabel.ifBlank { slot.period }}",
                         rows = listOf(
                             "时间" to if (hasClock) periodClockRange(slot.period) else "",
-                            "调课" to today?.let { settings.shiftNoteFor(slot, it) }.orEmpty(),
+                            "调课" to today?.let { settings.shiftNoteFor(slot, it, adjust) }.orEmpty(),
                             "教室" to slot.room,
                             "教师" to slot.teacher,
                             "周次" to slot.weeks,

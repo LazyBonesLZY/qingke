@@ -32,8 +32,10 @@ import cn.edu.gzus.qingke.data.HolidayDay
 import cn.edu.gzus.qingke.data.WeekdayNames
 import cn.edu.gzus.qingke.data.chip
 import cn.edu.gzus.qingke.data.formatLongDate
+import cn.edu.gzus.qingke.data.applicableAdjust
 import cn.edu.gzus.qingke.data.formatMonthDay
 import cn.edu.gzus.qingke.data.formatShift
+import cn.edu.gzus.qingke.data.resolvedScheduleShifts
 import cn.edu.gzus.qingke.data.formatYearMonth
 import cn.edu.gzus.qingke.data.holidayShiftHints
 import cn.edu.gzus.qingke.data.nowDateTime
@@ -66,6 +68,9 @@ fun ScheduleShiftsScreen(
 ) {
     val today = nowDateTime().date
     val shifts = snapshot.settings.scheduleShifts.sortedBy { it.fromDate }
+    val cloud = applicableAdjust(snapshot.settings, snapshot.scheduleAdjust)
+    val cloudShifts = resolvedScheduleShifts(snapshot.settings, snapshot.scheduleAdjust, today)
+        .filter { shift -> shifts.none { it.id == shift.id } }
     val (offDays, makeupDays) = remember(snapshot.holidays, snapshot.settings.termStart, snapshot.slots) {
         holidayShiftHints(snapshot.holidays, snapshot.settings, snapshot.slots, today)
     }
@@ -82,11 +87,36 @@ fun ScheduleShiftsScreen(
     ) {
         Spacer(Modifier.height(8.dp))
         Text(
-            "按学校的调课通知填。下面的节假日只是参考，不会自动改课表。",
+            "放假日没课。广软的补课可以自动拉，也可以在下面手动加。",
             modifier = Modifier.padding(horizontal = 16.dp),
             color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
             style = MiuixTheme.textStyles.body2,
         )
+        if (cloud.offs.isNotEmpty() || cloudShifts.isNotEmpty()) {
+            SmallTitle(text = cloud.title.ifBlank { "云端调休" })
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                insideMargin = PaddingValues(0.dp),
+            ) {
+                cloud.offs.groupBy { it.name.ifBlank { "放假" } }.forEach { (name, days) ->
+                    val dates = days.mapNotNull { parseIsoDate(it.date) }.sorted()
+                    val span = when {
+                        dates.isEmpty() -> ""
+                        dates.size == 1 -> formatMonthDay(dates.first())
+                        else -> "${formatMonthDay(dates.first())}–${formatMonthDay(dates.last())}"
+                    }
+                    ArrowPreference(title = name, summary = if (span.isBlank()) "放假没课" else "$span · 放假没课", onClick = {})
+                }
+                cloudShifts.forEach { shift ->
+                    val rule = cloud.shifts.firstOrNull { it.id == shift.id }
+                    ArrowPreference(
+                        title = formatShift(shift),
+                        summary = rule?.name?.ifBlank { "云端补课" } ?: "云端补课",
+                        onClick = {},
+                    )
+                }
+            }
+        }
         SmallTitle(text = "已有调课")
         if (shifts.isEmpty()) {
             Card(
@@ -181,7 +211,7 @@ fun ScheduleShiftsScreen(
                     error = "原上课日和调到哪天都要选"
                     return@Button
                 }
-                val conflict = snapshot.settings.shiftConflict(src, dest)
+                val conflict = snapshot.settings.shiftConflict(src, dest, snapshot.scheduleAdjust, today)
                 if (conflict != null) {
                     error = conflict
                     return@Button

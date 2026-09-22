@@ -113,6 +113,7 @@ fun MineScreen(
     onLogin: (String, String, String) -> Unit,
     onSync: () -> Unit,
     onToggleAutoSync: (Boolean) -> Unit = {},
+    onToggleScheduleAdjust: (Boolean) -> Unit = {},
     onToggleRemind: (Boolean) -> Unit,
     onPickRemindLead: (Int) -> Unit,
     onPickTermStart: (LocalDate) -> Unit,
@@ -122,6 +123,8 @@ fun MineScreen(
     update: AppUpdate? = null,
     updateBusy: Boolean = false,
     updateError: String? = null,
+    autoCheckUpdate: Boolean = true,
+    onToggleAutoUpdate: (Boolean) -> Unit = {},
     onCheckGithubUpdate: () -> Unit = {},
     onOpenGithubUpdate: () -> Unit = {},
     onOpenDriveUpdate: () -> Unit = {},
@@ -328,6 +331,24 @@ fun MineScreen(
                 summary = if (courses.isEmpty()) "同步课表后才能改格子里的简称" else "${courses.size} 门课 · 点进去改",
                 onClick = { nav.open(Route.CourseAliases) },
             )
+            if (snapshot.settings.school() == School.Gzus) {
+                val pulled = snapshot.scheduleAdjust
+                val on = snapshot.settings.autoPullScheduleAdjust
+                SwitchPreference(
+                    title = "自动拉取调休",
+                    summary = when {
+                        !on -> "关闭后只保留手动调课"
+                        !snapshot.settings.hasTermStart() -> "已开。先选第1周周一，补课才对得上第几周"
+                        pulled.fetchedAt == 0L -> "从 qingke.lazzyy.cn 拉放假和补课"
+                        else -> buildString {
+                            append(pulled.title.ifBlank { "已拉取" })
+                            append(" · ${pulled.offs.size} 天放假 · ${pulled.shifts.size} 条补课")
+                        }
+                    },
+                    checked = on,
+                    onCheckedChange = onToggleScheduleAdjust,
+                )
+            }
             ArrowPreference(
                 title = "调课",
                 summary = if (snapshot.settings.scheduleShifts.isEmpty()) {
@@ -361,6 +382,8 @@ fun MineScreen(
             update = update,
             busy = updateBusy,
             error = updateError,
+            autoCheck = autoCheckUpdate,
+            onToggleAutoCheck = onToggleAutoUpdate,
             onCheckGithub = onCheckGithubUpdate,
             onOpenGithub = onOpenGithubUpdate,
             onOpenDrive = onOpenDriveUpdate,
@@ -1209,6 +1232,8 @@ private fun UpdateBlock(
     update: AppUpdate?,
     busy: Boolean,
     error: String?,
+    autoCheck: Boolean,
+    onToggleAutoCheck: (Boolean) -> Unit,
     onCheckGithub: () -> Unit,
     onOpenGithub: () -> Unit,
     onOpenDrive: () -> Unit,
@@ -1218,6 +1243,12 @@ private fun UpdateBlock(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         insideMargin = PaddingValues(0.dp),
     ) {
+        SwitchPreference(
+            title = "自动检查更新",
+            summary = if (autoCheck) "打开应用后检查，有新版本会提示需要更新" else "只在点检查 GitHub 时看",
+            checked = autoCheck,
+            onCheckedChange = onToggleAutoCheck,
+        )
         ArrowPreference(
             title = "当前版本",
             summary = "$APP_VERSION_NAME ($APP_VERSION_CODE)",

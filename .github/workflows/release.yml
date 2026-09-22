@@ -1,0 +1,64 @@
+name: 编译青课
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: 写入签名
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "仓库里没有签名密钥"
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > qingke-release.jks
+          umask 077
+          cat > keystore.properties << EOF
+          storeFile=qingke-release.jks
+          storePassword=${KEYSTORE_PASSWORD}
+          keyAlias=${KEY_ALIAS}
+          keyPassword=${KEY_PASSWORD}
+          EOF
+
+      - name: 打包
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :androidApp:assembleRelease --max-workers=2 \
+            -Dorg.gradle.jvmargs="-Xmx2g -XX:MaxMetaspaceSize=512m"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: androidApp-release
+          path: androidApp/build/outputs/apk/release/androidApp-release.apk
+          if-no-files-found: error
+
+      - name: 挂到 Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          apk=androidApp/build/outputs/apk/release/androidApp-release.apk
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --title "青课 ${tag#v}" --notes "由 GitHub Actions 编译。"
+          fi
+          gh release upload "$tag" "$apk" --clobber

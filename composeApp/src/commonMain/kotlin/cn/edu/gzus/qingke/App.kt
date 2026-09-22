@@ -38,7 +38,9 @@ import cn.edu.gzus.qingke.data.UtilityOption
 import cn.edu.gzus.qingke.data.GITHUB_RELEASES_URL
 import cn.edu.gzus.qingke.data.GZUS_LOGIN_CAS
 import cn.edu.gzus.qingke.data.JwxtNeedFirstLogin
+import cn.edu.gzus.qingke.data.School
 import cn.edu.gzus.qingke.data.gzusUsesCas
+import cn.edu.gzus.qingke.data.school
 import cn.edu.gzus.qingke.data.hasUtilityBind
 import cn.edu.gzus.qingke.data.friendlyNetworkMessage
 import cn.edu.gzus.qingke.data.isSessionLost
@@ -151,6 +153,20 @@ fun App() {
                     }
                 busy = false
             }
+        }
+
+        LaunchedEffect(Unit) {
+            if (!repo.state.value.settings.autoCheckUpdate) return@LaunchedEffect
+            runCatching { repo.checkGithubUpdate() }
+                .onSuccess { found ->
+                    update = found
+                    if (found.newer) toast("有新版本 ${found.versionName}，需要更新")
+                }
+        }
+
+        LaunchedEffect(snapshot.settings.autoPullScheduleAdjust, snapshot.settings.schoolId) {
+            if (!snapshot.settings.autoPullScheduleAdjust || snapshot.settings.school() != School.Gzus) return@LaunchedEffect
+            runCatching { repo.pullScheduleAdjust() }
         }
 
         LaunchedEffect(snapshot.session.loggedIn) {
@@ -380,6 +396,18 @@ fun App() {
                             repo.updateSettings { it.copy(autoSyncOnStart = on) }
                             toast(if (on) "已打开启动自动同步" else "已关闭启动自动同步")
                         },
+                        onToggleScheduleAdjust = { on ->
+                            repo.updateSettings { it.copy(autoPullScheduleAdjust = on) }
+                            if (!on) {
+                                toast("已关闭自动拉取调休")
+                            } else {
+                                scope.launch {
+                                    runCatching { repo.pullScheduleAdjust() }
+                                        .onSuccess { toast("已拉取调休") }
+                                        .onFailure { toast(it.friendlyNetworkMessage()) }
+                                }
+                            }
+                        },
                         onToggleRemind = { on ->
                             repo.updateSettings { it.copy(remindBeforeClass = on) }
                             if (on) {
@@ -429,6 +457,25 @@ fun App() {
                         update = update,
                         updateBusy = updateBusy,
                         updateError = updateError,
+                        autoCheckUpdate = snapshot.settings.autoCheckUpdate,
+                        onToggleAutoUpdate = { on ->
+                            repo.updateSettings { it.copy(autoCheckUpdate = on) }
+                            if (!on) {
+                                toast("已关闭自动检查更新")
+                            } else {
+                                scope.launch {
+                                    updateBusy = true
+                                    updateError = null
+                                    runCatching { repo.checkGithubUpdate() }
+                                        .onSuccess { found ->
+                                            update = found
+                                            toast(if (found.newer) "有新版本 ${found.versionName}，需要更新" else "已是最新 ${found.versionName}")
+                                        }
+                                        .onFailure { updateError = it.friendlyNetworkMessage() }
+                                    updateBusy = false
+                                }
+                            }
+                        },
                         onCheckGithubUpdate = {
                             scope.launch {
                                 updateBusy = true
@@ -504,6 +551,7 @@ fun App() {
                                 hasClock = snapshot.resolved().hasPeriodClock,
                                 settings = snapshot.settings,
                                 today = nowDateTime().date,
+                                adjust = snapshot.scheduleAdjust,
                             )
                             is Route.EmptyRoom -> EmptyRoomScreen(
                                 snapshot = snapshot,
@@ -629,7 +677,12 @@ fun App() {
                                 snapshot = snapshot,
                                 contentPadding = padding,
                                 onAdd = { from, to ->
-                                    val conflict = snapshot.settings.shiftConflict(from, to)
+                                    val conflict = snapshot.settings.shiftConflict(
+                                        from,
+                                        to,
+                                        snapshot.scheduleAdjust,
+                                        nowDateTime().date,
+                                    )
                                     if (conflict != null) return@ScheduleShiftsScreen conflict
                                     repo.updateSettings { settings ->
                                         settings.copy(

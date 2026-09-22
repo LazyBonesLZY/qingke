@@ -62,11 +62,11 @@ fun TodayScreen(
     val week = resolvedCurrentWeek(snapshot.settings, now.date)
     val weekCount = snapshot.settings.resolvedWeekCount(snapshot.slots)
     val weekday = weekdayIndex(now.date)
-    val todaySlots = snapshot.slots.forDate(now.date, snapshot.settings, now.date)
+    val todaySlots = snapshot.slots.forDate(now.date, snapshot.settings, now.date, snapshot.scheduleAdjust)
     val weekPractices = if (week >= 1) snapshot.practices.filter { it.activeIn(week) } else emptyList()
     val school = snapshot.resolved()
     val hasClock = school.hasPeriodClock
-    val next = if (hasClock) nextLesson(snapshot.slots, now.date, snapshot.settings, now.date, now.time) else null
+    val next = if (hasClock) nextLesson(snapshot.slots, now.date, snapshot.settings, now.date, now.time, snapshot.scheduleAdjust) else null
     val hero = next?.first ?: if (!hasClock) todaySlots.firstOrNull() else null
     val remain = next?.second
     val startMillis = if (hasClock) hero?.let { combineMillis(now.date, periodStart(it.period)) } ?: 0L else 0L

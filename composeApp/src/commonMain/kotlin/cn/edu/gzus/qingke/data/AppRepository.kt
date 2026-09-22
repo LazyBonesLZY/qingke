@@ -21,6 +21,7 @@ class AppRepository(
     private val xiaoai: XiaoaiClient = XiaoaiClient(),
     private val holidays: HolidayClient = HolidayClient(),
     private val updates: UpdateClient = UpdateClient(),
+    private val scheduleAdjustClient: ScheduleAdjustClient = ScheduleAdjustClient(),
 ) {
     private fun portal(): SchoolPortal {
         val settings = _state.value.settings
@@ -111,6 +112,7 @@ class AppRepository(
             AppSnapshot(
                 settings = it.settings.forSchool(school),
                 holidays = it.holidays,
+                scheduleAdjust = it.scheduleAdjust,
             )
         }
     }
@@ -177,6 +179,13 @@ class AppRepository(
     }
 
     suspend fun checkGithubUpdate(): AppUpdate = updates.checkGithub()
+
+    suspend fun pullScheduleAdjust() {
+        val snap = _state.value
+        if (!snap.settings.autoPullScheduleAdjust || snap.settings.school() != School.Gzus) return
+        val next = scheduleAdjustClient.fetch()
+        commit { it.copy(scheduleAdjust = next.copy(fetchedAt = nowMillis())) }
+    }
 
     suspend fun loginAndSync(studentId: String, password: String, captcha: String = "", captchaId: String = "") {
         try {
@@ -875,7 +884,7 @@ class AppRepository(
             return false
         }
         val now = nowDateTime()
-        val next = nextLiveLesson(snap.slots, now.date, snap.settings, now.date, now.time)
+        val next = nextLiveLesson(snap.slots, now.date, snap.settings, now.date, now.time, snap.scheduleAdjust)
         if (next == null) {
             cancelLiveClass()
             return false

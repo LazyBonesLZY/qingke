@@ -25,8 +25,9 @@ import cn.edu.gzus.qingke.data.AppSnapshot
 import cn.edu.gzus.qingke.data.LessonSlot
 import cn.edu.gzus.qingke.data.WeekdayNames
 import cn.edu.gzus.qingke.data.resolved
-import cn.edu.gzus.qingke.data.forBlock
 import cn.edu.gzus.qingke.data.forDate
+import cn.edu.gzus.qingke.data.isAdjustOff
+import cn.edu.gzus.qingke.data.occupiesBlock
 import cn.edu.gzus.qingke.data.lookup
 import cn.edu.gzus.qingke.data.mondayOfTeachingWeek
 import cn.edu.gzus.qingke.data.combineMillis
@@ -338,7 +339,7 @@ object QingkeWidgets {
         dark: Boolean,
         context: Context,
     ) {
-        val slots = snap.slots.forDate(today, snap.settings, today)
+        val slots = snap.slots.forDate(today, snap.settings, today, snap.scheduleAdjust)
         if (slots.isEmpty()) {
             drawCentered(
                 canvas,
@@ -471,8 +472,17 @@ object QingkeWidgets {
         context: Context,
     ) {
         val periodBlocks = snap.resolved().periodBlocks
+        val monday = mondayOfTeachingWeek(week.coerceAtLeast(1), snap.settings, today)
+        val byDay = (1..7).map { day ->
+            snap.slots.forDate(
+                monday.plus(DatePeriod(days = day - 1)),
+                snap.settings,
+                today,
+                snap.scheduleAdjust,
+            )
+        }
         val blocks = periodBlocks.filter { block ->
-            (1..7).any { day -> snap.slots.forBlock(week, day, block).isNotEmpty() }
+            byDay.any { day -> day.any { it.occupiesBlock(block) } }
         }.ifEmpty { periodBlocks.take(6) }
         val cols = 8
         val rows = 1 + blocks.size
@@ -482,7 +492,6 @@ object QingkeWidgets {
         val dayPaint = paint(context, muted(dark), 9f, false)
         val mark = paint(context, muted(dark), 8f, true)
         val label = paint(context, muted(dark), 9f, false)
-        val monday = mondayOfTeachingWeek(week.coerceAtLeast(1), snap.settings, today)
         val todayIndex = (1..7).firstOrNull { monday.plus(DatePeriod(days = it - 1)) == today }
         if (todayIndex != null) {
             val wash = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = accentWash(dark) }
@@ -501,6 +510,9 @@ object QingkeWidgets {
             if (holiday != null) {
                 mark.color = if (holiday.off) ACCENT else 0xFFC9782A.toInt()
                 drawCentered(canvas, if (holiday.off) "休" else "班", cx, box.top + rh * 0.84f, mark)
+            } else if (isAdjustOff(date, snap.settings, snap.scheduleAdjust)) {
+                mark.color = ACCENT
+                drawCentered(canvas, "假", cx, box.top + rh * 0.84f, mark)
             }
         }
         val twoLine = rh >= dp(context, 30f)
@@ -514,7 +526,7 @@ object QingkeWidgets {
                 label,
             )
             for (day in 1..7) {
-                val cell = snap.slots.forBlock(week, day, block).firstOrNull() ?: continue
+                val cell = byDay[day - 1].firstOrNull { it.occupiesBlock(block) } ?: continue
                 val x0 = box.left + day * cw + 2.5f
                 val cellRect = RectF(x0, y0 + 2.5f, x0 + cw - 5f, y0 + rh - 3f)
                 val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -591,7 +603,7 @@ object QingkeWidgets {
             )
             drawCentered(canvas, date.dayOfMonth.toString(), cx, y + rh * 0.36f, dayPaint)
             if (inMonth) {
-                val dots = snap.slots.forDate(date, snap.settings, today)
+                val dots = snap.slots.forDate(date, snap.settings, today, snap.scheduleAdjust)
                     .map { courseColor(it.courseId.ifBlank { it.courseName }, dark) }
                     .distinct()
                     .take(3)

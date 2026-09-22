@@ -43,6 +43,7 @@ jobs:
         run: |
           chmod +x ./gradlew
           ./gradlew :androidApp:assembleRelease --max-workers=2 \
+            -Dorg.gradle.java.home="$JAVA_HOME" \
             -Dorg.gradle.jvmargs="-Xmx2g -XX:MaxMetaspaceSize=512m"
 
       - uses: actions/upload-artifact@v4

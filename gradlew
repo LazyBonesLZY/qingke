@@ -88,6 +88,21 @@ APP_BASE_NAME=${0##*/}
 # Discard cd standard output in case $CDPATH is set (https://github.com/gradle/gradle/issues/25036)
 APP_HOME=$( cd -P "${APP_HOME:-./}" > /dev/null && printf '%s\n' "$PWD" ) || exit
 
+# WSL 上连 Gradle 守护进程的自动端口会被内核拒绝。补丁只在本机存在时启用。
+fix_c=$APP_HOME/gradle/native/wsl-localhost-connect.c
+fix_so=$APP_HOME/gradle/native/wsl-localhost-connect.so
+if [ -f "$fix_c" ] && [ ! -f "$fix_so" ] && command -v gcc >/dev/null 2>&1 ; then
+    gcc -shared -fPIC -o "$fix_so" "$fix_c" -ldl >/dev/null 2>&1 || true
+fi
+if [ -f "$fix_so" ] ; then
+    if [ -n "$LD_PRELOAD" ] ; then
+        LD_PRELOAD=$fix_so:$LD_PRELOAD
+    else
+        LD_PRELOAD=$fix_so
+    fi
+    export LD_PRELOAD
+fi
+
 # Use the maximum available, or set MAX_FD != -1 to use that value.
 MAX_FD=maximum
 

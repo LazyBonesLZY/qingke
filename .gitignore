@@ -17,3 +17,4 @@ captures/
 *.ap_
 *.aab
 *.log
+gradle/native/*.so

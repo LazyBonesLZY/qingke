@@ -41,6 +41,9 @@ expect fun refreshHomeWidgets()
 
 expect fun cancelLiveClass()
 
+/** 排下一次后台更新上课通知的时刻；null 就撤掉。 */
+expect fun scheduleLiveWake(atMillis: Long?)
+
 expect fun resetLiveDismiss()
 
 expect fun liveUpdateStatus(leadMinutes: Int = DefaultRemindLeadMinutes): String

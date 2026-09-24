@@ -699,7 +699,10 @@ class WidgetClockReceiver : android.content.BroadcastReceiver() {
             Intent.ACTION_TIME_CHANGED,
             Intent.ACTION_TIMEZONE_CHANGED,
             Intent.ACTION_MY_PACKAGE_REPLACED,
-            -> runCatching { QingkeWidgets.refreshAll(context) }
+            -> {
+                runCatching { QingkeWidgets.refreshAll(context) }
+                runCatching { cn.edu.gzus.qingke.runLiveTick() }
+            }
         }
     }
 }

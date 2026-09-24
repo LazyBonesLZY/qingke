@@ -25,7 +25,9 @@ import cn.edu.gzus.qingke.EXTRA_LIVE_DISMISS
 import cn.edu.gzus.qingke.JwxtWebActivity
 import cn.edu.gzus.qingke.LIVE_DISMISSED_KEY
 import cn.edu.gzus.qingke.LIVE_PREFS
+import cn.edu.gzus.qingke.ACTION_LIVE_TICK
 import cn.edu.gzus.qingke.LiveDismissReceiver
+import cn.edu.gzus.qingke.LiveTickReceiver
 import cn.edu.gzus.qingke.MainActivity
 import cn.edu.gzus.qingke.QingkeApp
 import cn.edu.gzus.qingke.shared.R
@@ -402,4 +404,22 @@ actual fun notifyLiveClass(
 
 actual fun cancelLiveClass() {
     QingkeApp.app.getSystemService(NotificationManager::class.java)?.cancel(LIVE_ID)
+}
+
+// 非精确闹钟，不要额外权限；Doze 时系统可能推迟几分钟，通知上的倒计时照样走。
+actual fun scheduleLiveWake(atMillis: Long?) {
+    if (!QingkeApp.ready()) return
+    val ctx = QingkeApp.app
+    val alarms = ctx.getSystemService(android.app.AlarmManager::class.java) ?: return
+    val pending = PendingIntent.getBroadcast(
+        ctx,
+        LIVE_ID,
+        Intent(ctx, LiveTickReceiver::class.java).setAction(ACTION_LIVE_TICK),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+    if (atMillis == null) {
+        alarms.cancel(pending)
+        return
+    }
+    runCatching { alarms.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, atMillis, pending) }
 }

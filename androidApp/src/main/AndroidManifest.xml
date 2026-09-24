@@ -50,6 +50,9 @@
             android:name="cn.edu.gzus.qingke.LiveDismissReceiver"
             android:exported="false" />
         <receiver
+            android:name="cn.edu.gzus.qingke.LiveTickReceiver"
+            android:exported="false" />
+        <receiver
             android:name="cn.edu.gzus.qingke.widget.WidgetTickReceiver"
             android:exported="false" />
         <receiver

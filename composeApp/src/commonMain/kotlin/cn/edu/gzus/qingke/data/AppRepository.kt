@@ -9,7 +9,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 
-private const val STORE = "qingke-snapshot.json"
+internal const val STORE = "qingke-snapshot.json"
 
 class AppRepository(
     private val gzus: JwxtClient = JwxtClient(),
@@ -82,6 +82,7 @@ class AppRepository(
     }
 
     private var widgetSignature = 0
+    private val syncLock = Mutex()
 
     private fun persist(snapshot: AppSnapshot) {
         writeStore(STORE, json.encodeToString(AppSnapshot.serializer(), snapshot))
@@ -95,9 +96,8 @@ class AppRepository(
     }
 
     private fun commit(transform: (AppSnapshot) -> AppSnapshot) {
-        _state.update { current ->
-            transform(current).also { persist(it) }
-        }
+        _state.update(transform)
+        persist(_state.value)
     }
 
     fun updateSettings(transform: (AppSettings) -> AppSettings) {
@@ -314,15 +314,27 @@ class AppRepository(
 
     suspend fun syncCalendar() {
         if (!_state.value.session.loggedIn) return
-        withLiveSession(probe = false) {
-            val calendar = portal().fetchTermCalendar()
-            commit { it.copy(settings = it.settings.mergeCalendar(calendar)) }
-            refreshLive()
+        // 正在整份同步时周历会一起更新，不必再拉一遍。
+        if (!syncLock.tryLock()) return
+        try {
+            withLiveSession(probe = false) {
+                val school = _state.value.settings.schoolId
+                val calendar = portal().fetchTermCalendar()
+                commit { if (!it.sameSync(school)) it else it.copy(settings = it.settings.mergeCalendar(calendar)) }
+                refreshLive()
+            }
+        } finally {
+            syncLock.unlock()
         }
     }
 
-    private suspend fun pullRemote(studentId: String, keepGradesIfFail: Boolean) {
+    private suspend fun pullRemote(studentId: String, keepGradesIfFail: Boolean) = syncLock.withLock {
+        pullRemoteLocked(studentId, keepGradesIfFail)
+    }
+
+    private suspend fun pullRemoteLocked(studentId: String, keepGradesIfFail: Boolean) {
         val snap = _state.value
+        val school = snap.settings.schoolId
         val calendar = runCatching { portal().fetchTermCalendar() }
             .onFailure { error -> if (isSessionLost(error.message.orEmpty())) throw error }
             .getOrNull()
@@ -335,7 +347,10 @@ class AppRepository(
         val exams = runCatching { portal().fetchExams(year, term) }.getOrElse {
             if (keepGradesIfFail) snap.exams else emptyList()
         }
+        // 拉的这几秒里换了学校或退出了登录，这份结果就不要了。
+        if (!_state.value.sameSync(school)) return
         commit {
+            if (!it.sameSync(school)) return@commit it
             it.copy(
                 profile = profile.copy(studentId = studentId.ifBlank { profile.studentId }),
                 slots = slots,
@@ -364,10 +379,13 @@ class AppRepository(
                 if (detail == null) item else item.mergeDetail(detail)
             }
         }
-        commit { it.copy(notices = notices) }
+        if (!_state.value.sameSync(school)) return
+        commit { if (!it.sameSync(school)) it else it.copy(notices = notices) }
         val hall = pullHall(keepGradesIfFail)
-        commit { it.copy(hall = hall) }
+        if (!_state.value.sameSync(school)) return
+        commit { if (!it.sameSync(school)) it else it.copy(hall = hall) }
         val utility = pullUtility(keepGradesIfFail)
+        if (!_state.value.sameSync(school)) return
         commitUtility(utility)
     }
 
@@ -910,63 +928,28 @@ class AppRepository(
             _liveTick.update { it + 1 }
         }
         val snap = _state.value
-        if (!snap.resolved().hasPeriodClock) {
-            cancelLiveClass()
-            return false
-        }
-        if (!snap.settings.remindBeforeClass || snap.slots.isEmpty()) {
-            cancelLiveClass()
-            return false
-        }
         val now = nowDateTime()
-        val next = nextLiveLesson(snap.slots, now.date, snap.settings, now.date, now.time, snap.scheduleAdjust)
-        if (next == null) {
+        // 应用被划掉后靠这个闹钟接着更新通知。
+        scheduleLiveWake(snap.nextLiveWake(now, nowMs))
+        val notice = snap.liveNotice(now, nowMs)
+        if (notice == null) {
             cancelLiveClass()
             return false
-        }
-        val slot = next.slot
-        if (!next.inClass && next.minutesToStart > snap.settings.resolvedRemindLead()) {
-            cancelLiveClass()
-            return false
-        }
-        val startMillis = combineMillis(now.date, periodStart(slot.period))
-        val endMillis = combineMillis(now.date, periodEnd(slot.period))
-        if (startMillis <= 0L || endMillis <= startMillis) {
-            cancelLiveClass()
-            return false
-        }
-        val progress = when {
-            nowMs <= startMillis -> 0f
-            nowMs >= endMillis -> 1f
-            else -> ((nowMs - startMillis).toFloat() / (endMillis - startMillis).toFloat()).coerceIn(0f, 1f)
-        }
-        val period = slot.periodLabel.ifBlank { slot.period }.let { if (it.endsWith("节")) it else "${it}节" }
-        val clock = periodClockRange(slot.period).replace("-", "–")
-        val room = slot.room.ifBlank { "教室待定" }
-        val detail = listOf(period, clock, room).filter { it.isNotBlank() }.joinToString(" · ")
-        val chip: String
-        val etaMinutes: Int
-        if (next.inClass) {
-            chip = "下课 ${next.minutesToEnd}′"
-            etaMinutes = next.minutesToEnd
-        } else {
-            chip = "${next.minutesToStart}′后"
-            etaMinutes = next.minutesToStart
         }
         // 小组件上的"上课中/下一节"要跟着走，但没换课就别重画位图。
-        val widgetKey = "${slot.courseId}/${slot.period}/${next.inClass}"
+        val widgetKey = "${now.date}/${notice.slot.courseId}/${notice.slot.period}/${notice.inClass}"
         if (widgetKey != liveWidgetKey) {
             liveWidgetKey = widgetKey
             refreshHomeWidgets()
         }
         return notifyLiveClass(
-            title = slot.courseName,
-            detail = detail,
-            progress = progress,
-            etaMinutes = etaMinutes,
-            startMillis = startMillis,
-            endMillis = endMillis,
-            chip = chip,
+            title = notice.title,
+            detail = notice.detail,
+            progress = notice.progress,
+            etaMinutes = notice.etaMinutes,
+            startMillis = notice.startMillis,
+            endMillis = notice.endMillis,
+            chip = notice.chip,
         )
     }
 
@@ -1061,3 +1044,5 @@ private fun AppSnapshot.widgetSignature(): Int {
 
 private fun nowMillis(): Long = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
 
+private fun AppSnapshot.sameSync(schoolId: String): Boolean =
+    settings.schoolId == schoolId && session.loggedIn

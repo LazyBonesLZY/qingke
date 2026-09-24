@@ -46,6 +46,7 @@ import kotlinx.datetime.DatePeriod
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.minus
 import kotlinx.datetime.plus
+import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
@@ -105,14 +106,13 @@ fun ScheduleShiftsScreen(
                         dates.size == 1 -> formatMonthDay(dates.first())
                         else -> "${formatMonthDay(dates.first())}–${formatMonthDay(dates.last())}"
                     }
-                    ArrowPreference(title = name, summary = if (span.isBlank()) "放假没课" else "$span · 放假没课", onClick = {})
+                    BasicComponent(title = name, summary = if (span.isBlank()) "放假没课" else "$span · 放假没课")
                 }
                 cloudShifts.forEach { shift ->
                     val rule = cloud.shifts.firstOrNull { it.id == shift.id }
-                    ArrowPreference(
+                    BasicComponent(
                         title = formatShift(shift),
                         summary = rule?.name?.ifBlank { "云端补课" } ?: "云端补课",
-                        onClick = {},
                     )
                 }
             }
@@ -123,7 +123,7 @@ fun ScheduleShiftsScreen(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                 insideMargin = PaddingValues(0.dp),
             ) {
-                ArrowPreference(title = "还没有调课", summary = "下面按原上课日和调到哪天各选一天", onClick = {})
+                BasicComponent(title = "还没有调课", summary = "下面按原上课日和调到哪天各选一天")
             }
         } else {
             Card(
@@ -299,7 +299,7 @@ private fun ShiftDayPicker(
         }
         Spacer(Modifier.height(4.dp))
         for (row in 0 until total / 7) {
-            Row(Modifier.fillMaxWidth().height(40.dp)) {
+            Row(Modifier.fillMaxWidth().height(44.dp)) {
                 for (col in 0..6) {
                     val date = gridStart.plus(DatePeriod(days = row * 7 + col))
                     val inMonth = date.monthNumber == month.monthNumber

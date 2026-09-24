@@ -252,7 +252,7 @@ fun MineScreen(
                 ArrowPreference(
                     title = "立即同步",
                     summary = if (busy) "同步中" else formatSync(snapshot.session.lastSyncAt),
-                    onClick = onSync,
+                    onClick = { if (!busy) onSync() },
                 )
                 ArrowPreference(
                     title = "退出登录",

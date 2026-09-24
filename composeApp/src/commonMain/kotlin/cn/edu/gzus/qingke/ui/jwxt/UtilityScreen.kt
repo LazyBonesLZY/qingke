@@ -1,7 +1,9 @@
 package cn.edu.gzus.qingke.ui.jwxt
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,6 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -35,9 +38,11 @@ import cn.edu.gzus.qingke.data.utilityPriceLabel
 import cn.edu.gzus.qingke.nav.QingkeNavigator
 import cn.edu.gzus.qingke.nav.TabDest
 import cn.edu.gzus.qingke.ui.components.InfoCard
+import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
+import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
@@ -158,18 +163,23 @@ fun UtilityScreen(
                 insideMargin = PaddingValues(0.dp),
             ) {
                 when {
-                    optionsBusy -> ArrowPreference(title = "正在搜索", summary = query.trim(), onClick = {})
-                    !optionsError.isNullOrBlank() -> ArrowPreference(
+                    optionsBusy -> Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        InfiniteProgressIndicator()
+                        Text("正在搜索 ${query.trim()}", color = MiuixTheme.colorScheme.onSurfaceContainerVariant)
+                    }
+                    !optionsError.isNullOrBlank() -> BasicComponent(
                         title = optionsError,
                         summary = "换个楼栋或房间号再搜",
-                        onClick = {},
                     )
-                    query.isBlank() -> ArrowPreference(
+                    query.isBlank() -> BasicComponent(
                         title = "请输入关键词搜索宿舍",
                         summary = "搜索并选择你的宿舍",
-                        onClick = {},
                     )
-                    shown.isEmpty() -> ArrowPreference(title = "未找到宿舍", summary = "换个楼栋或房间号再搜", onClick = {})
+                    shown.isEmpty() -> BasicComponent(title = "未找到宿舍", summary = "换个楼栋或房间号再搜")
                     else -> shown.forEach { item ->
                         ArrowPreference(
                             title = item.name,
@@ -252,7 +262,10 @@ fun UtilityScreen(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             minHeight = 44.dp,
             colors = ButtonDefaults.buttonColorsPrimary(),
-        ) { Text(if (busy) "正在同步" else "同步水电") }
+        ) {
+            if (busy) InfiniteProgressIndicator()
+            Text(if (busy) "正在同步" else "同步水电")
+        }
         Spacer(Modifier.height(8.dp))
         Button(
             onClick = { openUrl(GZUS_ECARD_ORIGIN) },

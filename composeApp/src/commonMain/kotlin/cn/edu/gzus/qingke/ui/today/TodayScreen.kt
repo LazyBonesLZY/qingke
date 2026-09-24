@@ -229,7 +229,12 @@ fun TodayScreen(
         }
         StatRow(
             items = stats,
-            onClicks = if (snapshot.exams.isEmpty()) emptyList() else listOf(null, null, null, { nav.open(Route.Exams) }),
+            onClicks = listOf(
+                { nav.goTab(TabDest.Timetable) },
+                null,
+                null,
+                if (snapshot.exams.isEmpty()) null else ({ nav.open(Route.Exams) }),
+            ),
         )
         if (snapshot.exams.isNotEmpty()) {
             SmallTitle(text = "考试 · ${snapshot.exams.size} 场")
@@ -256,22 +261,13 @@ fun TodayScreen(
                 }
             }
         }
-        SmallTitle(text = "今天的课")
-        Column(
-            modifier = Modifier.padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            if (todaySlots.isEmpty() && weekPractices.isEmpty()) {
-                InfoCard(
-                    title = when {
-                        snapshot.hasTimetable && week < 1 -> "学期还没开始"
-                        snapshot.hasTimetable -> "这一天没有理论课"
-                        snapshot.session.loggedIn -> "同步后会出现今日课程"
-                        else -> "登录后会出现今日课程"
-                    },
-                    summary = "",
-                )
-            } else {
+        // 今天没课时上面的大卡片已经说清楚了，这里不再重复一张空卡。
+        if (todaySlots.isNotEmpty()) {
+            SmallTitle(text = "今天的课")
+            Column(
+                modifier = Modifier.padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 todaySlots.forEach { slot ->
                     InfoCard(
                         title = "${formatPeriodWithClock(slot.period, slot.periodLabel, hasClock)}  ${slot.courseName}",
@@ -280,10 +276,20 @@ fun TodayScreen(
                         onClick = { nav.open(Route.Course(slot.courseId)) },
                     )
                 }
+            }
+        }
+        if (weekPractices.isNotEmpty()) {
+            SmallTitle(text = "本周实践")
+            Column(
+                modifier = Modifier.padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 weekPractices.forEach { item ->
                     InfoCard(
                         title = item.name,
-                        summary = listOf("实践", item.weeks, item.teacher).filter { it.isNotBlank() }.joinToString("\n"),
+                        summary = listOf(item.weeks.takeIf { it.isNotBlank() }?.let { if (it.endsWith("周")) it else "${it}周" }, item.teacher, item.note)
+                            .filter { !it.isNullOrBlank() }
+                            .joinToString("\n"),
                         height = null,
                     )
                 }

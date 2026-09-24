@@ -83,7 +83,7 @@ fun CourseDetailScreen(
                         "周${WeekdayNames.getOrElse(slot.weekday - 1) { "?" }}"
                     }
                     LabeledCard(
-                        title = "$weekday  ${slot.periodLabel.ifBlank { slot.period }}",
+                        title = "$weekday  ${slot.periodLabel.ifBlank { slot.period }.let { if (it.endsWith("节")) it else "${it}节" }}",
                         rows = listOf(
                             "时间" to if (hasClock) periodClockRange(slot.period) else "",
                             "调课" to today?.let { settings.shiftNoteFor(slot, it, adjust) }.orEmpty(),

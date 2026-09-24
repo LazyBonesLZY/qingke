@@ -21,6 +21,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
@@ -103,6 +104,7 @@ fun App() {
         val scope = rememberCoroutineScope()
         val snapshot by repo.state.collectAsState()
         val liveTick by repo.liveTick.collectAsState()
+        val tabStates = rememberSaveableStateHolder()
         var noticeLoading by remember { mutableStateOf(emptySet<String>()) }
         var calendarDay by remember { mutableStateOf(nowDateTime().date) }
         LaunchedEffect(Unit) {
@@ -322,203 +324,205 @@ fun App() {
         ) { padding ->
             Box(Modifier.fillMaxSize().qingkeLayer(backdrop)) {
                 Box(Modifier.fillMaxSize().background(MiuixTheme.colorScheme.surface))
-                when (nav.tab) {
-                    TabDest.Today -> key(calendarDay) {
-                        TodayScreen(snapshot, nav, padding, onSync = {
-                            runJob {
-                                repo.sync()
-                                toast("课表已刷新")
-                            }
-                        })
-                    }
-                    TabDest.Timetable -> key(calendarDay) { TimetableScreen(snapshot, nav, padding) }
-                    TabDest.Grades -> GradesScreen(snapshot, nav, padding)
-                    TabDest.Jwxt -> JwxtScreen(snapshot, nav, padding)
-                    TabDest.Mine -> MineScreen(
-                        snapshot = snapshot,
-                        nav = nav,
-                        contentPadding = padding,
-                        busy = busy,
-                        error = loginError,
-                        firstLogin = firstLogin,
-                        onOpenOfficialLogin = {
-                            val url = snapshot.resolved().loginUrl
-                            if (url.isBlank()) toast("先在开发者选项里填登录地址") else openUrl(url)
-                        },
-                        onOpenChangePassword = {
-                            val url = snapshot.resolved().changePasswordUrl
-                            if (url.isBlank()) toast("先在开发者选项里填改密地址") else openUrl(url)
-                        },
-                        captcha = captcha,
-                        captchaError = captchaError,
-                        onRefreshCaptcha = {
-                            scope.launch { repo.refreshCaptcha() }
-                        },
-                        onSelectSchool = { school ->
-                            firstLogin = false
-                            loginError = null
-                            repo.setSchool(school)
-                            toast("已切换到${school.label}")
-                            scope.launch { repo.refreshCaptcha() }
-                        },
-                        onSelectGzusLogin = { channel ->
-                            firstLogin = false
-                            loginError = null
-                            repo.setGzusLoginChannel(channel)
-                            toast(if (channel == GZUS_LOGIN_CAS) "已改用统一身份认证" else "已改用正方直接登录")
-                            scope.launch { repo.refreshCaptcha() }
-                        },
-                        onLogin = { id, pwd, code ->
-                            if (id.length < 6) {
-                                loginError = "学号太短"
-                                firstLogin = false
-                                return@MineScreen
-                            }
-                            if (pwd.isBlank()) {
-                                loginError = "请输入密码"
-                                firstLogin = false
-                                return@MineScreen
-                            }
-                            if (snapshot.resolved().requiresCaptcha && code.isBlank()) {
-                                loginError = "请填写验证码"
-                                firstLogin = false
-                                return@MineScreen
-                            }
-                            loginError = null
-                            runJob(login = true) {
-                                repo.loginAndSync(id, pwd, code, captcha?.id.orEmpty())
-                                firstLogin = false
-                                val after = repo.state.value
-                                toast(
-                                    when {
-                                        after.slots.isEmpty() -> "已登录，这一学期还没有课表"
-                                        after.profile.yearName.isNotBlank() -> "已同步 ${after.profile.yearName}"
-                                        else -> "已同步课表"
-                                    },
-                                )
-                            }
-                        },
-                        onSync = {
-                            runJob {
-                                repo.sync()
-                                toast("已同步")
-                            }
-                        },
-                        onToggleAutoSync = { on ->
-                            repo.updateSettings { it.copy(autoSyncOnStart = on) }
-                            toast(if (on) "已打开启动自动同步" else "已关闭启动自动同步")
-                        },
-                        onToggleScheduleAdjust = { on ->
-                            repo.updateSettings { it.copy(autoPullScheduleAdjust = on) }
-                            if (!on) {
-                                toast("已关闭自动拉取调休")
-                            } else {
-                                scope.launch {
-                                    runCatching { repo.pullScheduleAdjust() }
-                                        .onSuccess { toast("已拉取调休") }
-                                        .onFailure { toast(it.friendlyNetworkMessage()) }
+                tabStates.SaveableStateProvider(nav.tab.name) {
+                    when (nav.tab) {
+                        TabDest.Today -> key(calendarDay) {
+                            TodayScreen(snapshot, nav, padding, onSync = {
+                                runJob {
+                                    repo.sync()
+                                    toast("课表已刷新")
                                 }
-                            }
-                        },
-                        onToggleRemind = { on ->
-                            repo.updateSettings { it.copy(remindBeforeClass = on) }
-                            if (on) {
-                                resetLiveDismiss()
-                                requestLiveUpdatePermission()
-                            }
-                            repo.refreshLive()
-                        },
-                        onPickRemindLead = { minutes ->
-                            repo.updateSettings { it.copy(remindLeadMinutes = minutes) }
-                            repo.refreshLive()
-                        },
-                        onPickTermStart = { date ->
-                            val monday = mondayOf(date)
-                            val today = nowDateTime().date
-                            repo.updateSettings {
-                                it.copy(
-                                    termStart = monday.toString(),
-                                    currentWeek = teachingWeekFromStart(today, monday).coerceIn(1, 30),
-                                )
-                            }
-                            repo.refreshLive()
-                        },
-                        onPickWeek = { week ->
-                            val today = nowDateTime().date
-                            repo.updateSettings {
-                                it.copy(
-                                    termStart = termStartFromCurrentWeek(today, week).toString(),
-                                    currentWeek = week,
-                                )
-                            }
-                            repo.refreshLive()
-                        },
-                        onLogout = {
-                            runJob {
-                                repo.logout()
-                                toast("已退出")
-                            }
-                        },
-                        onSaveCustom = { cfg, apply ->
-                            repo.saveCustomJwxt(cfg, apply)
-                            firstLogin = false
-                            loginError = null
-                            toast(if (apply) "已切到自定义教务" else "已保存自定义配置")
-                            if (apply) scope.launch { repo.refreshCaptcha() }
-                        },
-                        update = update,
-                        updateBusy = updateBusy,
-                        updateError = updateError,
-                        autoCheckUpdate = snapshot.settings.autoCheckUpdate,
-                        onToggleAutoUpdate = { on ->
-                            repo.updateSettings { it.copy(autoCheckUpdate = on) }
-                            if (!on) {
-                                toast("已关闭自动检查更新")
-                            } else {
+                            })
+                        }
+                        TabDest.Timetable -> key(calendarDay) { TimetableScreen(snapshot, nav, padding) }
+                        TabDest.Grades -> GradesScreen(snapshot, nav, padding)
+                        TabDest.Jwxt -> JwxtScreen(snapshot, nav, padding)
+                        TabDest.Mine -> MineScreen(
+                            snapshot = snapshot,
+                            nav = nav,
+                            contentPadding = padding,
+                            busy = busy,
+                            error = loginError,
+                            firstLogin = firstLogin,
+                            onOpenOfficialLogin = {
+                                val url = snapshot.resolved().loginUrl
+                                if (url.isBlank()) toast("先在开发者选项里填登录地址") else openUrl(url)
+                            },
+                            onOpenChangePassword = {
+                                val url = snapshot.resolved().changePasswordUrl
+                                if (url.isBlank()) toast("先在开发者选项里填改密地址") else openUrl(url)
+                            },
+                            captcha = captcha,
+                            captchaError = captchaError,
+                            onRefreshCaptcha = {
+                                scope.launch { repo.refreshCaptcha() }
+                            },
+                            onSelectSchool = { school ->
+                                firstLogin = false
+                                loginError = null
+                                repo.setSchool(school)
+                                toast("已切换到${school.label}")
+                                scope.launch { repo.refreshCaptcha() }
+                            },
+                            onSelectGzusLogin = { channel ->
+                                firstLogin = false
+                                loginError = null
+                                repo.setGzusLoginChannel(channel)
+                                toast(if (channel == GZUS_LOGIN_CAS) "已改用统一身份认证" else "已改用正方直接登录")
+                                scope.launch { repo.refreshCaptcha() }
+                            },
+                            onLogin = { id, pwd, code ->
+                                if (id.length < 6) {
+                                    loginError = "学号太短"
+                                    firstLogin = false
+                                    return@MineScreen
+                                }
+                                if (pwd.isBlank()) {
+                                    loginError = "请输入密码"
+                                    firstLogin = false
+                                    return@MineScreen
+                                }
+                                if (snapshot.resolved().requiresCaptcha && code.isBlank()) {
+                                    loginError = "请填写验证码"
+                                    firstLogin = false
+                                    return@MineScreen
+                                }
+                                loginError = null
+                                runJob(login = true) {
+                                    repo.loginAndSync(id, pwd, code, captcha?.id.orEmpty())
+                                    firstLogin = false
+                                    val after = repo.state.value
+                                    toast(
+                                        when {
+                                            after.slots.isEmpty() -> "已登录，这一学期还没有课表"
+                                            after.profile.yearName.isNotBlank() -> "已同步 ${after.profile.yearName}"
+                                            else -> "已同步课表"
+                                        },
+                                    )
+                                }
+                            },
+                            onSync = {
+                                runJob {
+                                    repo.sync()
+                                    toast("已同步")
+                                }
+                            },
+                            onToggleAutoSync = { on ->
+                                repo.updateSettings { it.copy(autoSyncOnStart = on) }
+                                toast(if (on) "已打开启动自动同步" else "已关闭启动自动同步")
+                            },
+                            onToggleScheduleAdjust = { on ->
+                                repo.updateSettings { it.copy(autoPullScheduleAdjust = on) }
+                                if (!on) {
+                                    toast("已关闭自动拉取调休")
+                                } else {
+                                    scope.launch {
+                                        runCatching { repo.pullScheduleAdjust() }
+                                            .onSuccess { toast("已拉取调休") }
+                                            .onFailure { toast(it.friendlyNetworkMessage()) }
+                                    }
+                                }
+                            },
+                            onToggleRemind = { on ->
+                                repo.updateSettings { it.copy(remindBeforeClass = on) }
+                                if (on) {
+                                    resetLiveDismiss()
+                                    requestLiveUpdatePermission()
+                                }
+                                repo.refreshLive()
+                            },
+                            onPickRemindLead = { minutes ->
+                                repo.updateSettings { it.copy(remindLeadMinutes = minutes) }
+                                repo.refreshLive()
+                            },
+                            onPickTermStart = { date ->
+                                val monday = mondayOf(date)
+                                val today = nowDateTime().date
+                                repo.updateSettings {
+                                    it.copy(
+                                        termStart = monday.toString(),
+                                        currentWeek = teachingWeekFromStart(today, monday).coerceIn(1, 30),
+                                    )
+                                }
+                                repo.refreshLive()
+                            },
+                            onPickWeek = { week ->
+                                val today = nowDateTime().date
+                                repo.updateSettings {
+                                    it.copy(
+                                        termStart = termStartFromCurrentWeek(today, week).toString(),
+                                        currentWeek = week,
+                                    )
+                                }
+                                repo.refreshLive()
+                            },
+                            onLogout = {
+                                runJob {
+                                    repo.logout()
+                                    toast("已退出")
+                                }
+                            },
+                            onSaveCustom = { cfg, apply ->
+                                repo.saveCustomJwxt(cfg, apply)
+                                firstLogin = false
+                                loginError = null
+                                toast(if (apply) "已切到自定义教务" else "已保存自定义配置")
+                                if (apply) scope.launch { repo.refreshCaptcha() }
+                            },
+                            update = update,
+                            updateBusy = updateBusy,
+                            updateError = updateError,
+                            autoCheckUpdate = snapshot.settings.autoCheckUpdate,
+                            onToggleAutoUpdate = { on ->
+                                repo.updateSettings { it.copy(autoCheckUpdate = on) }
+                                if (!on) {
+                                    toast("已关闭自动检查更新")
+                                } else {
+                                    scope.launch {
+                                        updateBusy = true
+                                        updateError = null
+                                        runCatching { repo.checkGithubUpdate() }
+                                            .onSuccess { found ->
+                                                update = found
+                                                toast(if (found.newer) "有新版本 ${found.versionName}，需要更新" else "已是最新 ${found.versionName}")
+                                            }
+                                            .onFailure { updateError = it.friendlyNetworkMessage() }
+                                        updateBusy = false
+                                    }
+                                }
+                            },
+                            onCheckGithubUpdate = {
                                 scope.launch {
                                     updateBusy = true
                                     updateError = null
                                     runCatching { repo.checkGithubUpdate() }
-                                        .onSuccess { found ->
-                                            update = found
-                                            toast(if (found.newer) "有新版本 ${found.versionName}，需要更新" else "已是最新 ${found.versionName}")
+                                        .onSuccess {
+                                            update = it
+                                            toast(if (it.newer) "有新版本 ${it.versionName}" else "已是最新 ${it.versionName}")
                                         }
                                         .onFailure { updateError = it.friendlyNetworkMessage() }
                                     updateBusy = false
                                 }
-                            }
-                        },
-                        onCheckGithubUpdate = {
-                            scope.launch {
-                                updateBusy = true
-                                updateError = null
-                                runCatching { repo.checkGithubUpdate() }
-                                    .onSuccess {
-                                        update = it
-                                        toast(if (it.newer) "有新版本 ${it.versionName}" else "已是最新 ${it.versionName}")
-                                    }
-                                    .onFailure { updateError = it.friendlyNetworkMessage() }
-                                updateBusy = false
-                            }
-                        },
-                        onOpenGithubUpdate = {
-                            val found = update
-                            openUrl(
-                                when {
-                                    found == null -> GITHUB_RELEASES_URL
-                                    found.apkUrl.isNotBlank() -> found.apkUrl
-                                    else -> found.pageUrl.ifBlank { GITHUB_RELEASES_URL }
-                                },
-                            )
-                        },
-                        onOpenDriveUpdate = { openUrl(DRIVE_UPDATE_URL) },
-                        liveTesting = remember(liveTick) { repo.hasLiveTest() },
-                        onLiveTest = { toast(repo.startLiveTest()) },
-                        onStopLiveTest = {
-                            repo.stopLiveTest()
-                            toast("已停止测试")
-                        },
-                    )
+                            },
+                            onOpenGithubUpdate = {
+                                val found = update
+                                openUrl(
+                                    when {
+                                        found == null -> GITHUB_RELEASES_URL
+                                        found.apkUrl.isNotBlank() -> found.apkUrl
+                                        else -> found.pageUrl.ifBlank { GITHUB_RELEASES_URL }
+                                    },
+                                )
+                            },
+                            onOpenDriveUpdate = { openUrl(DRIVE_UPDATE_URL) },
+                            liveTesting = remember(liveTick) { repo.hasLiveTest() },
+                            onLiveTest = { toast(repo.startLiveTest()) },
+                            onStopLiveTest = {
+                                repo.stopLiveTest()
+                                toast("已停止测试")
+                            },
+                        )
+                    }
                 }
             }
         }

@@ -22,6 +22,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -224,11 +225,17 @@ fun NoticesScreen(
                             Spacer(Modifier.height(10.dp))
                             val parts = notice.bodyParts()
                             if (parts.isEmpty()) {
-                                Text(
-                                    if (notice.id in bodyLoading) "正在加载正文" else "没有拿到正文，收起再点开重试",
-                                    style = MiuixTheme.textStyles.body2,
-                                    color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    if (notice.id in bodyLoading) InfiniteProgressIndicator()
+                                    Text(
+                                        if (notice.id in bodyLoading) "正在加载正文" else "没有拿到正文，收起再点开重试",
+                                        style = MiuixTheme.textStyles.body2,
+                                        color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                                    )
+                                }
                             } else {
                                 parts.forEachIndexed { index, part ->
                                     if (index > 0) Spacer(Modifier.height(10.dp))

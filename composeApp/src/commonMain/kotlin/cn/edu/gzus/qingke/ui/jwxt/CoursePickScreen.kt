@@ -18,6 +18,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import cn.edu.gzus.qingke.data.AppSnapshot
@@ -229,11 +230,17 @@ fun CoursePickScreen(
                     )
                     if (openedId == key) {
                         if (sectionsBusy && sections.isEmpty()) {
-                            Text(
-                                "正在拉教学班",
-                                color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
-                                style = MiuixTheme.textStyles.footnote1,
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                InfiniteProgressIndicator()
+                                Text(
+                                    "正在拉教学班",
+                                    color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                                    style = MiuixTheme.textStyles.footnote1,
+                                )
+                            }
                         } else if (sections.isEmpty()) {
                             Text(
                                 "这门课还没有教学班",
@@ -255,14 +262,14 @@ fun CoursePickScreen(
                                         onClick = { onSelectNow(offer, section) },
                                         enabled = !busy,
                                         modifier = Modifier.weight(1f),
-                                        minHeight = 40.dp,
+                                        minHeight = 44.dp,
                                         colors = ButtonDefaults.buttonColorsPrimary(),
                                     ) { Text("立即选课") }
                                     Button(
                                         onClick = { onQueue(offer, section) },
                                         enabled = !busy,
                                         modifier = Modifier.weight(1f),
-                                        minHeight = 40.dp,
+                                        minHeight = 44.dp,
                                     ) { Text("加入队列") }
                                 }
                             }
@@ -309,20 +316,20 @@ private fun QueueCard(
             onClick = onRun,
             enabled = !busy && task.status != "ok" && task.status != "running",
             modifier = Modifier.weight(1f),
-            minHeight = 40.dp,
+            minHeight = 44.dp,
             colors = ButtonDefaults.buttonColorsPrimary(),
         ) { Text("立即提交") }
         Button(
             onClick = onToggleClock,
             enabled = !busy && task.status != "ok",
             modifier = Modifier.weight(1f),
-            minHeight = 40.dp,
+            minHeight = 44.dp,
         ) { Text(if (editing) "收起" else "到点") }
         Button(
             onClick = onRemove,
             enabled = !busy,
             modifier = Modifier.weight(1f),
-            minHeight = 40.dp,
+            minHeight = 44.dp,
         ) { Text("删除") }
     }
     if (editing) {
@@ -347,7 +354,7 @@ private fun QueueCard(
             onClick = onConfirmClock,
             enabled = !busy,
             modifier = Modifier.fillMaxWidth(),
-            minHeight = 40.dp,
+            minHeight = 44.dp,
             colors = ButtonDefaults.buttonColorsPrimary(),
         ) { Text("确认到点自动选") }
     }

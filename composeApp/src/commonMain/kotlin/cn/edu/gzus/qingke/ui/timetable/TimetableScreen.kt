@@ -34,6 +34,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cn.edu.gzus.qingke.data.AppSettings
@@ -312,6 +313,21 @@ fun TimetableScreen(
                     }
                 }
             }
+            val dayPractices = snapshot.practices.filter { it.activeIn(dayWeek) }
+            if (dayPractices.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    dayPractices.forEach { item ->
+                        InfoCard(
+                            title = item.name,
+                            summary = listOf("本周实践", item.weeks, item.teacher).filter { it.isNotBlank() }.joinToString(" · "),
+                        )
+                    }
+                }
+            }
         }
         Spacer(Modifier.height(16.dp))
     }
@@ -366,7 +382,7 @@ private fun WeekPager(
                     .align(Alignment.CenterHorizontally)
                     .clip(RoundedCornerShape(99.dp))
                     .clickable(onClick = onToday)
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
                 style = MiuixTheme.textStyles.footnote1,
                 color = MiuixTheme.colorScheme.primary,
             )
@@ -388,7 +404,7 @@ private fun WeekPager(
                             .clip(RoundedCornerShape(99.dp))
                             .background(if (on) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.surfaceContainer)
                             .clickable { onPick(item) }
-                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
                         color = if (on) MiuixTheme.colorScheme.onPrimary else MiuixTheme.colorScheme.onSurface,
                         fontSize = 12.sp,
                         fontWeight = if (on) FontWeight.Medium else FontWeight.Normal,
@@ -422,7 +438,7 @@ private fun MonthPager(
                     modifier = Modifier
                         .clip(RoundedCornerShape(99.dp))
                         .clickable(onClick = onToday)
-                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
                     style = MiuixTheme.textStyles.footnote1,
                     color = MiuixTheme.colorScheme.primary,
                 )
@@ -610,6 +626,7 @@ private fun WeekCell(
                         color = ink.copy(alpha = 0.72f),
                         textAlign = TextAlign.Center,
                         maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
                 if (slots.size > 1) {
@@ -773,7 +790,7 @@ private fun MonthCell(
             Spacer(Modifier.height(3.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                 dots.forEach { color ->
-                    Box(Modifier.size(5.dp).clip(CircleShape).background(color).border(0.5.dp, Color.Black.copy(alpha = 0.08f), CircleShape))
+                    Box(Modifier.size(5.dp).clip(CircleShape).background(color).border(0.5.dp, MiuixTheme.colorScheme.onBackground.copy(alpha = 0.12f), CircleShape))
                 }
             }
         }

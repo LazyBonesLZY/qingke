@@ -241,6 +241,19 @@ class AppRepository(
             }
             return
         }
+        if (usesZhkuSession()) {
+            val client = portal() as ZhkuClient
+            runCatching { client.ensureSession() }.getOrElse { failed ->
+                if (failed is JwxtNeedFirstLogin) throw failed
+                if (isTransientNetwork(failed)) return
+                if (isSessionLost(failed.message.orEmpty())) {
+                    markSessionExpired()
+                    error(SESSION_LOST_HINT)
+                }
+                throw failed
+            }
+            return
+        }
         withLiveSession { }
     }
 
@@ -469,6 +482,12 @@ class AppRepository(
         }
     }
 
+    private fun usesZhkuSession(): Boolean {
+        val settings = _state.value.settings
+        return settings.school() == School.Zhku ||
+            (settings.school() == School.Custom && settings.customJwxt.normalizedKind() == "kingosoft")
+    }
+
     private suspend fun shouldExpireWholeSession(): Boolean {
         if (gzusCas.hasTgt()) return false
         if (runCatching { gzusCas.probeEcard() }.getOrDefault(false)) return false
@@ -525,6 +544,7 @@ class AppRepository(
                 }
                 throw failed
             }
+            if (usesZhkuSession()) throw failed
             if (isSessionLost(message) && shouldExpireWholeSession()) {
                 markSessionExpired()
                 error(SESSION_LOST_HINT)

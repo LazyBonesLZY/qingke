@@ -25,6 +25,7 @@ class ZhkuClient(
     private val host = origin.trim().trimEnd('/').removeSuffix("/jsxsd")
     private val HOST = host
     private val BASE = "$host/jsxsd"
+    private val cookieHost = host.substringAfter("://").substringBefore("/")
 
     override suspend fun login(
         studentId: String,
@@ -33,8 +34,10 @@ class ZhkuClient(
         captchaId: String,
     ): Result<Unit> = runCatching {
         var lastBody = loginJsxsd(studentId, password)
+        keepZhkuCookie()
         if (hasZhkuSession()) return@runCatching
         lastBody = loginOfficial(studentId, password).ifBlank { lastBody }
+        keepZhkuCookie()
         if (hasZhkuSession()) return@runCatching
         val home = fetchHome()
         throwZhkuLoginFailure(if (isZhkuLoginPage(home.body)) home.body else lastBody.ifBlank { home.body })
@@ -103,7 +106,19 @@ class ZhkuClient(
         }
     }
 
+    suspend fun ensureSession() {
+        keepZhkuCookie()
+        val home = fetchHome()
+        if (isZhkuPasswordChange(home.body, home.url)) throw JwxtNeedFirstLogin()
+        if (isZhkuLoggedOut(home.body)) error(SESSION_LOST_HINT)
+    }
+
+    private suspend fun keepZhkuCookie() {
+        retainLatestCookie(cookieHost, "JSESSIONID")
+    }
+
     private suspend fun fetchHome(): ZhkuPage {
+        keepZhkuCookie()
         val home = client.get("$BASE/framework/xsMain.htmlx") {
             header(HttpHeaders.UserAgent, QINGKE_UA)
             header(HttpHeaders.Referrer, "$BASE/")
@@ -244,14 +259,17 @@ class ZhkuClient(
         }
     }
 
-    private suspend fun get(url: String): String =
-        client.get(url) {
+    private suspend fun get(url: String): String {
+        keepZhkuCookie()
+        return client.get(url) {
             header(HttpHeaders.UserAgent, QINGKE_UA)
             header(HttpHeaders.Referrer, "$BASE/framework/xsMain.htmlx")
         }.bodyAsText()
+    }
 
-    private suspend fun post(url: String, fields: Map<String, String>): String =
-        client.submitForm(
+    private suspend fun post(url: String, fields: Map<String, String>): String {
+        keepZhkuCookie()
+        return client.submitForm(
             url = url,
             formParameters = Parameters.build {
                 fields.forEach { (k, v) -> append(k, v) }
@@ -261,6 +279,7 @@ class ZhkuClient(
             header(HttpHeaders.Referrer, "$BASE/framework/xsMain.htmlx")
             header(HttpHeaders.Origin, HOST)
         }.bodyAsText()
+    }
 }
 
 @OptIn(ExperimentalEncodingApi::class)
@@ -294,15 +313,27 @@ internal fun zhkuSessEncoded(studentId: String, password: String, dataStr: Strin
 }
 
 internal fun isZhkuLoginPage(text: String): Boolean {
-    val t = text.lowercase()
+    val t = zhkuWithoutScripts(text).lowercase()
+    if (t.contains("xsmain") && (t.contains("personal-center") || t.contains("main_index"))) return false
     val hasForm = t.contains("id=\"loginform\"") || t.contains("name=\"loginform\"")
     val hasAccount = t.contains("name=\"useraccount\"") || t.contains("id=\"useraccount\"")
     val hasEncoded = t.contains("name=\"encoded\"")
     return hasForm && hasAccount && hasEncoded
 }
 
-internal fun isZhkuSessionLost(text: String): Boolean =
-    text.contains("用户没有登录") || text.contains("请重新登录") && text.contains("出错")
+internal fun isZhkuSessionLost(text: String): Boolean {
+    if (isZhkuLoginPage(text)) return true
+    val plain = zhkuPlain(zhkuWithoutScripts(text))
+    if (plain.length > 500) return false
+    return plain.contains("用户没有登录") ||
+        (plain.contains("请重新登录") && plain.contains("出错"))
+}
+
+internal fun isZhkuLoggedOut(text: String): Boolean = isZhkuLoginPage(text) || isZhkuSessionLost(text)
+
+private fun zhkuWithoutScripts(text: String): String =
+    text.replace(Regex("""<script[\s\S]*?</script>""", RegexOption.IGNORE_CASE), " ")
+        .replace(Regex("""<style[\s\S]*?</style>""", RegexOption.IGNORE_CASE), " ")
 
 internal fun isZhkuPasswordChange(body: String, url: String): Boolean {
     val u = url.lowercase()
@@ -321,7 +352,7 @@ internal fun zhkuShowMsg(html: String): String =
         }
 
 private fun requireZhkuSession(text: String) {
-    if (isZhkuLoginPage(text) || isZhkuSessionLost(text)) error(SESSION_LOST_HINT)
+    if (isZhkuLoggedOut(text)) error(SESSION_LOST_HINT)
 }
 
 internal data class ZhkuWeek(val week: Int, val monday: LocalDate)

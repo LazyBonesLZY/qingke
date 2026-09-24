@@ -67,6 +67,18 @@ class PersistCookieStorage : CookiesStorage {
         persist()
     }
 
+    suspend fun retainLatest(host: String, name: String) = mutex.withLock {
+        val keepAt = cookies.indexOfLast { it.name == name && matches(host, it.domain) }
+        if (keepAt < 0) return@withLock
+        val next = cookies.filterIndexed { index, row ->
+            row.name != name || !matches(host, row.domain) || index == keepAt
+        }
+        if (next.size == cookies.size) return@withLock
+        cookies.clear()
+        cookies += next
+        persist()
+    }
+
     companion object {
         val shared = PersistCookieStorage()
     }
@@ -87,6 +99,10 @@ private fun pathMatches(requestPath: String, cookiePath: String): Boolean {
 
 fun wipeCookies() {
     PersistCookieStorage.shared.wipe()
+}
+
+internal suspend fun retainLatestCookie(host: String, name: String) {
+    PersistCookieStorage.shared.retainLatest(host, name)
 }
 
 fun cookiePairs(): List<Pair<String, String>> = PersistCookieStorage.shared.snapshot()

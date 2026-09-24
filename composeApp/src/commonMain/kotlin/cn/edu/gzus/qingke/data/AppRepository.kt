@@ -553,7 +553,13 @@ class AppRepository(
                 }
                 throw failed
             }
-            if (usesZhkuSession()) throw failed
+            if (usesZhkuSession()) {
+                if (isSessionLost(message)) {
+                    markSessionExpired()
+                    error(SESSION_LOST_HINT)
+                }
+                throw failed
+            }
             if (isSessionLost(message) && shouldExpireWholeSession()) {
                 markSessionExpired()
                 error(SESSION_LOST_HINT)

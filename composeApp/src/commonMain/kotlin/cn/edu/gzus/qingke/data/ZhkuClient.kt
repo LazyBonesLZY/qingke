@@ -179,21 +179,35 @@ class ZhkuClient(
             )
         }
         requireZhkuSession(page)
+        val termId = xnxq.ifBlank { htmlSelectedValue(page, "xnxq01id") }
         val kbjcmsid = htmlSelectedValue(page, "kbjcmsid").ifBlank { DEFAULT_KBJCMSID }
-        val kbHtml = if (kbjcmsid == DEFAULT_KBJCMSID) page else post(
-            "$BASE/xskb/xskb_list.do",
-            mapOf(
-                "xnxq01id" to xnxq,
-                "zc" to "",
-                "sfFD" to "1",
-                "kbjcmsid" to kbjcmsid,
-            ),
-        )
-        requireZhkuSession(kbHtml)
+        suspend fun listWith(template: String): String {
+            val html = post(
+                "$BASE/xskb/xskb_list.do",
+                mapOf(
+                    "xnxq01id" to termId,
+                    "zc" to "",
+                    "sfFD" to "1",
+                    "kbjcmsid" to template,
+                ),
+            )
+            requireZhkuSession(html)
+            return html
+        }
+        var kbHtml = if (kbjcmsid == DEFAULT_KBJCMSID) page else listWith(kbjcmsid)
         val courses = runCatching {
-            parseZhkuCourses(get("$BASE/framework/main_index_loadwdkc.htmlx?xnxq01id=$xnxq"))
+            parseZhkuCourses(get("$BASE/framework/main_index_loadwdkc.htmlx?xnxq01id=$termId"))
         }.getOrDefault(emptyList())
-        val slots = parseZhkuTimetable(kbHtml, courses)
+        var slots = parseZhkuTimetable(kbHtml, courses)
+        // 选中的是白云校区节次模板时，格子常常是空的，课都挂在默认模板下。
+        if (slots.isEmpty() && kbjcmsid != DEFAULT_KBJCMSID) {
+            val fallback = listWith(DEFAULT_KBJCMSID)
+            val fallbackSlots = parseZhkuTimetable(fallback, courses)
+            if (fallbackSlots.isNotEmpty()) {
+                kbHtml = fallback
+                slots = fallbackSlots
+            }
+        }
         val remarkPage = runCatching {
             get("$BASE/framework/main_index_loadkb.htmlx?xnxqid=${htmlSelectedValue(kbHtml, "xnxq01id").ifBlank { xnxq }}")
         }.getOrDefault("")
@@ -493,15 +507,32 @@ private data class ZhkuFont(val title: String, val name: String, val text: Strin
 internal data class ZhkuWeeksPeriod(val weeks: String, val period: String)
 
 internal fun parseZhkuWeeksPeriod(raw: String): ZhkuWeeksPeriod {
-    val match = Regex("""(.+?)\(周\)\[(.+?)节\]""").find(raw)
-    if (match != null) {
-        return ZhkuWeeksPeriod(
-            weeks = match.groupValues[1].trim(),
-            period = match.groupValues[2].replace(Regex("""0(\d)"""), "$1").replace("节", "").trim(),
-        )
+    val text = raw.trim()
+    val period = Regex("""\[([^\]]*?)节?\]""").find(text)?.groupValues?.get(1)
+        ?.let { zhkuPeriodSpan(it) }
+        .orEmpty()
+    val head = text.substringBefore("[")
+    val parity = when {
+        head.contains("单") -> "单"
+        head.contains("双") -> "双"
+        else -> ""
     }
-    val weeksOnly = Regex("""(.+?)\(周\)""").find(raw)?.groupValues?.get(1)?.trim()
-    return ZhkuWeeksPeriod(weeksOnly ?: raw.replace("周", "").trim(), "")
+    val weeks = head
+        .replace(Regex("""[(（]\s*[单双]?\s*周?\s*[)）]"""), "")
+        .replace("周", "")
+        .replace("单", "")
+        .replace("双", "")
+        .trim()
+    return ZhkuWeeksPeriod(weeks + parity, period)
+}
+
+// 强智会写 [10-11-12节]、[01-02节]，格子只认首尾两节。
+private fun zhkuPeriodSpan(raw: String): String {
+    val nums = raw.split("-", ",", "、").mapNotNull { it.trim().toIntOrNull() }
+    if (nums.isEmpty()) return ""
+    val lo = nums.min()
+    val hi = nums.max()
+    return if (lo == hi) "$lo" else "$lo-$hi"
 }
 
 internal fun zhkuPeriodFromLabel(label: String): String = when {
@@ -534,7 +565,7 @@ internal fun parseZhkuPractices(
         }
     val names = (fromRemark.keys + courses.map { it.courseName }.filter { it !in slotted }).distinct()
     return names.mapNotNull { name ->
-        if (name in slotted && name !in fromRemark) return@mapNotNull null
+        if (name in slotted) return@mapNotNull null
         val course = courses.firstOrNull { it.courseName == name }
         PracticeCourse(
             name = name,

@@ -243,12 +243,14 @@ interface SchoolPortal {
 
 fun zhkuTermId(year: String, term: String): String {
     val compact = year.trim()
-    if (compact.contains("-")) return compact
-    val start = compact.toIntOrNull() ?: return ""
     val half = when (term.trim()) {
         "12", "2" -> "2"
         else -> "1"
     }
+    val parts = compact.split("-").filter { it.isNotBlank() }
+    if (parts.size >= 3) return compact
+    if (parts.size == 2) return "${parts[0]}-${parts[1]}-$half"
+    val start = compact.toIntOrNull() ?: return ""
     return "$start-${start + 1}-$half"
 }
 

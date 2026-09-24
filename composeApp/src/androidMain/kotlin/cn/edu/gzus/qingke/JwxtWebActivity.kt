@@ -28,6 +28,15 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 class JwxtWebActivity : ComponentActivity() {
     private var webView: WebView? = null
 
+    override fun onDestroy() {
+        webView?.apply {
+            stopLoading()
+            destroy()
+        }
+        webView = null
+        super.onDestroy()
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()

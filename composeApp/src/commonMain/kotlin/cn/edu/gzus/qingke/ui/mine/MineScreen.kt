@@ -411,8 +411,8 @@ private fun LoggedOutMine(
     onOpenChangePassword: () -> Unit,
     onLogin: (String, String, String) -> Unit,
 ) {
-    var studentId by remember { mutableStateOf(snapshot.session.studentId) }
-    var password by remember { mutableStateOf("") }
+    var studentId by remember(school.id) { mutableStateOf(snapshot.session.studentId) }
+    var password by remember(school.id) { mutableStateOf("") }
     var captchaCode by remember(school.id, captcha?.id) { mutableStateOf("") }
     var visible by remember { mutableStateOf(false) }
     val captchaBitmap = remember(captcha?.id, captcha?.bytes?.size) {
@@ -725,7 +725,7 @@ private fun SemesterBlock(
         ArrowPreference(
             title = "当前教学周",
             summary = if (snapshot.settings.hasTermStart()) {
-                "${school.jwxtName}周表对齐 · 今天第${week}周"
+                if (week >= 1) "${school.jwxtName}周表对齐 · 今天第${week}周" else "学期还没开始"
             } else {
                 "登录后自动对齐，也可以点开改"
             },
@@ -909,12 +909,14 @@ private fun RemindBlock(
                 }
             }
         }
-        ArrowPreference(
-            title = if (liveTesting) "停止 Live 测试" else "测试 Live 通知",
-            summary = if (liveTesting) "进度条约 8 分钟，点这里停" else "发一条上课中的进度通知，看看效果",
-            onClick = { if (liveTesting) onStopLiveTest() else onLiveTest() },
-        )
-        if (liveStatus.contains("未开启") || liveStatus.contains("权限") || liveStatus.contains("还没开")) {
+        if (school.hasPeriodClock || liveTesting) {
+            ArrowPreference(
+                title = if (liveTesting) "停止 Live 测试" else "测试 Live 通知",
+                summary = if (liveTesting) "进度条约 8 分钟，点这里停" else "发一条上课中的进度通知，看看效果",
+                onClick = { if (liveTesting) onStopLiveTest() else onLiveTest() },
+            )
+        }
+        if (school.hasPeriodClock && liveStatus.contains("未开启") || liveStatus.contains("权限") || liveStatus.contains("还没开")) {
             ArrowPreference(
                 title = "打开系统通知设置",
                 summary = liveStatus,

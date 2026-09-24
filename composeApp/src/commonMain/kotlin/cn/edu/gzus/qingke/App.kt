@@ -16,6 +16,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -102,6 +103,15 @@ fun App() {
         val scope = rememberCoroutineScope()
         val snapshot by repo.state.collectAsState()
         val liveTick by repo.liveTick.collectAsState()
+        var noticeLoading by remember { mutableStateOf(emptySet<String>()) }
+        var calendarDay by remember { mutableStateOf(nowDateTime().date) }
+        LaunchedEffect(Unit) {
+            while (isActive) {
+                delay(60_000)
+                val date = nowDateTime().date
+                if (date != calendarDay) calendarDay = date
+            }
+        }
         val captcha by repo.captcha.collectAsState()
         val captchaError by repo.captchaError.collectAsState()
         val backdrop = rememberQingkeBackdrop()
@@ -313,13 +323,15 @@ fun App() {
             Box(Modifier.fillMaxSize().qingkeLayer(backdrop)) {
                 Box(Modifier.fillMaxSize().background(MiuixTheme.colorScheme.surface))
                 when (nav.tab) {
-                    TabDest.Today -> TodayScreen(snapshot, nav, padding, onSync = {
-                        runJob {
-                            repo.sync()
-                            toast("课表已刷新")
-                        }
-                    })
-                    TabDest.Timetable -> TimetableScreen(snapshot, nav, padding)
+                    TabDest.Today -> key(calendarDay) {
+                        TodayScreen(snapshot, nav, padding, onSync = {
+                            runJob {
+                                repo.sync()
+                                toast("课表已刷新")
+                            }
+                        })
+                    }
+                    TabDest.Timetable -> key(calendarDay) { TimetableScreen(snapshot, nav, padding) }
                     TabDest.Grades -> GradesScreen(snapshot, nav, padding)
                     TabDest.Jwxt -> JwxtScreen(snapshot, nav, padding)
                     TabDest.Mine -> MineScreen(
@@ -565,7 +577,7 @@ fun App() {
                                         roomError = null
                                         runCatching { repo.queryRooms(weekday, start, end) }
                                             .onSuccess { rooms = it }
-                                            .onFailure { roomError = it.message }
+                                            .onFailure { roomError = it.friendlyNetworkMessage().ifBlank { "空教室查询失败" } }
                                         roomBusy = false
                                     }
                                 },
@@ -590,7 +602,7 @@ fun App() {
                                         leaveFormError = null
                                         runCatching { repo.loadLeaveForm(affairId) }
                                             .onSuccess { leaveForm = it }
-                                            .onFailure { leaveFormError = it.message }
+                                            .onFailure { leaveFormError = it.friendlyNetworkMessage().ifBlank { "请假表单加载失败" } }
                                         leaveFormBusy = false
                                     }
                                 },
@@ -666,10 +678,13 @@ fun App() {
                             is Route.Notices -> NoticesScreen(
                                 snapshot = snapshot,
                                 contentPadding = padding,
+                                bodyLoading = noticeLoading,
                                 onOpen = { id ->
                                     scope.launch {
+                                        noticeLoading = noticeLoading + id
                                         runCatching { repo.loadNoticeBody(id) }
-                                            .onFailure { toast(it.message ?: "通知正文加载失败") }
+                                            .onFailure { toast(it.friendlyNetworkMessage().ifBlank { "通知正文加载失败" }) }
+                                        noticeLoading = noticeLoading - id
                                     }
                                 },
                             )

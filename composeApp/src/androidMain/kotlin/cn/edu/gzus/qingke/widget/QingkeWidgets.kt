@@ -115,10 +115,10 @@ object QingkeWidgets {
      * 系统给小组件的自动刷新最快也就半小时一次，"上课中 / 下一节"会一直挂着过期的状态。
      * 所以自己在下一个上下课点再叫醒一次。用非精确闹钟，不要额外权限。
      */
-    private fun scheduleNextTick(context: Context) {
+    fun scheduleNextTick(context: Context) {
         runCatching {
             val alarms = context.getSystemService(AlarmManager::class.java) ?: return
-            val at = nextBoundaryMillis() ?: return
+            val at = nextBoundaryMillis(snapshot(context).resolved().hasPeriodClock) ?: return
             val intent = Intent(context, WidgetTickReceiver::class.java)
                 .setAction(ACTION_TICK)
             val pending = PendingIntent.getBroadcast(
@@ -132,14 +132,18 @@ object QingkeWidgets {
     }
 
     /** 今天下一个上课或下课的时刻；今天都过完了就等明天零点过五分。 */
-    private fun nextBoundaryMillis(): Long? {
+    private fun nextBoundaryMillis(hasClock: Boolean): Long? {
         val now = nowDateTime()
         val nowMs = System.currentTimeMillis()
         val today = now.date
-        val next = (1..16)
-            .flatMap { listOf(periodStart("$it-$it"), periodEnd("$it-$it")) }
-            .mapNotNull { combineMillis(today, it).takeIf { ms -> ms > nowMs } }
-            .minOrNull()
+        val next = if (hasClock) {
+            (1..16)
+                .flatMap { listOf(periodStart("$it-$it"), periodEnd("$it-$it")) }
+                .mapNotNull { combineMillis(today, it).takeIf { ms -> ms > nowMs } }
+                .minOrNull()
+        } else {
+            null
+        }
         if (next != null) return next + 5_000
         return combineMillis(today.plus(DatePeriod(days = 1)), "00:05")
             .takeIf { it > nowMs }
@@ -351,7 +355,12 @@ object QingkeWidgets {
             return
         }
         val now = nowDateTime()
-        val live = nextLiveLesson(snap.slots, today, snap.settings, today, now.time)
+        val hasClock = snap.resolved().hasPeriodClock
+        val live = if (hasClock) {
+            nextLiveLesson(snap.slots, today, snap.settings, today, now.time, snap.scheduleAdjust)
+        } else {
+            null
+        }
         val threeLine = box.height() / slots.size.coerceAtLeast(1) >= dp(context, 56f)
         val twoLine = box.height() / slots.size.coerceAtLeast(1) >= dp(context, 36f)
         val maxRows = when {
@@ -362,7 +371,6 @@ object QingkeWidgets {
         val shown = slots.take(maxRows)
         val rowH = box.height() / shown.size
         val gap = dp(context, 3f)
-        val hasClock = snap.resolved().hasPeriodClock
         shown.forEachIndexed { index, slot ->
             val row = RectF(box.left, box.top + index * rowH + gap, box.right, box.top + (index + 1) * rowH - gap)
             if (row.height() < 8f) return@forEachIndexed
@@ -683,11 +691,25 @@ class WidgetTickReceiver : android.content.BroadcastReceiver() {
     }
 }
 
+/** 重启、改时间、改时区、覆盖安装都会清掉闹钟，得重画并重新排。 */
+class WidgetClockReceiver : android.content.BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        when (intent.action) {
+            Intent.ACTION_BOOT_COMPLETED,
+            Intent.ACTION_TIME_CHANGED,
+            Intent.ACTION_TIMEZONE_CHANGED,
+            Intent.ACTION_MY_PACKAGE_REPLACED,
+            -> runCatching { QingkeWidgets.refreshAll(context) }
+        }
+    }
+}
+
 abstract class QingkeWidgetReceiver : AppWidgetProvider() {
     abstract val range: WidgetRange
 
     override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) {
         ids.forEach { QingkeWidgets.update(context, manager, it, range) }
+        QingkeWidgets.scheduleNextTick(context)
     }
 
     override fun onAppWidgetOptionsChanged(

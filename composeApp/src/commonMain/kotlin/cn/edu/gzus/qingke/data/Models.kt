@@ -201,7 +201,16 @@ fun CustomJwxt.pathMap(): Map<String, String> =
         if (key.isBlank() || value.isBlank()) null else key to value
     }.toMap()
 
-fun CustomJwxt.originClean(): String = origin.trim().trimEnd('/')
+fun CustomJwxt.originClean(): String {
+    val raw = origin.trim()
+        .substringBefore("?")
+        .substringBefore("#")
+        .substringBefore("/jwglxt")
+        .substringBefore("/jsxsd")
+        .trimEnd('/')
+    if (raw.isBlank() || "://" in raw) return raw
+    return "https://$raw"
+}
 
 /**
  * 换学校时保留所有个人偏好，只清掉跟原学校教务绑在一起的东西：

@@ -114,7 +114,7 @@ fun TodayScreen(
         when {
             hero != null -> {
                 val eta = when {
-                    remain == null -> "今日课程"
+                    remain == null -> if (todaySlots.size > 1) "今天第一节 · 共 ${todaySlots.size} 节" else "今天的课"
                     remain <= 0 -> "正在上课"
                     else -> "下一节 · ${formatRemain(remain)}后"
                 }
@@ -263,7 +263,12 @@ fun TodayScreen(
         ) {
             if (todaySlots.isEmpty() && weekPractices.isEmpty()) {
                 InfoCard(
-                    title = if (snapshot.hasTimetable) "这一天没有理论课" else "登录后会出现今日课程",
+                    title = when {
+                        snapshot.hasTimetable && week < 1 -> "学期还没开始"
+                        snapshot.hasTimetable -> "这一天没有理论课"
+                        snapshot.session.loggedIn -> "同步后会出现今日课程"
+                        else -> "登录后会出现今日课程"
+                    },
                     summary = "",
                 )
             } else {

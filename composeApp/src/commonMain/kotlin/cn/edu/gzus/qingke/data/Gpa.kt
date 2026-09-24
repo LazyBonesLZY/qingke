@@ -13,7 +13,7 @@ fun gpaFromScore(raw: String): Double? {
         "良好" -> return 3.0
         "中等", "中" -> return 2.0
         "及格" -> return 1.0
-        "不及格", "不合格" -> return 0.0
+        "不及格", "不合格", "不通过" -> return 0.0
     }
     val score = text.toDoubleOrNull() ?: return null
     if (score < 60.0) return 0.0
@@ -28,7 +28,7 @@ fun GradeItem.numericScore(): Double? {
         "良好" -> 85.0
         "中等", "中" -> 75.0
         "及格" -> 65.0
-        "不及格", "不合格" -> 0.0
+        "不及格", "不合格", "不通过" -> 0.0
         else -> text.toDoubleOrNull()
     }
 }
@@ -46,7 +46,12 @@ fun summarizeGpa(grades: List<GradeItem>): GpaSummary {
     var scoreSum = 0.0
     var scoreCount = 0
     var counted = 0
-    grades.forEach { item ->
+    // 重修、补考会让同一门课出现好几行，只算最好的那次。
+    val attempts = grades
+        .groupBy { it.courseId.ifBlank { it.courseName } }
+        .values
+        .map { rows -> rows.maxBy { row -> row.resolvedGpa() ?: -1.0 } }
+    attempts.forEach { item ->
         val credit = item.credit.toDoubleOrNull() ?: 0.0
         val gpa = item.resolvedGpa()
         val score = item.numericScore()

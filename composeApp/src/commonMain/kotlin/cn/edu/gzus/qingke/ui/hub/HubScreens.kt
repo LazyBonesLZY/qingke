@@ -32,6 +32,7 @@ import cn.edu.gzus.qingke.data.FreeRoom
 import cn.edu.gzus.qingke.data.NoticePart
 import cn.edu.gzus.qingke.data.MajorPeriods
 import cn.edu.gzus.qingke.data.WeekdayNames
+import cn.edu.gzus.qingke.data.examSortKey
 import cn.edu.gzus.qingke.data.resolved
 import cn.edu.gzus.qingke.data.nowDateTime
 import cn.edu.gzus.qingke.data.weekdayIndex
@@ -82,6 +83,7 @@ fun EmptyRoomScreen(
         mutableIntStateOf(idx)
     }
     val period = MajorPeriods[periodIndex]
+    var queried by remember(dayIndex, periodIndex) { mutableStateOf(false) }
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(contentPadding).padding(bottom = 24.dp),
     ) {
@@ -130,6 +132,7 @@ fun EmptyRoomScreen(
             onClick = {
                 val start = period.label.substringBefore("-")
                 val end = period.label.substringAfter("-")
+                queried = true
                 onQuery((dayIndex + 1).toString(), start, end)
             },
             enabled = !busy && snapshot.session.loggedIn,
@@ -145,7 +148,13 @@ fun EmptyRoomScreen(
         }
         SmallTitle(text = if (rooms.isEmpty()) "结果" else "找到 ${rooms.size} 间")
         if (rooms.isEmpty()) {
-            EmptyHint(if (snapshot.session.loggedIn) "还没有结果。选好星期和大节后查询。" else "未登录时不能查${school.jwxtName}空教室。")
+            EmptyHint(
+                when {
+                    !snapshot.session.loggedIn -> "未登录时不能查${school.jwxtName}空教室。"
+                    queried && !busy && error.isNullOrBlank() -> "这个时段没有空教室。"
+                    else -> "还没有结果。选好星期和大节后查询。"
+                },
+            )
         } else {
             Column(
                 modifier = Modifier.padding(horizontal = 16.dp),
@@ -168,6 +177,7 @@ fun EmptyRoomScreen(
 fun NoticesScreen(
     snapshot: AppSnapshot,
     contentPadding: PaddingValues,
+    bodyLoading: Set<String> = emptySet(),
     onOpen: (String) -> Unit,
 ) {
     var expandedId by remember { mutableStateOf<String?>(null) }
@@ -215,7 +225,7 @@ fun NoticesScreen(
                             val parts = notice.bodyParts()
                             if (parts.isEmpty()) {
                                 Text(
-                                    "正在加载正文",
+                                    if (notice.id in bodyLoading) "正在加载正文" else "没有拿到正文，收起再点开重试",
                                     style = MiuixTheme.textStyles.body2,
                                     color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
                                 )
@@ -296,7 +306,7 @@ fun ExamsScreen(snapshot: AppSnapshot, contentPadding: PaddingValues) {
                 modifier = Modifier.padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                snapshot.exams.forEach { exam ->
+                snapshot.exams.sortedBy { examSortKey(it.time) }.forEach { exam ->
                     InfoCard(
                         title = exam.courseName,
                         summary = listOf(exam.time, exam.room, exam.seat, exam.status).filter { it.isNotBlank() }.joinToString("\n"),

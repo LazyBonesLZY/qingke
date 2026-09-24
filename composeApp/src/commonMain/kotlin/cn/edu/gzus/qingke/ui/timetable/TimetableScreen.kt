@@ -210,7 +210,7 @@ fun TimetableScreen(
                 week = viewWeek,
                 weekLo = weekLo,
                 weekHi = weekHi,
-                currentWeek = currentWeek,
+                currentWeek = currentWeek.coerceIn(weekLo, weekHi),
                 range = formatMonthDayRange(monday, sunday),
                 sessions = weekSessions,
                 used = used,

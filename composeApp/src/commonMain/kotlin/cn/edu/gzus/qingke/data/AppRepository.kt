@@ -36,10 +36,13 @@ class AppRepository(
     private fun customPortal(cfg: CustomJwxt): SchoolPortal {
         val origin = cfg.originClean()
         require(origin.isNotBlank()) { "先在开发者选项里填教务地址" }
+        if (cfg.normalizedKind() == "lyuap") {
+            require(cfg.casService.isNotBlank()) { "先在开发者选项里填统一认证的 service 地址" }
+        }
         return when (cfg.normalizedKind()) {
             "kingosoft" -> ZhkuClient(origin = origin)
             "lyuap" -> GzistClient(
-                casOrigin = cfg.casOrigin.trim().ifBlank { origin },
+                casOrigin = cfg.casOrigin.trim().trimEnd('/').ifBlank { origin },
                 casService = cfg.casService.trim(),
                 jwxtOrigin = origin,
                 supportsFreeRooms = cfg.supportsFreeRooms,
@@ -184,7 +187,9 @@ class AppRepository(
         val snap = _state.value
         if (!snap.settings.autoPullScheduleAdjust || snap.settings.school() != School.Gzus) return
         val next = scheduleAdjustClient.fetch()
-        commit { it.copy(scheduleAdjust = next.copy(fetchedAt = nowMillis())) }
+        commit {
+            if (it.settings.school() != School.Gzus) it else it.copy(scheduleAdjust = next.copy(fetchedAt = nowMillis()))
+        }
     }
 
     suspend fun loginAndSync(studentId: String, password: String, captcha: String = "", captchaId: String = "") {
@@ -281,9 +286,9 @@ class AppRepository(
         val years = holidayYearsNeeded(_state.value, today)
         val cache = _state.value.holidays
         val stale = cache.fetchedAt <= 0L || nowMillis() - cache.fetchedAt > 7 * 86_400_000L
-        val missing = years.any { it !in cache.years } && cache.days.isEmpty()
-        if (!force && cache.days.isNotEmpty() && !stale) return
-        if (!force && !stale && !missing) return
+        val missing = years.any { it !in cache.years }
+        val triedToday = nowMillis() - cache.fetchedAt < 86_400_000L
+        if (!force && !stale && (!missing || triedToday)) return
         val days = mutableListOf<HolidayDay>()
         val got = mutableListOf<Int>()
         for (year in years) {
@@ -293,10 +298,14 @@ class AppRepository(
         }
         if (got.isEmpty()) return
         commit {
+            val kept = it.holidays.days.filter { day ->
+                val year = day.date.take(4).toIntOrNull()
+                year != null && year !in got
+            }
             it.copy(
                 holidays = HolidayCalendar(
-                    days = days.distinctBy { day -> day.date },
-                    years = got.distinct().sorted(),
+                    days = (days + kept).distinctBy { day -> day.date }.sortedBy { day -> day.date },
+                    years = (got + it.holidays.years).distinct().sorted(),
                     fetchedAt = nowMillis(),
                 ),
             )
@@ -1038,6 +1047,9 @@ private fun AppSnapshot.widgetSignature(): Int {
     h = 31 * h + settings.schoolId.hashCode()
     h = 31 * h + settings.courseAliases.hashCode()
     h = 31 * h + settings.scheduleShifts.hashCode()
+    h = 31 * h + settings.autoPullScheduleAdjust.hashCode()
+    h = 31 * h + scheduleAdjust.offs.hashCode()
+    h = 31 * h + scheduleAdjust.shifts.hashCode()
     return h
 }
 

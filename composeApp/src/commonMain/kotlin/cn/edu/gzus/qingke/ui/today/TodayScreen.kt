@@ -211,7 +211,7 @@ fun TodayScreen(
                 )
             }
         }
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(12.dp))
         val stats = buildList {
             add(todaySlots.size.toString() to "今天课程")
             add(courseCount.toString() to "学期课程")

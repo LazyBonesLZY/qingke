@@ -17,7 +17,6 @@ import cn.edu.gzus.qingke.data.GZUS_EHALL_HOME
 import cn.edu.gzus.qingke.data.GZUS_EHALL_MESSAGE
 import cn.edu.gzus.qingke.data.gzusUsesCas
 import cn.edu.gzus.qingke.data.isLeave
-import cn.edu.gzus.qingke.data.leaveAffairs
 import cn.edu.gzus.qingke.data.leaveSummary
 import cn.edu.gzus.qingke.data.openUrl
 import cn.edu.gzus.qingke.nav.QingkeNavigator
@@ -92,9 +91,8 @@ fun HallScreen(
             }
         }
         if (cas && snapshot.session.loggedIn && (hall.ready || hall.todos.isNotEmpty() || hall.messages.isNotEmpty() || hall.affairs.isNotEmpty() || hall.events.isNotEmpty() || hall.leaves.isNotEmpty())) {
-            val leave = hall.leaveAffairs()
-            if (leave.isNotEmpty() || hall.leaves.isNotEmpty()) {
-                SmallTitle(text = "请假")
+            if (hall.leaves.isNotEmpty()) {
+                SmallTitle(text = "最近请假")
                 Column(
                     modifier = Modifier.padding(horizontal = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -103,14 +101,6 @@ fun HallScreen(
                         InfoCard(
                             title = item.title,
                             summary = listOf(item.status, item.time).filter { it.isNotBlank() }.joinToString(" · "),
-                            height = null,
-                            onClick = { nav.open(Route.Leave) },
-                        )
-                    }
-                    leave.forEach { item ->
-                        InfoCard(
-                            title = item.name,
-                            summary = item.type.ifBlank { "办事大厅请假事项" },
                             height = null,
                             onClick = { nav.open(Route.Leave) },
                         )

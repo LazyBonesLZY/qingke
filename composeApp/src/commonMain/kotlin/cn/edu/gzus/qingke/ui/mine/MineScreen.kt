@@ -490,9 +490,9 @@ private fun LoggedOutMine(
         if (!captchaError.isNullOrBlank()) {
             Text(
                 captchaError,
-                color = MiuixTheme.colorScheme.primary,
+                color = MiuixTheme.colorScheme.error,
                 style = MiuixTheme.textStyles.footnote1,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
             )
         }
     }
@@ -526,9 +526,9 @@ private fun LoggedOutMine(
     } else if (!error.isNullOrBlank()) {
         Text(
             error,
-            color = MiuixTheme.colorScheme.primary,
+            color = MiuixTheme.colorScheme.error,
             style = MiuixTheme.textStyles.footnote1,
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         )
     }
     Spacer(Modifier.height(12.dp))

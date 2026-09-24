@@ -116,9 +116,9 @@ fun LeaveScreen(
             if (!formError.isNullOrBlank()) {
                 Text(
                     formError,
-                    color = MiuixTheme.colorScheme.primary,
+                    color = MiuixTheme.colorScheme.error,
                     style = MiuixTheme.textStyles.footnote1,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                 )
             }
             Column(

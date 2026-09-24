@@ -24,7 +24,6 @@ import cn.edu.gzus.qingke.data.xiaoaiImportSummary
 import cn.edu.gzus.qingke.nav.QingkeNavigator
 import cn.edu.gzus.qingke.nav.Route
 import cn.edu.gzus.qingke.nav.TabDest
-import cn.edu.gzus.qingke.ui.components.FactsCard
 import cn.edu.gzus.qingke.ui.components.InfoCard
 import cn.edu.gzus.qingke.ui.components.ScreenHeader
 import cn.edu.gzus.qingke.ui.components.tabPagePadding
@@ -143,20 +142,6 @@ fun JwxtScreen(
                     onClick = { nav.open(Route.Hall) },
                 )
             }
-        }
-        if (snapshot.profile.name.isNotBlank() || snapshot.session.studentId.isNotBlank()) {
-            SmallTitle(text = "学籍")
-            FactsCard(
-                title = snapshot.profile.name.ifBlank { snapshot.session.studentId },
-                fields = listOf(
-                    "学号" to snapshot.profile.studentId.ifBlank { snapshot.session.studentId },
-                    "班级" to snapshot.profile.className,
-                    "专业" to snapshot.profile.major,
-                    "校区" to snapshot.profile.campus,
-                    "学期" to listOf(snapshot.profile.yearName, snapshot.profile.termLabel).filter { it.isNotBlank() }.joinToString(" "),
-                ),
-                modifier = Modifier.padding(horizontal = 16.dp),
-            )
         }
         if (courses.isNotEmpty() || snapshot.practices.isNotEmpty()) {
             SmallTitle(text = "已选课程")

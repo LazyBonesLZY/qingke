@@ -120,7 +120,7 @@ fun CoursePickScreen(
             Text(
                 error,
                 modifier = Modifier.padding(horizontal = 16.dp),
-                color = MiuixTheme.colorScheme.primary,
+                color = MiuixTheme.colorScheme.error,
                 style = MiuixTheme.textStyles.footnote1,
             )
         }

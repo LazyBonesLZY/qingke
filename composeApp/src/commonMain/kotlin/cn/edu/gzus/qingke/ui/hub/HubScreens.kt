@@ -145,7 +145,7 @@ fun EmptyRoomScreen(
             Text(if (!snapshot.session.loggedIn) "登录后查询" else if (busy) "查询中" else "查询空教室")
         }
         if (!error.isNullOrBlank()) {
-            Text(error, modifier = Modifier.padding(16.dp), color = MiuixTheme.colorScheme.primary, style = MiuixTheme.textStyles.footnote1)
+            Text(error, modifier = Modifier.padding(16.dp), color = MiuixTheme.colorScheme.error, style = MiuixTheme.textStyles.footnote1)
         }
         SmallTitle(text = if (rooms.isEmpty()) "结果" else "找到 ${rooms.size} 间")
         if (rooms.isEmpty()) {

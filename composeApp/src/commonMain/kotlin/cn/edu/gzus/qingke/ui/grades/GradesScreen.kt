@@ -88,46 +88,16 @@ fun GradesScreen(
                 null
             },
         )
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(12.dp))
         StatRow(
             items = listOf(
-                (gpa.weighted?.let { formatGpa(it) } ?: "—") to "学分绩点",
+                (termGpa.weighted?.let { formatGpa(it) } ?: "—") to "本学期绩点",
                 (gpa.averageScore?.let { formatScore(it) } ?: "—") to "算术均分",
                 scored.size.toString() to "已出成绩",
                 formatScore(gpa.credits) to "已计学分",
             ),
             onClicks = emptyList(),
         )
-        SmallTitle(text = "绩点明细")
-        if (scored.isEmpty()) {
-            InfoCard(
-                title = "还没有绩点",
-                summary = "同步成绩后按课程列出分数和绩点",
-                modifier = Modifier.padding(horizontal = 16.dp),
-            )
-        } else {
-            Column(
-                modifier = Modifier.padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                scored.forEach { item ->
-                    val point = item.resolvedGpa()
-                    val mark = buildList {
-                        if (item.score.isNotBlank()) add(item.score)
-                        if (point != null) add("绩点 ${formatGpa(point)}")
-                        if (item.credit.isNotBlank()) add("${item.credit} 学分")
-                        if (item.term.isNotBlank()) add(item.term)
-                    }.joinToString(" · ")
-                    InfoCard(
-                        title = item.courseName.ifBlank { item.courseId },
-                        summary = mark.ifBlank { "已出分" },
-                        onClick = item.courseId.takeIf { it.isNotBlank() }?.let { id ->
-                            { nav.open(Route.Course(id)) }
-                        },
-                    )
-                }
-            }
-        }
         SmallTitle(text = "本学期")
         if (courses.isEmpty()) {
             InfoCard(
@@ -155,6 +125,36 @@ fun GradesScreen(
                         title = course.courseName,
                         summary = mark,
                         onClick = { nav.open(Route.Course(course.courseId)) },
+                    )
+                }
+            }
+        }
+        SmallTitle(text = "全部成绩")
+        if (scored.isEmpty()) {
+            InfoCard(
+                title = "还没有绩点",
+                summary = "同步成绩后按课程列出分数和绩点",
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+        } else {
+            Column(
+                modifier = Modifier.padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                scored.forEach { item ->
+                    val point = item.resolvedGpa()
+                    val mark = buildList {
+                        if (item.score.isNotBlank()) add(item.score)
+                        if (point != null) add("绩点 ${formatGpa(point)}")
+                        if (item.credit.isNotBlank()) add("${item.credit} 学分")
+                        if (item.term.isNotBlank()) add(item.term)
+                    }.joinToString(" · ")
+                    InfoCard(
+                        title = item.courseName.ifBlank { item.courseId },
+                        summary = mark.ifBlank { "已出分" },
+                        onClick = item.courseId.takeIf { it.isNotBlank() }?.let { id ->
+                            { nav.open(Route.Course(id)) }
+                        },
                     )
                 }
             }

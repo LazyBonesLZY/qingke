@@ -12,6 +12,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.layout.PaddingValues
+import top.yukonga.miuix.kmp.basic.PullToRefresh
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
@@ -117,7 +119,8 @@ fun App() {
         val captcha by repo.captcha.collectAsState()
         val captchaError by repo.captchaError.collectAsState()
         val backdrop = rememberQingkeBackdrop()
-        var busy by remember { mutableStateOf(false) }
+        var busyJobs by remember { mutableStateOf(emptySet<String>()) }
+        val busy = "sync" in busyJobs
         var loginError by remember { mutableStateOf<String?>(null) }
         var firstLogin by remember { mutableStateOf(false) }
         var roomBusy by remember { mutableStateOf(false) }
@@ -147,9 +150,9 @@ fun App() {
             scope.launch { snackbar.showSnackbar(message) }
         }
 
-        fun runJob(login: Boolean = false, block: suspend () -> Unit) {
+        fun runJob(login: Boolean = false, job: String = "sync", block: suspend () -> Unit) {
             scope.launch {
-                busy = true
+                busyJobs = busyJobs + job
                 runCatching { block() }
                     .onFailure { failed ->
                         if (failed is JwxtNeedFirstLogin) {
@@ -163,7 +166,7 @@ fun App() {
                         if (login || isSessionLost(message)) loginError = message
                         toast(message)
                     }
-                busy = false
+                busyJobs = busyJobs - job
             }
         }
 
@@ -324,18 +327,32 @@ fun App() {
         ) { padding ->
             Box(Modifier.fillMaxSize().qingkeLayer(backdrop)) {
                 Box(Modifier.fillMaxSize().background(MiuixTheme.colorScheme.surface))
+                val pullSync: () -> Unit = {
+                    if (!busy) {
+                        runJob {
+                            repo.sync()
+                            toast("已同步")
+                        }
+                    }
+                }
                 tabStates.SaveableStateProvider(nav.tab.name) {
                     when (nav.tab) {
-                        TabDest.Today -> key(calendarDay) {
-                            TodayScreen(snapshot, nav, padding, onSync = {
-                                runJob {
-                                    repo.sync()
-                                    toast("课表已刷新")
-                                }
-                            })
+                        TabDest.Today -> SyncPull(snapshot.session.loggedIn, busy, padding, onRefresh = pullSync) {
+                            key(calendarDay) {
+                                TodayScreen(snapshot, nav, padding, onSync = {
+                                    runJob {
+                                        repo.sync()
+                                        toast("课表已刷新")
+                                    }
+                                })
+                            }
                         }
-                        TabDest.Timetable -> key(calendarDay) { TimetableScreen(snapshot, nav, padding) }
-                        TabDest.Grades -> GradesScreen(snapshot, nav, padding)
+                        TabDest.Timetable -> SyncPull(snapshot.session.loggedIn, busy, padding, onRefresh = pullSync) {
+                            key(calendarDay) { TimetableScreen(snapshot, nav, padding) }
+                        }
+                        TabDest.Grades -> SyncPull(snapshot.session.loggedIn, busy, padding, onRefresh = pullSync) {
+                            GradesScreen(snapshot, nav, padding)
+                        }
                         TabDest.Jwxt -> JwxtScreen(snapshot, nav, padding)
                         TabDest.Mine -> MineScreen(
                             snapshot = snapshot,
@@ -596,7 +613,7 @@ fun App() {
                                 snapshot = snapshot,
                                 nav = nav,
                                 contentPadding = padding,
-                                busy = busy,
+                                busy = "leave" in busyJobs,
                                 form = leaveForm,
                                 formBusy = leaveFormBusy,
                                 formError = leaveFormError,
@@ -611,13 +628,13 @@ fun App() {
                                     }
                                 },
                                 onSubmit = { form, values ->
-                                    runJob {
+                                    runJob(job = "leave") {
                                         val message = repo.submitLeave(form, values)
                                         toast(message)
                                     }
                                 },
                                 onRefresh = {
-                                    runJob {
+                                    runJob(job = "leave") {
                                         repo.syncHall()
                                         toast("请假已同步")
                                     }
@@ -638,7 +655,7 @@ fun App() {
                                 snapshot = snapshot,
                                 nav = nav,
                                 contentPadding = padding,
-                                busy = busy,
+                                busy = "utility" in busyJobs,
                                 options = utilityOptions,
                                 optionsBusy = utilityOptionsBusy,
                                 optionsError = utilityOptionsError,
@@ -670,7 +687,7 @@ fun App() {
                                     toast(if (useCustom) "已用自定义单价" else "已用江门校区单价")
                                 },
                                 onRefresh = {
-                                    runJob {
+                                    runJob(job = "utility") {
                                         repo.syncUtility()
                                         toast("水电已同步")
                                     }
@@ -745,7 +762,7 @@ fun App() {
                                 snapshot = snapshot,
                                 nav = nav,
                                 contentPadding = padding,
-                                busy = busy,
+                                busy = "pick" in busyJobs,
                                 scopes = pickScopes,
                                 offers = pickOffers,
                                 sections = pickSections,
@@ -796,7 +813,7 @@ fun App() {
                                     }
                                 },
                                 onSelectNow = { offer, section ->
-                                    runJob {
+                                    runJob(job = "pick") {
                                         val message = repo.selectCourseNow(offer, section)
                                         toast(message)
                                     }
@@ -815,7 +832,7 @@ fun App() {
                                     toast("已移出队列")
                                 },
                                 onRunQueued = { id ->
-                                    runJob {
+                                    runJob(job = "pick") {
                                         val message = repo.runQueuedCoursePick(id)
                                         toast(message)
                                     }
@@ -824,7 +841,7 @@ fun App() {
                             is Route.XiaoaiImport -> XiaoaiImportScreen(
                                 snapshot = snapshot,
                                 contentPadding = padding,
-                                busy = busy,
+                                busy = "xiaoai" in busyJobs,
                                 onSaveUrl = { url ->
                                     runCatching { repo.saveXiaoaiEditUrl(url) }
                                         .onSuccess { toast("授权已保存") }
@@ -835,7 +852,7 @@ fun App() {
                                     toast("已清除授权")
                                 },
                                 onImport = {
-                                    runJob {
+                                    runJob(job = "xiaoai") {
                                         val msg = repo.importToXiaoai()
                                         openXiaoaiSchedule()
                                         toast(msg)
@@ -864,4 +881,27 @@ private fun routeTitle(route: Route): String = when (route) {
     is Route.ScheduleShifts -> "调课"
     is Route.CoursePick -> "选课"
     is Route.Tab -> "青课"
+}
+
+private val PullTexts = listOf("下拉同步", "松手同步", "正在同步", "同步好了")
+
+@Composable
+private fun SyncPull(
+    enabled: Boolean,
+    refreshing: Boolean,
+    padding: PaddingValues,
+    onRefresh: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    if (!enabled) {
+        content()
+        return
+    }
+    PullToRefresh(
+        isRefreshing = refreshing,
+        onRefresh = onRefresh,
+        contentPadding = PaddingValues(top = padding.calculateTopPadding()),
+        refreshTexts = PullTexts,
+        content = content,
+    )
 }

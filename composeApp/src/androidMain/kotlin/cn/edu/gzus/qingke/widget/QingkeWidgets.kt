@@ -48,7 +48,7 @@ import kotlinx.datetime.plus
 import kotlinx.serialization.json.Json
 import java.io.File
 
-enum class WidgetRange { Day, Week, Month }
+enum class WidgetRange { Day, Week, Month, Square }
 
 enum class WidgetStyle { Solid, Blur, Glass }
 
@@ -89,6 +89,7 @@ object QingkeWidgets {
             DayWidgetReceiver::class.java to WidgetRange.Day,
             WeekWidgetReceiver::class.java to WidgetRange.Week,
             MonthWidgetReceiver::class.java to WidgetRange.Month,
+            SquareWidgetReceiver::class.java to WidgetRange.Square,
         ).forEach { (cls, range) ->
             if (id in manager.getAppWidgetIds(ComponentName(context, cls))) return range
         }
@@ -102,6 +103,7 @@ object QingkeWidgets {
             DayWidgetReceiver::class.java to WidgetRange.Day,
             WeekWidgetReceiver::class.java to WidgetRange.Week,
             MonthWidgetReceiver::class.java to WidgetRange.Month,
+            SquareWidgetReceiver::class.java to WidgetRange.Square,
         ).forEach { (cls, range) ->
             manager.getAppWidgetIds(ComponentName(context, cls)).forEach { id ->
                 any = true
@@ -229,15 +231,17 @@ object QingkeWidgets {
         bitmap.setHasAlpha(true)
         bitmap.eraseColor(Color.TRANSPARENT)
         val canvas = Canvas(bitmap)
-        val short = height < dp(context, 210f)
-        val radius = dp(context, if (short) 20f else 24f)
+        val square = range == WidgetRange.Square
+        val short = !square && height < dp(context, 210f)
+        val radius = dp(context, if (square) 22f else if (short) 20f else 24f)
         drawChrome(canvas, width, height, radius, style, dark)
-        val pad = dp(context, if (short) 12f else 16f)
+        val pad = dp(context, if (square) 16f else if (short) 12f else 16f)
         val frosted = style != WidgetStyle.Solid
         val title = when (range) {
             WidgetRange.Day -> "${today.monthNumber}月${today.dayOfMonth}日"
             WidgetRange.Week -> if (week >= 1) "第${week}周" else "本周"
             WidgetRange.Month -> "${today.year}年${today.monthNumber}月"
+            WidgetRange.Square -> ""
         }
         val subtitle = when {
             !snap.hasTimetable -> "打开青课登录后才有课"
@@ -248,7 +252,9 @@ object QingkeWidgets {
         val maxText = width - pad * 2
         val headerH: Float
         val accentDot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ACCENT }
-        if (short) {
+        if (square) {
+            headerH = pad
+        } else if (short) {
             val line = if (range == WidgetRange.Day && week >= 1) "$title · $subtitle" else title
             val titlePaint = paint(context, ink(dark), 13f, true, frosted)
             canvas.drawCircle(pad + dp(context, 3f), pad + dp(context, 11f), dp(context, 3f), accentDot)
@@ -277,6 +283,7 @@ object QingkeWidgets {
             WidgetRange.Day -> drawDay(canvas, content, snap, today, week, dark, context)
             WidgetRange.Week -> drawWeek(canvas, content, snap, today, week, dark, context)
             WidgetRange.Month -> drawMonth(canvas, content, snap, today, dark, context)
+            WidgetRange.Square -> drawSquare(canvas, content, snap, today, dark, context)
         }
         return bitmap
     }
@@ -332,6 +339,67 @@ object QingkeWidgets {
                 canvas.drawRoundRect(RectF(1.2f, 1.2f, width - 1.2f, height - 1.2f), radius, radius, stroke)
             }
         }
+    }
+
+    private fun drawSquare(
+        canvas: Canvas,
+        box: RectF,
+        snap: AppSnapshot,
+        today: LocalDate,
+        dark: Boolean,
+        context: Context,
+    ) {
+        val slots = snap.slots.forDate(today, snap.settings, today, snap.scheduleAdjust)
+        if (slots.isEmpty()) {
+            drawCentered(canvas, "今天没有课", box.centerX(), box.centerY(), paint(context, muted(dark), 14f, false))
+            return
+        }
+        val hasClock = snap.resolved().hasPeriodClock
+        val now = nowDateTime()
+        val live = if (hasClock) {
+            nextLiveLesson(snap.slots, today, snap.settings, today, now.time, snap.scheduleAdjust)
+        } else {
+            null
+        }
+        val focus = live?.slot ?: slots.first()
+        val side = minOf(box.width(), box.height())
+        val large = side >= dp(context, 140f)
+        val eyebrow = when {
+            live?.inClass == true -> "上课中"
+            live != null -> "下一节"
+            slots.size > 1 -> "今天 ${slots.size} 节"
+            else -> "今天的课"
+        }
+        val nameSize = when {
+            large -> 22f
+            side >= dp(context, 100f) -> 17f
+            else -> 14f
+        }
+        var y = box.top + dp(context, if (large) 16f else 12f)
+        val eye = paint(context, ACCENT, if (large) 12f else 10f, true)
+        canvas.drawText(fitText(eye, eyebrow, box.width()), box.left, y, eye)
+        y += dp(context, if (large) 30f else 22f)
+        val namePaint = paint(context, ink(dark), nameSize, true)
+        wrapLines(namePaint, focus.courseName, box.width(), if (large) 2 else 1).forEach { line ->
+            canvas.drawText(line, box.left, y, namePaint)
+            y += namePaint.textSize * 1.28f
+        }
+        y += dp(context, 4f)
+        val meta = paint(context, muted(dark), if (large) 13f else 11f, false)
+        val clock = if (hasClock) periodClockRange(focus.period).replace("-", "–") else ""
+        val detail = listOf(periodText(focus), clock, focus.room).filter { it.isNotBlank() }
+        detail.take(if (large) 3 else 2).forEach { line ->
+            if (y > box.bottom) return@forEach
+            canvas.drawText(fitText(meta, line, box.width()), box.left, y, meta)
+            y += dp(context, if (large) 18f else 15f)
+        }
+    }
+
+    private fun wrapLines(paint: Paint, text: String, maxWidth: Float, maxLines: Int): List<String> {
+        if (maxLines <= 1 || paint.measureText(text) <= maxWidth) return listOf(fitText(paint, text, maxWidth))
+        var cut = text.length
+        while (cut > 1 && paint.measureText(text.take(cut)) > maxWidth) cut--
+        return listOf(text.take(cut), fitText(paint, text.drop(cut), maxWidth))
     }
 
     private fun drawDay(
@@ -739,4 +807,8 @@ class WeekWidgetReceiver : QingkeWidgetReceiver() {
 
 class MonthWidgetReceiver : QingkeWidgetReceiver() {
     override val range = WidgetRange.Month
+}
+
+class SquareWidgetReceiver : QingkeWidgetReceiver() {
+    override val range = WidgetRange.Square
 }

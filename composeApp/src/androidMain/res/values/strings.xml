@@ -7,4 +7,6 @@
     <string name="widget_week_desc">一周网格，可拉大小</string>
     <string name="widget_month_name">本月课表</string>
     <string name="widget_month_desc">月历加点，可拉大小</string>
+    <string name="widget_square_name">一格课表</string>
+    <string name="widget_square_desc">桌面一格，显示当前或下一节</string>
 </resources>

@@ -70,6 +70,7 @@ import cn.edu.gzus.qingke.nav.QingkeNavigator
 import cn.edu.gzus.qingke.nav.Route
 import cn.edu.gzus.qingke.nav.TabDest
 import cn.edu.gzus.qingke.ui.components.InfoCard
+import cn.edu.gzus.qingke.ui.components.LocalQingkeWide
 import cn.edu.gzus.qingke.ui.components.ScreenHeader
 import cn.edu.gzus.qingke.ui.components.tabPagePadding
 import kotlinx.datetime.DatePeriod
@@ -163,10 +164,11 @@ fun TimetableScreen(
     }
     val weekPractices = snapshot.practices.filter { it.activeIn(viewWeek) }
     val dated = settings.hasTermStart()
+    val wide = LocalQingkeWide.current
     val subtitle = when {
         !snapshot.hasTimetable -> if (snapshot.session.loggedIn) "同步后再看整周网格" else "登录后从${snapshot.resolved().jwxtName}同步"
         !dated -> "第${viewWeek}周 · 先到「我的」选第1周周一"
-        mode == 0 -> "第${viewWeek}周 · ${formatMonthDayRange(monday, sunday)}"
+        wide || mode == 0 -> "第${viewWeek}周 · ${formatMonthDayRange(monday, sunday)}"
         else -> formatYearMonth(monthAnchor)
     }
 
@@ -198,6 +200,7 @@ fun TimetableScreen(
                 onClick = { nav.goTab(TabDest.Mine) },
             )
         }
+        if (!wide) {
         Spacer(Modifier.height(12.dp))
         TabRowWithContour(
             tabs = listOf("周", "月"),
@@ -206,7 +209,10 @@ fun TimetableScreen(
             modifier = Modifier.padding(horizontal = 16.dp),
         )
         Spacer(Modifier.height(10.dp))
-        if (mode == 0) {
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        if (wide || mode == 0) {
+        Column(Modifier.weight(1f)) {
             WeekPager(
                 week = viewWeek,
                 weekLo = weekLo,
@@ -235,7 +241,7 @@ fun TimetableScreen(
             )
             if (weekSessions == 0 && weekPractices.isEmpty()) {
                 Spacer(Modifier.height(10.dp))
-                InfoCard("这一周没有理论课", "左右换周，或到「月」里扫整月", modifier = Modifier.padding(horizontal = 16.dp))
+                InfoCard("这一周没有理论课", if (wide) "左右换周，或在右边月历里点一天" else "左右换周，或到「月」里扫整月", modifier = Modifier.padding(horizontal = 16.dp))
             }
             if (weekPractices.isNotEmpty()) {
                 Spacer(Modifier.height(10.dp))
@@ -251,7 +257,10 @@ fun TimetableScreen(
                     }
                 }
             }
-        } else {
+        }
+        }
+        if (wide || mode == 1) {
+        Column(Modifier.weight(1f)) {
             MonthPager(
                 title = formatYearMonth(monthAnchor),
                 onPrev = { monthAnchor = monthAnchor.minus(DatePeriod(months = 1)) },
@@ -275,6 +284,8 @@ fun TimetableScreen(
                 holidays = snapshot.holidays,
                 onSelect = { date ->
                     selectedDate = date
+                    val pickedWeek = teachingWeekOn(date, settings, today)
+                    if (pickedWeek in weekLo..weekHi) viewWeek = pickedWeek
                     if (date.monthNumber != monthAnchor.monthNumber || date.year != monthAnchor.year) {
                         monthAnchor = LocalDate(date.year, date.monthNumber, 1)
                     }
@@ -328,6 +339,8 @@ fun TimetableScreen(
                     }
                 }
             }
+        }
+        }
         }
         Spacer(Modifier.height(16.dp))
     }

@@ -3,8 +3,13 @@ package cn.edu.gzus.qingke.ui.components
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +26,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -42,6 +49,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Alignment.Companion.CenterHorizontally
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.dropShadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -103,6 +111,17 @@ import kotlin.math.sign
 
 private val LocalIosTabScale = staticCompositionLocalOf { { 1f } }
 
+/** 平板横屏（或更宽的窗口）用侧栏，不再把底部胶囊拉满。 */
+val LocalQingkeWide = staticCompositionLocalOf { false }
+
+private fun qingkeTabItems() = listOf(
+    TabDest.Today to (MiuixIcons.Home to "首页"),
+    TabDest.Timetable to (MiuixIcons.Weeks to "课表"),
+    TabDest.Grades to (MiuixIcons.ListView to "成绩"),
+    TabDest.Jwxt to (MiuixIcons.GridView to "服务"),
+    TabDest.Mine to (MiuixIcons.Contacts to "我的"),
+)
+
 private val iosIndicatorSpecular: Highlight = Highlight(
     width = 1.dp,
     alpha = 1f,
@@ -144,8 +163,65 @@ fun tabPagePadding(padding: PaddingValues): PaddingValues {
         start = base.calculateStartPadding(layout),
         top = base.calculateTopPadding(),
         end = base.calculateEndPadding(layout),
-        bottom = 96.dp,
+        bottom = if (LocalQingkeWide.current) 24.dp else 96.dp,
     )
+}
+
+@Composable
+fun QingkeWideFrame(fill: Boolean = false, content: @Composable () -> Unit) {
+    if (!LocalQingkeWide.current || fill) {
+        content()
+        return
+    }
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Box(Modifier.widthIn(max = 880.dp).fillMaxHeight()) { content() }
+    }
+}
+
+@Composable
+fun QingkeSideRail(
+    selected: TabDest,
+    onSelect: (TabDest) -> Unit,
+) {
+    val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    Column(
+        modifier = Modifier
+            .fillMaxHeight()
+            .width(96.dp)
+            .background(MiuixTheme.colorScheme.surfaceContainer)
+            .verticalScroll(rememberScrollState())
+            .padding(top = top + 12.dp, bottom = bottom + 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        qingkeTabItems().forEach { (dest, item) ->
+            val on = dest == selected
+            Column(
+                modifier = Modifier
+                    .padding(horizontal = 8.dp)
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(if (on) MiuixTheme.colorScheme.primary.copy(alpha = 0.14f) else Color.Transparent)
+                    .clickable { onSelect(dest) }
+                    .padding(vertical = 10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Icon(
+                    imageVector = item.first,
+                    contentDescription = item.second,
+                    modifier = Modifier.size(22.dp),
+                    tint = if (on) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onSurface,
+                )
+                Text(
+                    item.second,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    color = if (on) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onSurface,
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -154,13 +230,7 @@ fun QingkeBottomBar(
     backdrop: LayerBackdrop,
     onSelect: (TabDest) -> Unit,
 ) {
-    val items = listOf(
-        TabDest.Today to (MiuixIcons.Home to "首页"),
-        TabDest.Timetable to (MiuixIcons.Weeks to "课表"),
-        TabDest.Grades to (MiuixIcons.ListView to "成绩"),
-        TabDest.Jwxt to (MiuixIcons.GridView to "服务"),
-        TabDest.Mine to (MiuixIcons.Contacts to "我的"),
-    )
+    val items = qingkeTabItems()
     val selectedIndex = items.indexOfFirst { it.first == selected }.coerceAtLeast(0)
     val pillShape = remember { CircleShape }
     val accentColor = MiuixTheme.colorScheme.primary

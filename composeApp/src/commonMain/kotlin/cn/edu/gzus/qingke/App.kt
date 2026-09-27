@@ -10,8 +10,12 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.layout.PaddingValues
 import top.yukonga.miuix.kmp.basic.PullToRefresh
 import androidx.compose.runtime.LaunchedEffect
@@ -25,9 +29,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.dp
 import cn.edu.gzus.qingke.data.AppRepository
 import cn.edu.gzus.qingke.data.AppUpdate
 import cn.edu.gzus.qingke.data.CoursePickOffer
@@ -64,7 +70,10 @@ import cn.edu.gzus.qingke.nav.QingkeNavigator
 import cn.edu.gzus.qingke.nav.Route
 import cn.edu.gzus.qingke.nav.TabDest
 import cn.edu.gzus.qingke.nav.Transition
+import cn.edu.gzus.qingke.ui.components.LocalQingkeWide
 import cn.edu.gzus.qingke.ui.components.QingkeBottomBar
+import cn.edu.gzus.qingke.ui.components.QingkeSideRail
+import cn.edu.gzus.qingke.ui.components.QingkeWideFrame
 import cn.edu.gzus.qingke.ui.components.qingkeLayer
 import cn.edu.gzus.qingke.ui.components.rememberQingkeBackdrop
 import cn.edu.gzus.qingke.ui.detail.CourseDetailScreen
@@ -306,11 +315,19 @@ fun App() {
         }
         var pageWidthPx by remember { mutableFloatStateOf(1f) }
 
-        Box(
-            Modifier
-                .fillMaxSize()
-                .onSizeChanged { pageWidthPx = it.width.toFloat().coerceAtLeast(1f) },
-        ) {
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val wide = maxWidth >= 840.dp || (maxWidth >= 720.dp && maxWidth > maxHeight)
+            CompositionLocalProvider(LocalQingkeWide provides wide) {
+            Row(Modifier.fillMaxSize()) {
+            if (wide) {
+                QingkeSideRail(selected = nav.tab, onSelect = { nav.goTab(it) })
+            }
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .onSizeChanged { pageWidthPx = it.width.toFloat().coerceAtLeast(1f) },
+            ) {
         Scaffold(
             modifier = Modifier
                 .fillMaxSize()
@@ -321,7 +338,9 @@ fun App() {
                 },
             containerColor = MiuixTheme.colorScheme.surface,
             bottomBar = {
-                QingkeBottomBar(selected = nav.tab, backdrop = backdrop, onSelect = { nav.goTab(it) })
+                if (!wide) {
+                    QingkeBottomBar(selected = nav.tab, backdrop = backdrop, onSelect = { nav.goTab(it) })
+                }
             },
             snackbarHost = { SnackbarHost(state = snackbar) },
         ) { padding ->
@@ -337,7 +356,8 @@ fun App() {
                 }
                 tabStates.SaveableStateProvider(nav.tab.name) {
                     when (nav.tab) {
-                        TabDest.Today -> SyncPull(snapshot.session.loggedIn, busy, padding, onRefresh = pullSync) {
+                        TabDest.Today -> QingkeWideFrame {
+                        SyncPull(snapshot.session.loggedIn, busy, padding, onRefresh = pullSync) {
                             key(calendarDay) {
                                 TodayScreen(snapshot, nav, padding, onSync = {
                                     runJob {
@@ -347,14 +367,20 @@ fun App() {
                                 })
                             }
                         }
-                        TabDest.Timetable -> SyncPull(snapshot.session.loggedIn, busy, padding, onRefresh = pullSync) {
+                        }
+                        TabDest.Timetable -> QingkeWideFrame(fill = true) {
+                        SyncPull(snapshot.session.loggedIn, busy, padding, onRefresh = pullSync) {
                             key(calendarDay) { TimetableScreen(snapshot, nav, padding) }
                         }
-                        TabDest.Grades -> SyncPull(snapshot.session.loggedIn, busy, padding, onRefresh = pullSync) {
+                        }
+                        TabDest.Grades -> QingkeWideFrame {
+                        SyncPull(snapshot.session.loggedIn, busy, padding, onRefresh = pullSync) {
                             GradesScreen(snapshot, nav, padding)
                         }
-                        TabDest.Jwxt -> JwxtScreen(snapshot, nav, padding)
-                        TabDest.Mine -> MineScreen(
+                        }
+                        TabDest.Jwxt -> QingkeWideFrame { JwxtScreen(snapshot, nav, padding) }
+                        TabDest.Mine -> QingkeWideFrame {
+                        MineScreen(
                             snapshot = snapshot,
                             nav = nav,
                             contentPadding = padding,
@@ -539,6 +565,7 @@ fun App() {
                                 toast("已停止测试")
                             },
                         )
+                        }
                     }
                 }
             }
@@ -563,6 +590,7 @@ fun App() {
                         )
                     },
                 ) { padding ->
+                    QingkeWideFrame {
                     AnimatedContent(
                         targetState = dest,
                         transitionSpec = {
@@ -862,7 +890,11 @@ fun App() {
                             )
                         }
                     }
+                    }
                 }
+            }
+        }
+            }
             }
         }
     }

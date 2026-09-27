@@ -175,10 +175,10 @@ fun TimetableScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+            .then(if (wide) Modifier else Modifier.verticalScroll(rememberScrollState()))
             .padding(tabPagePadding(contentPadding)),
     ) {
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(if (wide) 8.dp else 16.dp))
         ScreenHeader("", "课表", subtitle)
         if (!snapshot.hasTimetable) {
             Spacer(Modifier.height(12.dp))
@@ -210,9 +210,14 @@ fun TimetableScreen(
         )
         Spacer(Modifier.height(10.dp))
         }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .then(if (wide) Modifier.weight(1f) else Modifier),
+            verticalAlignment = Alignment.Top,
+        ) {
         if (wide || mode == 0) {
-        Column(Modifier.weight(1f)) {
+        Column(Modifier.weight(if (wide) 1.55f else 1f).then(if (wide) Modifier.fillMaxHeight() else Modifier)) {
             WeekPager(
                 week = viewWeek,
                 weekLo = weekLo,
@@ -227,6 +232,16 @@ fun TimetableScreen(
                 onToday = { viewWeek = currentWeek.coerceIn(weekLo, weekHi) },
             )
             Spacer(Modifier.height(10.dp))
+            if (wide && weekPractices.isNotEmpty()) {
+                Text(
+                    weekPractices.joinToString("、") { it.name }.let { "本周实践 · $it" },
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    style = MiuixTheme.textStyles.footnote1,
+                    color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             WeekGrid(
                 slots = snapshot.slots,
                 monday = monday,
@@ -237,13 +252,14 @@ fun TimetableScreen(
                 hasClock = snapshot.resolved().hasPeriodClock,
                 settings = settings,
                 adjust = snapshot.scheduleAdjust,
+                fit = wide,
                 onOpen = { nav.open(Route.Course(it)) },
             )
-            if (weekSessions == 0 && weekPractices.isEmpty()) {
+            if (!wide && weekSessions == 0 && weekPractices.isEmpty()) {
                 Spacer(Modifier.height(10.dp))
                 InfoCard("这一周没有理论课", if (wide) "左右换周，或在右边月历里点一天" else "左右换周，或到「月」里扫整月", modifier = Modifier.padding(horizontal = 16.dp))
             }
-            if (weekPractices.isNotEmpty()) {
+            if (!wide && weekPractices.isNotEmpty()) {
                 Spacer(Modifier.height(10.dp))
                 Column(
                     modifier = Modifier.padding(horizontal = 16.dp),
@@ -260,7 +276,11 @@ fun TimetableScreen(
         }
         }
         if (wide || mode == 1) {
-        Column(Modifier.weight(1f)) {
+        Column(
+            Modifier
+                .weight(1f)
+                .then(if (wide) Modifier.fillMaxHeight().verticalScroll(rememberScrollState()) else Modifier),
+        ) {
             MonthPager(
                 title = formatYearMonth(monthAnchor),
                 onPrev = { monthAnchor = monthAnchor.minus(DatePeriod(months = 1)) },
@@ -291,8 +311,17 @@ fun TimetableScreen(
                     }
                 },
             )
+            if (wide) {
+                Text(
+                    "点一天，左边换到那一周",
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    style = MiuixTheme.textStyles.footnote1,
+                    color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                )
+            }
             val daySlots = snapshot.slots.forDate(selectedDate, settings, today, snapshot.scheduleAdjust)
             val dayWeek = teachingWeekOn(selectedDate, settings, today)
+            if (!wide) {
             SmallTitle(
                 text = buildString {
                     append("${selectedDate.monthNumber}月${selectedDate.dayOfMonth}日 · 周${WeekdayNames.getOrElse(weekdayIndex(selectedDate) - 1) { "?" }}")
@@ -339,10 +368,11 @@ fun TimetableScreen(
                     }
                 }
             }
+            }
         }
         }
         }
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(if (wide) 8.dp else 16.dp))
     }
 }
 
@@ -474,6 +504,7 @@ private fun WeekGrid(
     hasClock: Boolean,
     settings: AppSettings,
     adjust: CloudScheduleAdjust,
+    fit: Boolean = false,
     onOpen: (String) -> Unit,
 ) {
     val shape = RoundedCornerShape(CellRadius)
@@ -484,10 +515,16 @@ private fun WeekGrid(
         (0..6).map { offset -> slots.forDate(monday.plus(DatePeriod(days = offset)), settings, today, adjust) }
     }
     Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        insideMargin = PaddingValues(6.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .then(if (fit) Modifier.weight(1f) else Modifier),
+        insideMargin = PaddingValues(if (fit) 4.dp else 6.dp),
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(CellGap)) {
+        Column(
+            modifier = if (fit) Modifier.fillMaxSize() else Modifier,
+            verticalArrangement = Arrangement.spacedBy(if (fit) 2.dp else CellGap),
+        ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(CellGap)) {
                 Spacer(Modifier.width(slotCol))
                 WeekdayNames.forEachIndexed { index, name ->
@@ -536,7 +573,9 @@ private fun WeekGrid(
             }
             blocks.forEach { block ->
                 Row(
-                    modifier = Modifier.fillMaxWidth().height(WeekCellHeight),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(if (fit) Modifier.weight(1f) else Modifier.height(WeekCellHeight)),
                     horizontalArrangement = Arrangement.spacedBy(CellGap),
                 ) {
                     Column(

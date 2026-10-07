@@ -79,6 +79,8 @@ fun ScreenHeader(eyebrow: String, title: String, subtitle: String) {
                 subtitle,
                 style = MiuixTheme.textStyles.body2,
                 color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }

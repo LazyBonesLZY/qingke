@@ -151,6 +151,16 @@ data class AppSettings(
     val blurEnabled: Boolean = true,
     val floatingBottomBar: Boolean = true,
     val compactTimetable: Boolean = true,
+    /** 界面整体缩放，0.7~1.4，越界由 QingkeTheme 夹紧。 */
+    val uiScale: Float = 1f,
+    /** 课程色块自定义底色，空串表示跟随系统配色。 */
+    val courseTintHex: String = "",
+    /** 课程色块自定义底色的透明度，1f 为不透明。 */
+    val courseTintAlpha: Float = 1f,
+    /** 课程色块文字取色模式：auto 按底色自动、light 黑字、dark 白字、custom 用 courseInkHex。 */
+    val courseInkMode: String = "auto",
+    /** courseInkMode = custom 时生效的自定义文字色。 */
+    val courseInkHex: String = "",
     val yearCode: String = defaultZfYearCode(),
     val termCode: String = defaultZfTermCode(),
     val currentWeek: Int = 1,

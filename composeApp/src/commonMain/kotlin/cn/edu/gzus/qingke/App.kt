@@ -2,6 +2,8 @@ package cn.edu.gzus.qingke
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -9,17 +11,20 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.statusBars
-import top.yukonga.miuix.kmp.basic.PullToRefresh
+import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
@@ -29,13 +34,23 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import cn.edu.gzus.qingke.data.AppRepository
 import cn.edu.gzus.qingke.data.AppUpdate
 import cn.edu.gzus.qingke.data.CoursePickOffer
@@ -100,6 +115,7 @@ import cn.edu.gzus.qingke.ui.mine.ScheduleShiftsScreen
 import cn.edu.gzus.qingke.ui.theme.ThemeSettingsScreen
 import cn.edu.gzus.qingke.ui.timetable.TimetableScreen
 import cn.edu.gzus.qingke.ui.today.TodayScreen
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -110,6 +126,7 @@ import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SmallTopAppBar
 import top.yukonga.miuix.kmp.basic.SnackbarHost
 import top.yukonga.miuix.kmp.basic.SnackbarHostState
+import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Back
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -367,7 +384,8 @@ fun App() {
             snackbarHost = { SnackbarHost(state = snackbar) },
         ) { padding ->
             Box(Modifier.fillMaxSize().qingkeLayer(backdrop)) {
-                Box(Modifier.fillMaxSize().background(MiuixTheme.colorScheme.surface))
+                // 这里不要再铺一层 surface：Scaffold 的 containerColor 已经画了，
+                // 再盖一层 α 叠乘后壁纸几乎看不见。
                 val pullSync: () -> Unit = {
                     if (!busy) {
                         runJob {
@@ -964,6 +982,17 @@ private fun routeTitle(route: Route): String = when (route) {
 
 private val PullTexts = listOf("下拉同步", "松手同步", "正在同步", "同步好了")
 
+/** 触发同步的下拉距离阈值。 */
+private val PullThreshold = 72.dp
+
+/**
+ * 自写下拉同步容器。
+ *
+ * 不再用 miuix 的 PullToRefresh：它在 RefreshState.Refreshing 的 onPreScroll 里直接
+ * `return available`，把刷新期间的所有滚动全部吃掉，手指不松开也滑不动列表。
+ * 这里只在「未刷新 + 用户手势下拉」时消费滚动；refreshing == true 时一律返回
+ * Offset.Zero，把嵌套滚动原样交还 content。
+ */
 @Composable
 private fun SyncPull(
     enabled: Boolean,
@@ -976,11 +1005,79 @@ private fun SyncPull(
         content()
         return
     }
-    PullToRefresh(
-        isRefreshing = refreshing,
-        onRefresh = onRefresh,
-        contentPadding = PaddingValues(top = padding.calculateTopPadding()),
-        refreshTexts = PullTexts,
-        content = content,
+    val density = LocalDensity.current
+    val thresholdPx = with(density) { PullThreshold.toPx() }
+    val maxPullPx = thresholdPx * 1.5f
+    var pulled by remember { mutableFloatStateOf(0f) }
+    // level reader：connection 只建一次，刷新态与回调永远读到最新值。
+    val refreshingNow by rememberUpdatedState(refreshing)
+    val onRefreshNow by rememberUpdatedState(onRefresh)
+
+    val connection = remember(thresholdPx, maxPullPx) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                // 刷新中：一个像素都不拦，滚动全部交还 content（修掉硬控的关键）。
+                if (refreshingNow || source != NestedScrollSource.UserInput) return Offset.Zero
+                if (available.y >= 0f || pulled <= 0f) return Offset.Zero
+                // 手指往回推：先收回已拉出的距离，剩下的交还 content。
+                val consume = available.y.coerceAtLeast(-pulled)
+                pulled += consume
+                return Offset(0f, consume)
+            }
+
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                if (refreshingNow || source != NestedScrollSource.UserInput) return Offset.Zero
+                if (available.y <= 0f) return Offset.Zero
+                // content 已经到顶、仍有剩余下拉量：带阻尼地累积成下拉距离。
+                val next = (pulled + available.y * 0.5f).coerceAtMost(maxPullPx)
+                val delta = next - pulled
+                pulled = next
+                return Offset(0f, delta)
+            }
+
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                if (refreshingNow) return Velocity.Zero
+                val reached = pulled >= thresholdPx
+                // 松手：目标位移归零，由 animateFloatAsState 补间回弹。
+                if (pulled != 0f) pulled = 0f
+                if (reached) onRefreshNow()
+                return Velocity.Zero
+            }
+        }
+    }
+
+    val indicatorPx by animateFloatAsState(
+        targetValue = if (refreshing) thresholdPx else pulled,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "syncPullIndicator",
     )
+    val topPad = padding.calculateTopPadding()
+    val hint = when {
+        refreshing -> PullTexts[2]
+        pulled >= thresholdPx -> PullTexts[1]
+        else -> PullTexts[0]
+    }
+
+    Box(Modifier.fillMaxSize().nestedScroll(connection)) {
+        content()
+        if (refreshing || indicatorPx > 0.5f) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .offset { IntOffset(0, (topPad.toPx() + indicatorPx - thresholdPx).roundToInt()) }
+                    .alpha((indicatorPx / thresholdPx).coerceIn(0f, 1f)),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                if (refreshing) {
+                    CircularProgressIndicator(Modifier.size(16.dp))
+                }
+                Text(
+                    text = hint,
+                    fontSize = 13.sp,
+                    color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                )
+            }
+        }
+    }
 }

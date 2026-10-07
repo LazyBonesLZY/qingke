@@ -33,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -137,7 +138,33 @@ private fun courseTint(key: String, dark: Boolean): Color {
     return tints[hash % tints.size]
 }
 
-private fun courseInk(dark: Boolean): Color = if (dark) CourseInkDark else CourseInkLight
+/** 解析 "#RRGGBB" / "RRGGBB" / "#AARRGGBB" / "AARRGGBB"，非法输入返回 null。 */
+private fun parseHexColor(hex: String): Color? {
+    val raw = hex.trim().removePrefix("#").trim()
+    if (raw.length != 6 && raw.length != 8) return null
+    if (!raw.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }) return null
+    val value = raw.toLongOrNull(16) ?: return null
+    return if (raw.length == 6) Color(0xFF000000L or value) else Color(value)
+}
+
+/** 自动取字色：亮底用深字，暗底用浅字。带 alpha 的色块先按不透明基色算亮度。 */
+private fun autoInk(tint: Color): Color =
+    if (tint.copy(alpha = 1f).luminance() > 0.6f) CourseInkLight else CourseInkDark
+
+/** 课程色块底色：settings.courseTintHex 非空时全局覆盖，否则按 key 哈希取默认调色板，再套 settings.courseTintAlpha。 */
+private fun resolveTint(settings: AppSettings, key: String, dark: Boolean): Color {
+    val hex = settings.courseTintHex
+    val base = if (hex.isNotBlank()) parseHexColor(hex) ?: courseTint(key, dark) else courseTint(key, dark)
+    return base.copy(alpha = settings.courseTintAlpha.coerceIn(0.2f, 1f))
+}
+
+/** 课程色块字色：auto 按底色亮度、light/dark 强制、custom 用 courseInkHex。 */
+private fun resolveInk(settings: AppSettings, tint: Color): Color = when (settings.courseInkMode) {
+    "light" -> CourseInkLight
+    "dark" -> CourseInkDark
+    "custom" -> parseHexColor(settings.courseInkHex) ?: autoInk(tint)
+    else -> autoInk(tint)
+}
 
 @Composable
 fun TimetableScreen(
@@ -638,6 +665,7 @@ private fun ColumnScope.WeekGrid(
                             shape = shape,
                             aliases = aliases,
                             roomAliases = settings.roomAliases,
+                            settings = settings,
                             compact = compact,
                             modifier = Modifier.weight(1f).fillMaxHeight(),
                             onOpen = onOpen,
@@ -656,14 +684,15 @@ private fun WeekCell(
     shape: RoundedCornerShape,
     aliases: Map<String, String>,
     roomAliases: Map<String, String>,
+    settings: AppSettings,
     compact: Boolean = false,
     modifier: Modifier,
     onOpen: (String) -> Unit,
 ) {
     val dark = isSystemInDarkTheme()
     val first = slots.firstOrNull()
-    val tint = first?.let { courseTint(it.courseId.ifBlank { it.courseName }, dark) }
-    val ink = courseInk(dark)
+    val tint = first?.let { resolveTint(settings, it.courseId.ifBlank { it.courseName }, dark) }
+    val ink = resolveInk(settings, tint ?: courseTint("", dark))
     val empty = MiuixTheme.colorScheme.surfaceContainer.copy(alpha = 0.72f)
     Box(
         modifier = modifier
@@ -746,7 +775,7 @@ private fun MonthGrid(
                 emptyList()
             } else {
                 slots.forDate(date, settings, today, adjust)
-                    .map { courseTint(it.courseId.ifBlank { it.courseName }, dark) }
+                    .map { resolveTint(settings, it.courseId.ifBlank { it.courseName }, dark) }
                     .distinct()
                     .take(4)
             }

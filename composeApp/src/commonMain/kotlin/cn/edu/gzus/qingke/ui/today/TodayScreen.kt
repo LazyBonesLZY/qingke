@@ -106,9 +106,9 @@ fun TodayScreen(
     ) {
         Spacer(Modifier.height(16.dp))
         ScreenHeader(
-            eyebrow = "${greeting(now.hour)} · $source",
+            eyebrow = "",
             title = "${now.date.monthNumber}月${now.date.dayOfMonth}日 $weekdayLabel",
-            subtitle = subtitle,
+            subtitle = "${greeting(now.hour)} · $source · $subtitle",
         )
         Spacer(Modifier.height(12.dp))
         when {

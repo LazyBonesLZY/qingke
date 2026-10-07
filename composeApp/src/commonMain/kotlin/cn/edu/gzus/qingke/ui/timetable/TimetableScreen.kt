@@ -697,20 +697,20 @@ private fun WeekCell(
                     )
                 }
                 val room = compactRoomName(first.room, roomAliases)
-                if (room.isNotBlank() && !compact) {
+                if (room.isNotBlank()) {
                     Text(
                         room,
-                        fontSize = 8.sp,
+                        fontSize = if (compact) 7.sp else 8.sp,
                         color = ink.copy(alpha = 0.72f),
                         textAlign = TextAlign.Center,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                if (slots.size > 1 && !compact) {
+                if (slots.size > 1) {
                     Text(
                         "+${slots.size - 1}",
-                        fontSize = 8.sp,
+                        fontSize = if (compact) 7.sp else 8.sp,
                         color = ink.copy(alpha = 0.55f),
                     )
                 }

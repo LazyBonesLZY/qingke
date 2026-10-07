@@ -180,7 +180,7 @@ class GdstyClient(
         val profile = parseGdstyProfile(
             html = runCatching { get("$BASE/grxx/xsxx") }.getOrDefault(""),
             xnxq = htmlSelectedValue(html, "xnxq01id").ifBlank { termId },
-        )
+        ).copy(periodTimes = parseGdstyPeriodTimes(html))
         return Triple(profile, slots, practices)
     }
 
@@ -422,6 +422,43 @@ internal fun gdstyPeriodFromLabel(label: String): String {
     val span = Regex("""(\d+)\s*[、,，]\s*(\d+)""").find(label) ?: return ""
     return "${span.groupValues[1]}-${span.groupValues[2]}"
 }
+
+private val ClockRange = Regex("""(\d{1,2}:\d{2})\s*[-—~～]\s*(\d{1,2}:\d{2})""")
+
+/**
+ * 从强智课表的节次行抄时间。表头写法各校不同，但都长这样：
+ * 「1、2节 08:30-09:50」——节次名和时间在同一个 <th> 里。
+ *
+ * @param tableId 课表表格的 id（生态 kbtable / 仲恺 timetable）
+ * @param keyOf 把 <th> 原文映射成节次块标签（对不上预设 label 就返回空串，该行跳过）
+ */
+internal fun kingosoftPeriodTimes(
+    html: String,
+    tableId: String,
+    keyOf: (rawTh: String) -> String,
+): Map<String, String> {
+    val table = Regex(
+        """<table[^>]*id="${Regex.escape(tableId)}"[^>]*>([\s\S]*?)</table>""",
+        RegexOption.IGNORE_CASE,
+    ).find(html)?.groupValues?.get(1) ?: return emptyMap()
+    val out = mutableMapOf<String, String>()
+    for (row in table.split(Regex("""<tr\b""", RegexOption.IGNORE_CASE)).drop(1)) {
+        val th = Regex("""<th[^>]*>([\s\S]*?)</th>""", RegexOption.IGNORE_CASE).find(row) ?: continue
+        val raw = th.groupValues[1]
+        val key = keyOf(raw)
+        if (key.isBlank()) continue
+        val hit = ClockRange.find(zhkuPlain(raw)) ?: continue
+        out[key] = "${hit.groupValues[1]}-${hit.groupValues[2]}"
+    }
+    return out
+}
+
+/** 生态：节次行是「1、2节 08:30-09:50」，键与 GdstyPeriods 的 label 对齐。 */
+internal fun parseGdstyPeriodTimes(html: String): Map<String, String> =
+    kingosoftPeriodTimes(html, "kbtable") { raw ->
+        val label = gdstyPeriodLabel(raw)
+        if (label.isBlank() || label.contains("星期") || label.contains("备注")) "" else gdstyPeriodFromLabel(label)
+    }
 
 /** 学籍卡片把院系/专业/班级/学号写成「标签：值」，姓名是「姓名</td><td>值</td>」。 */
 internal fun parseGdstyProfile(html: String, xnxq: String): StudentProfile {

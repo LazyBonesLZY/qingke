@@ -216,7 +216,7 @@ class ZhkuClient(
             html = runCatching { get("$BASE/grxx/xsxx") }.getOrDefault(""),
             xnxq = htmlSelectedValue(kbHtml, "xnxq01id").ifBlank { xnxq },
             slots = slots,
-        )
+        ).copy(periodTimes = parseZhkuPeriodTimes(kbHtml))
         return Triple(profile, slots, practices)
     }
 
@@ -422,8 +422,7 @@ internal fun parseZhkuCourses(html: String): List<ZhkuCourse> =
         )
     }.distinctBy { it.courseId }.toList()
 
-internal fun parseZhkuTimetable(html: String, courses: List<ZhkuCourse>): List<LessonSlot> {
-    val table = Regex(
+internal fun parseZhkuTimetable(html: String, courses: List<ZhkuCourse>): List<LessonSlot> {    val table = Regex(
         """<table[^>]*id="timetable"[^>]*>([\s\S]*?)</table>""",
         RegexOption.IGNORE_CASE,
     ).find(html)?.groupValues?.get(1) ?: return emptyList()
@@ -596,6 +595,13 @@ internal fun parseZhkuProfile(html: String, xnxq: String, slots: List<LessonSlot
         termLabel = if (term == "2") "第2学期" else "第1学期",
     )
 }
+
+/** 仲恺：节次行在 <table id="timetable"> 的 <th> 里，抄不到时间就返回空表。 */
+internal fun parseZhkuPeriodTimes(html: String): Map<String, String> =
+    kingosoftPeriodTimes(html, "timetable") { raw ->
+        val label = zhkuPlain(raw).replace("&nbsp;", "")
+        if (label.isBlank() || label.contains("星期")) "" else zhkuPeriodFromLabel(label)
+    }
 
 internal fun parseZhkuGrades(html: String): List<GradeItem> {
     val rows = parseNamedTable(html)

@@ -21,6 +21,11 @@ data class StudentProfile(
     val termCode: String = "3",
     val yearCode: String = "2026",
     val termLabel: String = "",
+    /**
+     * 同步时从教务课表页抄下来的节次时间：键是节次块标签（如 "1-2"），值是 "HH:mm-HH:mm"。
+     * 优先级低于用户在「节次时间」里的手动覆盖。
+     */
+    val periodTimes: Map<String, String> = emptyMap(),
 )
 
 @Serializable

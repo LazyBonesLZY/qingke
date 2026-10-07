@@ -596,6 +596,7 @@ private fun ColumnScope.WeekGrid(
         val headerApprox = if (compact) 46.dp else 54.dp
         val minReadable = if (compact) 38.dp else 50.dp
         // 三段式：够高就拉伸铺满整屏；略挤就压到可读下限仍然铺满；再挤才回退固定行高 + 卡片内滚动。
+        // 这里只用估算值做「够不够」的判断，真正的行高在下面按实测高度反算。
         val bodyAvail = (maxHeight - headerApprox - inside * 2).coerceAtLeast(0.dp)
         val bySpace = if (blocks.isEmpty()) {
             cellHeight
@@ -603,7 +604,6 @@ private fun ColumnScope.WeekGrid(
             ((bodyAvail - cellGap * (blocks.size - 1)) / blocks.size).coerceAtLeast(0.dp)
         }
         val useFit = fit && bySpace >= minReadable
-        val blockHeight = if (useFit) bySpace else cellHeight
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -668,12 +668,24 @@ private fun ColumnScope.WeekGrid(
                 val dayRuns = remember(dayColumns, blocks) {
                     (0..6).map { index -> runsForDay(dayColumns[index], blocks) }
                 }
-                Row(
+                // 行高按**实测**的网格体高度反算。表头会因节假日/调课标记变高，
+                // 拿估算值去减会把最后一行挤出去，所以这里用 weight 拿到真实剩余高度。
+                BoxWithConstraints(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .then(if (useFit) Modifier.fillMaxHeight() else Modifier),
-                    horizontalArrangement = Arrangement.spacedBy(cellGap),
+                        .then(if (useFit) Modifier.weight(1f) else Modifier),
                 ) {
+                    val blockHeight = if (useFit && blocks.isNotEmpty()) {
+                        ((maxHeight - cellGap * (blocks.size - 1)) / blocks.size).coerceAtLeast(2.dp)
+                    } else {
+                        cellHeight
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(if (useFit) Modifier.fillMaxHeight() else Modifier),
+                        horizontalArrangement = Arrangement.spacedBy(cellGap),
+                    ) {
                     Column(
                         modifier = Modifier.width(slotCol),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -734,6 +746,7 @@ private fun ColumnScope.WeekGrid(
                                 )
                             }
                         }
+                    }
                     }
                 }
             }

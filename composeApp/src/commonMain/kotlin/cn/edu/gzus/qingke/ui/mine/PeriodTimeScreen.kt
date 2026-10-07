@@ -47,6 +47,19 @@ internal fun normalizeClock(raw: String): String? {
 }
 
 /**
+ * 两格都合法才写回；两格都清空则撤掉这一节的手动覆盖（回落到教务/内置值）。
+ * 只有一边合法时什么都不做——打字中途的半截值不能写进去。
+ */
+private fun commitOrClear(start: String, end: String, onChange: (String?, String?) -> Unit) {
+    val s = normalizeClock(start)
+    val e = normalizeClock(end)
+    when {
+        s != null && e != null -> onChange(s, e)
+        start.isBlank() && end.isBlank() -> onChange(null, null)
+    }
+}
+
+/**
  * 左侧节次时间自定义。
  * 每块两格：开始 / 结束，都合法才写回；改过的块用用户值，其余继续走学校预设。
  */
@@ -58,6 +71,7 @@ fun PeriodTimeScreen(
 ) {
     val blocks = snapshot.resolved().periodBlocks
     val overrides = snapshot.settings.periodTimeOverrides
+    val fetched = snapshot.profile.periodTimes
 
     Column(
         modifier = Modifier
@@ -68,10 +82,20 @@ fun PeriodTimeScreen(
     ) {
         Spacer(Modifier.height(8.dp))
         Text(
-            "改的是课表左边那一列的时间。填 24 小时制，例如 08:00 和 09:40；两格都合法才生效，留空就用学校预设。",
+            "改的是课表左边那一列的时间。填 24 小时制，例如 08:00 和 09:40；两格都合法才生效。",
             modifier = Modifier.padding(horizontal = 16.dp),
             color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
             style = MiuixTheme.textStyles.body2,
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            when {
+                fetched.isNotEmpty() -> "当前时间是从教务课表页自动抄下来的，共 ${fetched.size} 节。你改过的会盖在上面。"
+                else -> "这所学校的课表页没带节次时间，现在用的是内置预设。你可以自己改。"
+            },
+            modifier = Modifier.padding(horizontal = 16.dp),
+            color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+            style = MiuixTheme.textStyles.footnote1,
         )
         Spacer(Modifier.height(12.dp))
         Card(
@@ -106,13 +130,12 @@ fun PeriodTimeScreen(
             enabled = overrides.isNotEmpty(),
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             minHeight = 44.dp,
-        ) { Text("全部恢复学校预设") }
+        ) { Text(if (fetched.isNotEmpty()) "清除我的修改，回到教务时间" else "全部恢复内置预设") }
     }
 }
 
 @Composable
-private fun PeriodTimeRow(
-    label: String,
+private fun PeriodTimeRow(    label: String,
     initialStart: String,
     initialEnd: String,
     onChange: (String?, String?) -> Unit,
@@ -122,7 +145,8 @@ private fun PeriodTimeRow(
 
     Column(Modifier.fillMaxWidth()) {
         Text(
-            "第 $label 节",
+            // 「中午」这类没有编号的块不能再套「第…节」，否则会变成「第 中午 节」。
+            if (label.any { it.isDigit() }) "第 $label 节" else label,
             style = MiuixTheme.textStyles.body2,
             color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
         )
@@ -136,9 +160,7 @@ private fun PeriodTimeRow(
                 value = startText,
                 onValueChange = { raw ->
                     startText = raw.take(5)
-                    val s = normalizeClock(startText)
-                    val e = normalizeClock(endText)
-                    if (s != null && e != null) onChange(s, e)
+                    commitOrClear(startText, endText, onChange)
                 },
                 label = "开始",
                 singleLine = true,
@@ -153,9 +175,7 @@ private fun PeriodTimeRow(
                 value = endText,
                 onValueChange = { raw ->
                     endText = raw.take(5)
-                    val s = normalizeClock(startText)
-                    val e = normalizeClock(endText)
-                    if (s != null && e != null) onChange(s, e)
+                    commitOrClear(startText, endText, onChange)
                 },
                 label = "结束",
                 singleLine = true,

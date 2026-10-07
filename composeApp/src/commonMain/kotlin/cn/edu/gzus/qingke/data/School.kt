@@ -231,28 +231,56 @@ private fun AppSettings.resolvedBase(): ResolvedSchool {
 }
 
 /**
- * 在学校预设之上套用用户自定义的节次时间（键为节次块标签，值为 "HH:mm-HH:mm"）。
- * 只要用户改过任意一节，就认为他要看时间，把 hasPeriodClock 打开。
+ * 把 "HH:mm-HH:mm" 形式的节次时间套到预设块上。返回是否真的改到了东西。
  */
-fun ResolvedSchool.withPeriodTimeOverrides(overrides: Map<String, String>): ResolvedSchool {
-    if (overrides.isEmpty()) return this
+private fun ResolvedSchool.applyPeriodTimes(times: Map<String, String>): Pair<ResolvedSchool, Boolean> {
+    if (times.isEmpty()) return this to false
+    var changed = false
     val patched = periodBlocks.map { block ->
-        val parts = overrides[block.label]?.trim().orEmpty().split("-", limit = 2)
+        val parts = times[block.label]?.trim().orEmpty().split("-", limit = 2)
         if (parts.size != 2) {
             block
         } else {
             val start = parts[0].trim()
             val end = parts[1].trim()
-            if (start.isBlank() && end.isBlank()) block else block.copy(start = start, end = end)
+            if (start.isBlank() && end.isBlank()) {
+                block
+            } else {
+                changed = true
+                block.copy(start = start, end = end)
+            }
         }
     }
-    return copy(periodBlocks = patched, hasPeriodClock = true)
+    return copy(periodBlocks = patched) to changed
 }
 
-fun AppSettings.resolved(): ResolvedSchool =
-    resolvedBase().withPeriodTimeOverrides(periodTimeOverrides)
+/**
+ * 套用同步时从教务抄下来的节次时间（优先级低于手动覆盖）。
+ * 教务页里有时间就说明这所学校确实有作息，顺手把 hasPeriodClock 打开。
+ */
+fun ResolvedSchool.withFetchedPeriodTimes(times: Map<String, String>): ResolvedSchool {
+    val (patched, changed) = applyPeriodTimes(times)
+    return if (changed) patched.copy(hasPeriodClock = true) else this
+}
 
-fun AppSnapshot.resolved(): ResolvedSchool = settings.resolved()
+/**
+ * 在学校预设之上套用用户自定义的节次时间（键为节次块标签，值为 "HH:mm-HH:mm"）。
+ * 只要用户改过任意一节，就认为他要看时间，把 hasPeriodClock 打开。
+ */
+fun ResolvedSchool.withPeriodTimeOverrides(overrides: Map<String, String>): ResolvedSchool {
+    val (patched, changed) = applyPeriodTimes(overrides)
+    return if (changed) patched.copy(hasPeriodClock = true) else this
+}
+
+/** 只看学校预设，不叠加任何覆盖。 */
+fun AppSettings.resolved(): ResolvedSchool = resolvedBase()
+
+/**
+ * 完整解析：学校预设 → 教务自动获取 → 用户手动覆盖。
+ */
+fun AppSnapshot.resolved(): ResolvedSchool = settings.resolvedBase()
+    .withFetchedPeriodTimes(profile.periodTimes)
+    .withPeriodTimeOverrides(settings.periodTimeOverrides)
 
 interface SchoolPortal {
     val supportsFreeRooms: Boolean

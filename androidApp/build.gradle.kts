@@ -16,8 +16,8 @@ android {
         applicationId = "cn.edu.gzus.qingke"
         minSdk = 26
         targetSdk = 36
-        versionCode = 73
-        versionName = "1.7.23"
+        versionCode = 74
+        versionName = "1.7.24"
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }

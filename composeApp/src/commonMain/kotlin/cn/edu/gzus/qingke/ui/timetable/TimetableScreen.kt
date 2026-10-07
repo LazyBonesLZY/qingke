@@ -166,6 +166,31 @@ private fun resolveInk(settings: AppSettings, tint: Color): Color = when (settin
     else -> autoInk(tint)
 }
 
+/** 某一列里连续占着同一组课的一段（span 为跨了几个节次块）。 */
+private class DayRun(val span: Int, val slots: List<LessonSlot>)
+
+/**
+ * 把一天切成若干 run：相邻节次块里是**同一组课**就并成一段，渲染成一条长块。
+ * 一组课判等用 courseId（缺则课名）的有序列表，所以连着两节的高数会合并，
+ * 而"高数 1-2 节 + 英语 3-4 节"这种不同课不会被并。
+ */
+private fun runsForDay(daySlots: List<LessonSlot>, blocks: List<PeriodBlock>): List<DayRun> {
+    val cells = blocks.map { block -> daySlots.filter { it.occupiesBlock(block) } }
+    val keys = cells.map { cell -> cell.map { it.courseId.ifBlank { it.courseName } } }
+    val runs = mutableListOf<DayRun>()
+    var i = 0
+    while (i < cells.size) {
+        var j = i
+        // 课名为空的脏数据不参与合并，免得把不相干的课并到一起。
+        if (keys[i].isNotEmpty() && keys[i].all { it.isNotBlank() }) {
+            while (j + 1 < cells.size && keys[j + 1] == keys[i]) j++
+        }
+        runs += DayRun(j - i + 1, cells[i])
+        i = j + 1
+    }
+    return runs
+}
+
 @Composable
 fun TimetableScreen(
     snapshot: AppSnapshot,
@@ -614,62 +639,93 @@ private fun ColumnScope.WeekGrid(
                     }
                 }
             }
-            blocks.forEach { block ->
-                Row(
+            // 连课合并：同一门课连着占多个节次块时合成一条长块。
+            // 每列的 run 高度按跨块数分配权重，Σspan == 块数，所以各列总高天然对齐。
+            val dayRuns = remember(dayColumns, blocks) {
+                (0..6).map { index -> runsForDay(dayColumns[index], blocks) }
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(if (fit) Modifier.weight(1f) else Modifier),
+                horizontalArrangement = Arrangement.spacedBy(cellGap),
+            ) {
+                Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .then(
-                            if (fit) Modifier.weight(1f)
-                            else Modifier.height(cellHeight),
-                        ),
-                    horizontalArrangement = Arrangement.spacedBy(cellGap),
+                        .width(slotCol)
+                        .then(if (fit) Modifier.fillMaxHeight() else Modifier),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(cellGap),
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .width(slotCol)
-                            .fillMaxHeight(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
-                    ) {
-                        Text(
-                            block.label,
-                            textAlign = TextAlign.Center,
-                            fontSize = if (compact) 9.sp else 10.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
-                            maxLines = 1,
-                        )
-                        if (clockShown && block.start.isNotBlank() && block.end.isNotBlank()) {
+                    blocks.forEach { block ->
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(
+                                    if (fit) Modifier.weight(1f)
+                                    else Modifier.height(cellHeight),
+                                ),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                        ) {
                             Text(
-                                block.start,
+                                block.label,
                                 textAlign = TextAlign.Center,
-                                fontSize = if (compact) 6.sp else 8.sp,
-                                color = MiuixTheme.colorScheme.onSurfaceContainerVariant.copy(alpha = 0.86f),
+                                fontSize = if (compact) 9.sp else 10.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
                                 maxLines = 1,
                             )
-                            Text(
-                                block.end,
-                                textAlign = TextAlign.Center,
-                                fontSize = if (compact) 6.sp else 8.sp,
-                                color = MiuixTheme.colorScheme.onSurfaceContainerVariant.copy(alpha = 0.86f),
-                                maxLines = 1,
-                            )
+                            if (clockShown && block.start.isNotBlank() && block.end.isNotBlank()) {
+                                Text(
+                                    block.start,
+                                    textAlign = TextAlign.Center,
+                                    fontSize = if (compact) 6.sp else 8.sp,
+                                    color = MiuixTheme.colorScheme.onSurfaceContainerVariant.copy(alpha = 0.86f),
+                                    maxLines = 1,
+                                )
+                                Text(
+                                    block.end,
+                                    textAlign = TextAlign.Center,
+                                    fontSize = if (compact) 6.sp else 8.sp,
+                                    color = MiuixTheme.colorScheme.onSurfaceContainerVariant.copy(alpha = 0.86f),
+                                    maxLines = 1,
+                                )
+                            }
                         }
                     }
-                    for (weekday in 1..7) {
-                        val date = monday.plus(DatePeriod(days = weekday - 1))
-                        val cell = dayColumns[weekday - 1].filter { it.occupiesBlock(block) }
-                        WeekCell(
-                            slots = cell,
-                            today = date == today,
-                            shape = shape,
-                            aliases = aliases,
-                            roomAliases = settings.roomAliases,
-                            settings = settings,
-                            compact = compact,
-                            modifier = Modifier.weight(1f).fillMaxHeight(),
-                            onOpen = onOpen,
-                        )
+                }
+                for (weekday in 1..7) {
+                    val date = monday.plus(DatePeriod(days = weekday - 1))
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .then(if (fit) Modifier.fillMaxHeight() else Modifier),
+                        verticalArrangement = Arrangement.spacedBy(cellGap),
+                    ) {
+                        dayRuns[weekday - 1].forEach { run ->
+                            WeekCell(
+                                slots = run.slots,
+                                today = date == today,
+                                shape = shape,
+                                aliases = aliases,
+                                roomAliases = settings.roomAliases,
+                                settings = settings,
+                                compact = compact,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .then(
+                                        if (fit) {
+                                            Modifier.weight(run.span.toFloat())
+                                        } else {
+                                            Modifier.height(
+                                                cellHeight * run.span + cellGap * (run.span - 1),
+                                            )
+                                        },
+                                    ),
+                                onOpen = onOpen,
+                            )
+                        }
                     }
                 }
             }

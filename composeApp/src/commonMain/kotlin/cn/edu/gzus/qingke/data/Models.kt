@@ -161,6 +161,11 @@ data class AppSettings(
     val courseInkMode: String = "auto",
     /** courseInkMode = custom 时生效的自定义文字色。 */
     val courseInkHex: String = "",
+    /**
+     * 左侧节次时间的自定义覆盖：键是节次块标签（如 "1-2"），值是 "HH:mm-HH:mm"。
+     * 没覆盖的块继续用学校预设。
+     */
+    val periodTimeOverrides: Map<String, String> = emptyMap(),
     val yearCode: String = defaultZfYearCode(),
     val termCode: String = defaultZfTermCode(),
     val currentWeek: Int = 1,

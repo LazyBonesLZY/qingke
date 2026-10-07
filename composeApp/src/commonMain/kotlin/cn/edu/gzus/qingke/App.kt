@@ -35,6 +35,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.dp
@@ -99,6 +100,7 @@ import cn.edu.gzus.qingke.ui.jwxt.UtilityScreen
 import cn.edu.gzus.qingke.ui.jwxt.XiaoaiImportScreen
 import cn.edu.gzus.qingke.ui.mine.CourseAliasesScreen
 import cn.edu.gzus.qingke.ui.mine.MineScreen
+import cn.edu.gzus.qingke.ui.mine.PeriodTimeScreen
 import cn.edu.gzus.qingke.ui.mine.RoomAliasesScreen
 import cn.edu.gzus.qingke.ui.mine.ScheduleShiftsScreen
 import cn.edu.gzus.qingke.ui.theme.ThemeSettingsScreen
@@ -348,6 +350,14 @@ fun App() {
                     .fillMaxHeight()
                     .onSizeChanged { pageWidthPx = it.width.toFloat().coerceAtLeast(1f) },
             ) {
+        // backdrop 的记录源：整屏铺一层 surface 底色，模糊才有东西可采。
+        // 底色必须是图层的**子节点**——写在 .qingkeLayer() 前面会落在图层外面，
+        // 图层记录到空的，模糊出来就是黑的。
+        // 底栏是 Scaffold 的 bottomBar，必须留在图层外面：放进图层会让它采样到自己，
+        // miuix 的模糊管线会栈溢出直接 SIGSEGV。
+        Box(Modifier.fillMaxSize().qingkeLayer(backdrop)) {
+            Box(Modifier.fillMaxSize().background(MiuixTheme.colorScheme.surface))
+        }
         Scaffold(
             modifier = Modifier
                 .fillMaxSize()
@@ -356,7 +366,7 @@ fun App() {
                     translationX = -p * pageWidthPx * 0.25f
                     alpha = 1f - 0.1f * p
                 },
-            containerColor = MiuixTheme.colorScheme.surface,
+            containerColor = Color.Transparent,
             bottomBar = {
                 if (!wide) {
                     CompositionLocalProvider(LocalQingkeFloatingBar provides snapshot.settings.floatingBottomBar) {
@@ -372,9 +382,7 @@ fun App() {
             },
             snackbarHost = { SnackbarHost(state = snackbar) },
         ) { padding ->
-            Box(Modifier.fillMaxSize().qingkeLayer(backdrop)) {
-                // 这里不要再铺一层 surface：Scaffold 的 containerColor 已经画了，
-                // 再盖一层 α 叠乘后壁纸几乎看不见。
+            Box(Modifier.fillMaxSize()) {
                 val pullSync: () -> Unit = {
                     if (!busy) {
                         runJob {
@@ -918,6 +926,11 @@ fun App() {
                                 contentPadding = padding,
                                 onUpdate = { transform -> repo.updateSettings(transform) },
                             )
+                            is Route.PeriodTime -> PeriodTimeScreen(
+                                snapshot = snapshot,
+                                contentPadding = padding,
+                                onUpdate = { transform -> repo.updateSettings(transform) },
+                            )
                             is Route.XiaoaiImport -> XiaoaiImportScreen(
                                 snapshot = snapshot,
                                 contentPadding = padding,
@@ -966,6 +979,7 @@ private fun routeTitle(route: Route): String = when (route) {
     is Route.ScheduleShifts -> "调课"
     is Route.CoursePick -> "选课"
     is Route.ThemeSettings -> "主题设置"
+    is Route.PeriodTime -> "节次时间"
     is Route.Tab -> "青课"
 }
 

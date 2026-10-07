@@ -349,6 +349,16 @@ fun MineScreen(
                 summary = if (rooms.isEmpty()) "同步课表后才能改格子里的教室" else "${rooms.size} 个教室 · 点进去改",
                 onClick = { nav.open(Route.RoomAliases) },
             )
+            val customized = snapshot.settings.periodTimeOverrides.size
+            ArrowPreference(
+                title = "节次时间",
+                summary = if (customized == 0) {
+                    "改课表左边那一列的上课时间"
+                } else {
+                    "已自定义 $customized 节 · 点进去改"
+                },
+                onClick = { nav.open(Route.PeriodTime) },
+            )
             if (snapshot.settings.school() == School.Gzus) {
                 val pulled = snapshot.scheduleAdjust
                 val on = snapshot.settings.autoPullScheduleAdjust

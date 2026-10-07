@@ -137,7 +137,7 @@ data class ResolvedSchool(
     val supportsCoursePick: Boolean get() = kind == "zhengfang"
 }
 
-fun AppSettings.resolved(): ResolvedSchool {
+private fun AppSettings.resolvedBase(): ResolvedSchool {
     val item = school()
     if (item == School.Gzus && gzusUsesCas()) {
         return ResolvedSchool(
@@ -229,6 +229,28 @@ fun AppSettings.resolved(): ResolvedSchool {
         loginName = cfg.name.trim().ifBlank { "自定义教务" },
     )
 }
+
+/**
+ * 在学校预设之上套用用户自定义的节次时间（键为节次块标签，值为 "HH:mm-HH:mm"）。
+ * 只要用户改过任意一节，就认为他要看时间，把 hasPeriodClock 打开。
+ */
+fun ResolvedSchool.withPeriodTimeOverrides(overrides: Map<String, String>): ResolvedSchool {
+    if (overrides.isEmpty()) return this
+    val patched = periodBlocks.map { block ->
+        val parts = overrides[block.label]?.trim().orEmpty().split("-", limit = 2)
+        if (parts.size != 2) {
+            block
+        } else {
+            val start = parts[0].trim()
+            val end = parts[1].trim()
+            if (start.isBlank() && end.isBlank()) block else block.copy(start = start, end = end)
+        }
+    }
+    return copy(periodBlocks = patched, hasPeriodClock = true)
+}
+
+fun AppSettings.resolved(): ResolvedSchool =
+    resolvedBase().withPeriodTimeOverrides(periodTimeOverrides)
 
 fun AppSnapshot.resolved(): ResolvedSchool = settings.resolved()
 

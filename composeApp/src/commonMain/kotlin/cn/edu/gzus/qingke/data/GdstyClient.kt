@@ -119,6 +119,20 @@ class GdstyClient(
         if (isGdstyLoginPage(fetchHome())) error(SESSION_LOST_HINT)
     }
 
+    /**
+     * 教务每个页面自己都会每 10 分钟打一次 blankPage.jsp，App 不走页面，得自己打。
+     * 正常就返回几个字符，掉线时整页换成 jsxsd 的登录页，比拉 xsMain.jsp 轻得多。
+     */
+    override suspend fun keepAlive(): Boolean {
+        keepJwCookie()
+        val body = client.get("$BASE/framework/blankPage.jsp") {
+            header(HttpHeaders.UserAgent, QINGKE_UA)
+            header(HttpHeaders.Referrer, "$BASE/framework/xsMain.jsp")
+        }.bodyAsText()
+        if (isGdstyLoginPage(body)) error(SESSION_LOST_HINT)
+        return true
+    }
+
     override suspend fun fetchTermCalendar(): TermCalendar {
         val page = get("$BASE/jxzl/jxzl_query")
         requireGdstySession(page)

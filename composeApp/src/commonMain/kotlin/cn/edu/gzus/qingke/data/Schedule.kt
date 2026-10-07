@@ -233,6 +233,10 @@ fun nextLesson(
 fun uniqueCourses(slots: List<LessonSlot>): List<CourseDetail> =
     slots.groupBy { it.courseId }.map { (id, items) -> items.toCourseDetail(id) }
 
+/** 课表里出现过的教室，去重排序，给缩写页用。 */
+fun uniqueRooms(slots: List<LessonSlot>): List<String> =
+    slots.map { it.room.trim() }.filter { it.isNotBlank() }.distinct().sorted()
+
 fun resolveCourseDetail(snapshot: AppSnapshot, courseId: String): CourseDetail? {
     val fromSlots = snapshot.slots.toCourseDetail(courseId)
     if (fromSlots.slots.isNotEmpty()) return fromSlots
@@ -622,9 +626,22 @@ fun compactCourseLines(
     return listOf(short.take(2), short.drop(2))
 }
 
-fun compactRoomName(room: String): String {
-    val core = room.replace(Regex("[（(][^）)]*[）)]"), "").trim()
+/**
+ * 教室缩到「楼名 + 房号」。房号是最后一段数字，像「5-101」这种连号算一个。
+ * 北苑5-101电教实训室 → 北苑5-101，实训楼201 原样。
+ * 认不出房号就退回原来的截尾，不硬猜。
+ */
+fun compactRoomName(room: String, aliases: Map<String, String> = emptyMap()): String {
+    val raw = room.trim()
+    if (raw.isBlank()) return raw
+    aliases[raw]?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
+    val core = raw.replace(Regex("[（(][^）)]*[）)]"), "").trim()
     if (core.length <= 8) return core
+    val house = Regex("""\d+(?:-\d+)?""").findAll(core).lastOrNull()
+    if (house != null) {
+        val cut = core.substring(0, house.range.last + 1).trim()
+        if (cut.isNotBlank()) return cut
+    }
     return core.takeLast(6)
 }
 

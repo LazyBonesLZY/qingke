@@ -115,6 +115,9 @@ private val LocalIosTabScale = staticCompositionLocalOf { { 1f } }
 /** 平板横屏（或更宽的窗口）用侧栏，不再把底部胶囊拉满。 */
 val LocalQingkeWide = staticCompositionLocalOf { false }
 
+/** 悬浮底栏（true）或贴底常驻（false）。影响 tabPagePadding 的底部留白。 */
+val LocalQingkeFloatingBar = staticCompositionLocalOf { true }
+
 private fun qingkeTabItems() = listOf(
     TabDest.Today to (MiuixIcons.Home to "首页"),
     TabDest.Timetable to (MiuixIcons.Weeks to "课表"),
@@ -160,11 +163,16 @@ fun tabScaffoldPadding(padding: PaddingValues, layout: LayoutDirection): Padding
 fun tabPagePadding(padding: PaddingValues): PaddingValues {
     val layout = LocalLayoutDirection.current
     val base = tabScaffoldPadding(padding, layout)
+    val bottom = when {
+        LocalQingkeWide.current -> 24.dp
+        LocalQingkeFloatingBar.current -> 96.dp
+        else -> 0.dp
+    }
     return PaddingValues(
         start = base.calculateStartPadding(layout),
         top = base.calculateTopPadding(),
         end = base.calculateEndPadding(layout),
-        bottom = if (LocalQingkeWide.current) 24.dp else 96.dp,
+        bottom = bottom,
     )
 }
 
@@ -229,6 +237,8 @@ fun QingkeSideRail(
 fun QingkeBottomBar(
     selected: TabDest,
     backdrop: LayerBackdrop,
+    floating: Boolean = true,
+    blurEnabled: Boolean = true,
     onSelect: (TabDest) -> Unit,
 ) {
     val items = qingkeTabItems()
@@ -351,10 +361,16 @@ fun QingkeBottomBar(
     val combinedBackdrop = rememberCombinedBackdrop(backdrop, tabsBackdrop)
 
     val navBarBottomPadding = WindowInsets.navigationBars.only(WindowInsetsSides.Bottom).asPaddingValues().calculateBottomPadding()
-    val bottomPaddingValue = when (platform()) {
-        Platform.IOS -> 20.dp
-        else -> if (navBarBottomPadding != 0.dp) 8.dp + navBarBottomPadding else 36.dp
+    val bottomPaddingValue = when {
+        !floating -> navBarBottomPadding
+        else -> when (platform()) {
+            Platform.IOS -> 20.dp
+            else -> if (navBarBottomPadding != 0.dp) 8.dp + navBarBottomPadding else 36.dp
+        }
     }
+    val barHorizontalPadding = if (floating) 24.dp else 0.dp
+    val dockedShape = if (floating) pillShape else RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+    val dockedContainer = MiuixTheme.colorScheme.surfaceContainer
 
     val tabsContent: @Composable RowScope.() -> Unit = {
         val tabScale = LocalIosTabScale.current
@@ -407,10 +423,15 @@ fun QingkeBottomBar(
         }
     }
 
-    Column(Modifier.fillMaxWidth()) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .then(if (floating) Modifier else Modifier.background(dockedContainer)),
+    ) {
         Box(
             modifier = Modifier
-                .padding(bottom = bottomPaddingValue, start = 24.dp, end = 24.dp)
+                .padding(bottom = bottomPaddingValue, start = barHorizontalPadding, end = barHorizontalPadding)
+                .then(if (floating) Modifier else Modifier.padding(top = 6.dp, bottom = 4.dp))
                 .fillMaxWidth(),
             contentAlignment = Alignment.CenterStart,
         ) {
@@ -424,40 +445,60 @@ fun QingkeBottomBar(
                             tabWidthPx = (contentWidthPx / tabsCount).coerceAtLeast(0f)
                         }
                         .graphicsLayer { translationX = panelOffset }
-                        .dropShadow(
-                            shape = pillShape,
-                            shadow = Shadow(
-                                radius = 16.dp,
-                                color = Color.Black,
-                                alpha = if (dark) 0.28f else 0.05f,
-                            ),
-                        )
-                        .drawBackdrop(
-                            backdrop = backdrop,
-                            shape = { pillShape },
-                            effects = {
-                                padding = maxOf(padding, 28.dp.toPx())
-                                vibrancy()
-                                blur(4.dp.toPx(), 4.dp.toPx())
-                                lens(
-                                    refractionHeight = 20.dp.toPx(),
-                                    refractionAmount = 20.dp.toPx(),
+                        .then(
+                            if (floating) {
+                                Modifier.dropShadow(
+                                    shape = pillShape,
+                                    shadow = Shadow(
+                                        radius = 16.dp,
+                                        color = Color.Black,
+                                        alpha = if (dark) 0.28f else 0.05f,
+                                    ),
                                 )
+                            } else {
+                                Modifier
                             },
-                            highlight = { iosIndicatorSpecular.copy(alpha = 0.75f) },
-                            layerBlock = {
-                                val width = size.width.coerceAtLeast(1f)
-                                val s = lerp(1f, 1f + 16.dp.toPx() / width, dampedDrag.pressProgress)
-                                scaleX = s
-                                scaleY = s
+                        )
+                        .then(
+                            when {
+                                floating && blurEnabled -> Modifier.drawBackdrop(
+                                    backdrop = backdrop,
+                                    shape = { pillShape },
+                                    effects = {
+                                        padding = maxOf(padding, 28.dp.toPx())
+                                        vibrancy()
+                                        blur(4.dp.toPx(), 4.dp.toPx())
+                                        lens(
+                                            refractionHeight = 20.dp.toPx(),
+                                            refractionAmount = 20.dp.toPx(),
+                                        )
+                                    },
+                                    highlight = { iosIndicatorSpecular.copy(alpha = 0.75f) },
+                                    layerBlock = {
+                                        val width = size.width.coerceAtLeast(1f)
+                                        val s = lerp(1f, 1f + 16.dp.toPx() / width, dampedDrag.pressProgress)
+                                        scaleX = s
+                                        scaleY = s
+                                    },
+                                    onDrawSurface = { drawRect(containerColor) },
+                                )
+                                floating -> Modifier
+                                    .clip(pillShape)
+                                    .background(
+                                        if (dark) Color(0xFF2C2C2C).copy(alpha = 0.92f)
+                                        else Color.White.copy(alpha = 0.92f),
+                                    )
+                                else -> Modifier.clip(dockedShape)
                             },
-                            onDrawSurface = { drawRect(containerColor) },
                         )
                         .then(interactiveHighlight.modifier)
                         .then(interactiveHighlight.gestureModifier)
                         .then(dampedDrag.modifier)
-                        .height(64.dp)
-                        .padding(4.dp),
+                        .height(if (floating) 64.dp else 60.dp)
+                        .then(
+                            if (floating) Modifier.padding(4.dp)
+                            else Modifier.padding(horizontal = 4.dp),
+                        ),
                     verticalAlignment = Alignment.CenterVertically,
                     content = tabsContent,
                 )
@@ -473,21 +514,27 @@ fun QingkeBottomBar(
                         .alpha(0f)
                         .layerBackdrop(tabsBackdrop)
                         .graphicsLayer { translationX = panelOffset }
-                        .drawBackdrop(
-                            backdrop = backdrop,
-                            shape = { pillShape },
-                            effects = {
-                                vibrancy()
-                                blur(4.dp.toPx(), 4.dp.toPx())
-                                lens(
-                                    refractionHeight = 20.dp.toPx(),
-                                    refractionAmount = 20.dp.toPx(),
+                        .then(
+                            if (floating && blurEnabled) {
+                                Modifier.drawBackdrop(
+                                    backdrop = backdrop,
+                                    shape = { pillShape },
+                                    effects = {
+                                        vibrancy()
+                                        blur(4.dp.toPx(), 4.dp.toPx())
+                                        lens(
+                                            refractionHeight = 20.dp.toPx(),
+                                            refractionAmount = 20.dp.toPx(),
+                                        )
+                                    },
+                                    onDrawSurface = { drawRect(containerColor) },
                                 )
+                            } else {
+                                Modifier
                             },
-                            onDrawSurface = { drawRect(containerColor) },
                         )
                         .then(interactiveHighlight.modifier)
-                        .height(56.dp)
+                        .height(if (floating) 56.dp else 52.dp)
                         .padding(horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     content = tabsContent,
@@ -496,6 +543,40 @@ fun QingkeBottomBar(
 
             if (tabWidthPx > 0f) {
                 val tabWidthDp = with(density) { tabWidthPx.toDp() }
+                val indicatorBg = if (floating) {
+                    Modifier.drawBackdrop(
+                        backdrop = combinedBackdrop,
+                        shape = { pillShape },
+                        effects = {
+                            val progress = dampedDrag.pressProgress
+                            lens(
+                                refractionHeight = 8.dp.toPx() * progress,
+                                refractionAmount = 10.dp.toPx() * progress,
+                            )
+                        },
+                        highlight = { iosIndicatorSpecular.copy(alpha = dampedDrag.pressProgress) },
+                        layerBlock = {
+                            scaleX = dampedDrag.scaleX
+                            scaleY = dampedDrag.scaleY
+                            val v = dampedDrag.velocity / 10f
+                            scaleX /= 1f - (v * 0.75f).coerceIn(-0.2f, 0.2f)
+                            scaleY *= 1f - (v * 0.25f).coerceIn(-0.2f, 0.2f)
+                        },
+                        onDrawSurface = {
+                            val progress = dampedDrag.pressProgress
+                            drawRect(
+                                color = if (dark) Color.White.copy(alpha = 0.14f) else Color.White.copy(alpha = 0.48f),
+                                alpha = 1f - progress,
+                            )
+                            drawRect(Color.White.copy(alpha = (if (dark) 0.06f else 0.10f) * progress))
+                        },
+                    )
+                } else {
+                    // docked：轻量 accent 胶囊，不做 backdrop 变形
+                    Modifier
+                        .clip(pillShape)
+                        .background(accentColor.copy(alpha = if (dark) 0.22f else 0.14f))
+                }
                 Box(
                     modifier = Modifier
                         .padding(horizontal = 4.dp)
@@ -503,41 +584,21 @@ fun QingkeBottomBar(
                             val progressOffset = dampedDrag.value * tabWidthPx
                             translationX = if (isLtr) progressOffset + panelOffset else -progressOffset + panelOffset
                         }
-                        .drawBackdrop(
-                            backdrop = combinedBackdrop,
-                            shape = { pillShape },
-                            effects = {
-                                val progress = dampedDrag.pressProgress
-                                lens(
-                                    refractionHeight = 8.dp.toPx() * progress,
-                                    refractionAmount = 10.dp.toPx() * progress,
-                                )
-                            },
-                            highlight = { iosIndicatorSpecular.copy(alpha = dampedDrag.pressProgress) },
-                            layerBlock = {
-                                scaleX = dampedDrag.scaleX
-                                scaleY = dampedDrag.scaleY
-                                val v = dampedDrag.velocity / 10f
-                                scaleX /= 1f - (v * 0.75f).coerceIn(-0.2f, 0.2f)
-                                scaleY *= 1f - (v * 0.25f).coerceIn(-0.2f, 0.2f)
-                            },
-                            onDrawSurface = {
-                                val progress = dampedDrag.pressProgress
-                                drawRect(
-                                    color = if (dark) Color.White.copy(alpha = 0.14f) else Color.White.copy(alpha = 0.48f),
-                                    alpha = 1f - progress,
-                                )
-                                drawRect(Color.White.copy(alpha = (if (dark) 0.06f else 0.10f) * progress))
+                        .then(indicatorBg)
+                        .then(
+                            if (floating) {
+                                Modifier.innerShadow(shape = pillShape) {
+                                    InnerShadow(
+                                        radius = 8.dp * dampedDrag.pressProgress,
+                                        color = Color.Black.copy(alpha = 0.15f),
+                                        alpha = dampedDrag.pressProgress,
+                                    )
+                                }
+                            } else {
+                                Modifier
                             },
                         )
-                        .innerShadow(shape = pillShape) {
-                            InnerShadow(
-                                radius = 8.dp * dampedDrag.pressProgress,
-                                color = Color.Black.copy(alpha = 0.15f),
-                                alpha = dampedDrag.pressProgress,
-                            )
-                        }
-                        .height(56.dp)
+                        .height(if (floating) 56.dp else 52.dp)
                         .width(tabWidthDp),
                 )
             }

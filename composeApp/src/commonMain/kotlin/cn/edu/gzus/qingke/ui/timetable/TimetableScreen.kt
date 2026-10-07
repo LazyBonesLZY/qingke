@@ -119,12 +119,17 @@ private val CourseInkLight = Color(0xFF1A1A1A)
 private val CourseInkDark = Color(0xFFF3F3F3)
 
 private val SlotCol = 32.dp
+private val SlotColCompact = 24.dp
 private val SlotColWithClock = 40.dp
+private val SlotColWithClockCompact = 30.dp
 private val WeekNumCol = 28.dp
 private val CellGap = 3.dp
+private val CellGapCompact = 2.dp
 private val WeekCellHeight = 64.dp
+private val WeekCellHeightCompact = 46.dp
 private val MonthCellHeight = 58.dp
 private val CellRadius = 6.dp
+private val CellRadiusCompact = 4.dp
 
 private fun courseTint(key: String, dark: Boolean): Color {
     val hash = key.hashCode().let { if (it == Int.MIN_VALUE) 0 else kotlin.math.abs(it) }
@@ -254,6 +259,7 @@ fun TimetableScreen(
                 settings = settings,
                 adjust = snapshot.scheduleAdjust,
                 fit = wide,
+                compact = !wide && settings.compactTimetable,
                 onOpen = { nav.open(Route.Course(it)) },
             )
             if (!wide && weekSessions == 0 && weekPractices.isEmpty()) {
@@ -506,11 +512,20 @@ private fun ColumnScope.WeekGrid(
     settings: AppSettings,
     adjust: CloudScheduleAdjust,
     fit: Boolean = false,
+    compact: Boolean = false,
     onOpen: (String) -> Unit,
 ) {
-    val shape = RoundedCornerShape(CellRadius)
+    val shape = RoundedCornerShape(if (compact) CellRadiusCompact else CellRadius)
     val workColor = if (isSystemInDarkTheme()) Color(0xFFE8B86D) else Color(0xFFC9782A)
-    val slotCol = if (hasClock && blocks.any { it.start.isNotBlank() }) SlotColWithClock else SlotCol
+    val clockShown = hasClock && blocks.any { it.start.isNotBlank() }
+    val slotCol = when {
+        compact && clockShown -> SlotColWithClockCompact
+        compact -> SlotColCompact
+        clockShown -> SlotColWithClock
+        else -> SlotCol
+    }
+    val cellGap = if (compact) CellGapCompact else CellGap
+    val cellHeight = if (compact) WeekCellHeightCompact else WeekCellHeight
     // 一周七列，每列算一次就够。原来是每个格子都把整张课表过一遍。
     val dayColumns = remember(slots, monday, settings, today, adjust) {
         (0..6).map { offset -> slots.forDate(monday.plus(DatePeriod(days = offset)), settings, today, adjust) }
@@ -524,9 +539,9 @@ private fun ColumnScope.WeekGrid(
     ) {
         Column(
             modifier = if (fit) Modifier.fillMaxSize() else Modifier,
-            verticalArrangement = Arrangement.spacedBy(if (fit) 2.dp else CellGap),
+            verticalArrangement = Arrangement.spacedBy(if (fit || compact) 2.dp else CellGap),
         ) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(CellGap)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(cellGap)) {
                 Spacer(Modifier.width(slotCol))
                 WeekdayNames.forEachIndexed { index, name ->
                     val date = monday.plus(DatePeriod(days = index))
@@ -539,14 +554,14 @@ private fun ColumnScope.WeekGrid(
                         Text(
                             name,
                             textAlign = TextAlign.Center,
-                            fontSize = 11.sp,
+                            fontSize = if (compact) 10.sp else 11.sp,
                             fontWeight = if (isToday) FontWeight.SemiBold else FontWeight.Medium,
                             color = if (isToday) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onSurfaceContainerVariant,
                         )
                         Text(
                             weekDateLabel(date, monday),
                             textAlign = TextAlign.Center,
-                            fontSize = 11.sp,
+                            fontSize = if (compact) 10.sp else 11.sp,
                             fontWeight = if (isToday) FontWeight.SemiBold else FontWeight.Normal,
                             color = if (isToday) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onBackground,
                         )
@@ -576,8 +591,11 @@ private fun ColumnScope.WeekGrid(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .then(if (fit) Modifier.weight(1f) else Modifier.height(WeekCellHeight)),
-                    horizontalArrangement = Arrangement.spacedBy(CellGap),
+                        .then(
+                            if (fit) Modifier.weight(1f)
+                            else Modifier.height(cellHeight),
+                        ),
+                    horizontalArrangement = Arrangement.spacedBy(cellGap),
                 ) {
                     Column(
                         modifier = Modifier
@@ -589,22 +607,25 @@ private fun ColumnScope.WeekGrid(
                         Text(
                             block.label,
                             textAlign = TextAlign.Center,
-                            fontSize = 10.sp,
+                            fontSize = if (compact) 9.sp else 10.sp,
                             fontWeight = FontWeight.Medium,
                             color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                            maxLines = 1,
                         )
-                        if (hasClock && block.start.isNotBlank() && block.end.isNotBlank()) {
+                        if (clockShown && block.start.isNotBlank() && block.end.isNotBlank()) {
                             Text(
                                 block.start,
                                 textAlign = TextAlign.Center,
-                                fontSize = 8.sp,
+                                fontSize = if (compact) 6.sp else 8.sp,
                                 color = MiuixTheme.colorScheme.onSurfaceContainerVariant.copy(alpha = 0.86f),
+                                maxLines = 1,
                             )
                             Text(
                                 block.end,
                                 textAlign = TextAlign.Center,
-                                fontSize = 8.sp,
+                                fontSize = if (compact) 6.sp else 8.sp,
                                 color = MiuixTheme.colorScheme.onSurfaceContainerVariant.copy(alpha = 0.86f),
+                                maxLines = 1,
                             )
                         }
                     }
@@ -616,6 +637,8 @@ private fun ColumnScope.WeekGrid(
                             today = date == today,
                             shape = shape,
                             aliases = aliases,
+                            roomAliases = settings.roomAliases,
+                            compact = compact,
                             modifier = Modifier.weight(1f).fillMaxHeight(),
                             onOpen = onOpen,
                         )
@@ -632,6 +655,8 @@ private fun WeekCell(
     today: Boolean,
     shape: RoundedCornerShape,
     aliases: Map<String, String>,
+    roomAliases: Map<String, String>,
+    compact: Boolean = false,
     modifier: Modifier,
     onOpen: (String) -> Unit,
 ) {
@@ -652,7 +677,7 @@ private fun WeekCell(
                     Modifier
                 },
             )
-            .padding(horizontal = 3.dp, vertical = 4.dp),
+            .padding(horizontal = 2.dp, vertical = if (compact) 2.dp else 4.dp),
     ) {
         if (first != null) {
             Column(
@@ -663,16 +688,16 @@ private fun WeekCell(
                 compactCourseLines(first.courseName, aliases, first.courseId).forEach { line ->
                     Text(
                         line,
-                        fontSize = 12.sp,
+                        fontSize = if (compact) 10.sp else 12.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = ink,
-                        lineHeight = 14.sp,
+                        lineHeight = if (compact) 11.sp else 14.sp,
                         textAlign = TextAlign.Center,
                         maxLines = 1,
                     )
                 }
-                val room = compactRoomName(first.room)
-                if (room.isNotBlank()) {
+                val room = compactRoomName(first.room, roomAliases)
+                if (room.isNotBlank() && !compact) {
                     Text(
                         room,
                         fontSize = 8.sp,
@@ -682,7 +707,7 @@ private fun WeekCell(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                if (slots.size > 1) {
+                if (slots.size > 1 && !compact) {
                     Text(
                         "+${slots.size - 1}",
                         fontSize = 8.sp,

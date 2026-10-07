@@ -266,10 +266,23 @@ class AppRepository(
     suspend fun keepAlive() {
         if (!_state.value.session.loggedIn) return
         val snap = _state.value
-        if (snap.settings.school() != School.Gzus || !snap.settings.gzusUsesCas()) return
-        if (!ensureCasTickets(force = false) && shouldExpireWholeSession()) {
-            markSessionExpired()
-            error(SESSION_LOST_HINT)
+        if (snap.settings.gzusUsesCas()) {
+            if (!ensureCasTickets(force = false) && shouldExpireWholeSession()) {
+                markSessionExpired()
+                error(SESSION_LOST_HINT)
+            }
+            return
+        }
+        if (snap.settings.school() == School.Gdsty) {
+            runCatching { portal().keepAlive() }.getOrElse { failed ->
+                if (failed is JwxtNeedFirstLogin) throw failed
+                if (isTransientNetwork(failed)) return
+                if (isSessionLost(failed.message.orEmpty())) {
+                    markSessionExpired()
+                    error(SESSION_LOST_HINT)
+                }
+                throw failed
+            }
         }
     }
 
@@ -1037,6 +1050,7 @@ private fun AppSnapshot.widgetSignature(): Int {
     h = 31 * h + settings.weekCount
     h = 31 * h + settings.schoolId.hashCode()
     h = 31 * h + settings.courseAliases.hashCode()
+    h = 31 * h + settings.roomAliases.hashCode()
     h = 31 * h + settings.scheduleShifts.hashCode()
     h = 31 * h + settings.autoPullScheduleAdjust.hashCode()
     h = 31 * h + scheduleAdjust.offs.hashCode()

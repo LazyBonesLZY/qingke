@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
 import top.yukonga.miuix.kmp.basic.PullToRefresh
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -45,11 +47,14 @@ import cn.edu.gzus.qingke.data.FreeRoom
 import cn.edu.gzus.qingke.data.LeaveForm
 import cn.edu.gzus.qingke.data.LeaveStep
 import cn.edu.gzus.qingke.data.UtilityOption
+import cn.edu.gzus.qingke.data.BACKGROUND_CUSTOM
+import cn.edu.gzus.qingke.data.BACKGROUND_WALLPAPER
 import cn.edu.gzus.qingke.data.GITHUB_RELEASES_URL
 import cn.edu.gzus.qingke.data.GZUS_LOGIN_CAS
 import cn.edu.gzus.qingke.data.JwxtNeedFirstLogin
 import cn.edu.gzus.qingke.data.School
 import cn.edu.gzus.qingke.data.gzusUsesCas
+import cn.edu.gzus.qingke.data.needsKeepAlive
 import cn.edu.gzus.qingke.data.school
 import cn.edu.gzus.qingke.data.hasUtilityBind
 import cn.edu.gzus.qingke.data.friendlyNetworkMessage
@@ -70,6 +75,7 @@ import cn.edu.gzus.qingke.nav.QingkeNavigator
 import cn.edu.gzus.qingke.nav.Route
 import cn.edu.gzus.qingke.nav.TabDest
 import cn.edu.gzus.qingke.nav.Transition
+import cn.edu.gzus.qingke.ui.components.LocalQingkeFloatingBar
 import cn.edu.gzus.qingke.ui.components.LocalQingkeWide
 import cn.edu.gzus.qingke.ui.components.QingkeBottomBar
 import cn.edu.gzus.qingke.ui.components.QingkeSideRail
@@ -89,7 +95,9 @@ import cn.edu.gzus.qingke.ui.jwxt.UtilityScreen
 import cn.edu.gzus.qingke.ui.jwxt.XiaoaiImportScreen
 import cn.edu.gzus.qingke.ui.mine.CourseAliasesScreen
 import cn.edu.gzus.qingke.ui.mine.MineScreen
+import cn.edu.gzus.qingke.ui.mine.RoomAliasesScreen
 import cn.edu.gzus.qingke.ui.mine.ScheduleShiftsScreen
+import cn.edu.gzus.qingke.ui.theme.ThemeSettingsScreen
 import cn.edu.gzus.qingke.ui.timetable.TimetableScreen
 import cn.edu.gzus.qingke.ui.today.TodayScreen
 import kotlinx.coroutines.delay
@@ -108,12 +116,18 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 @Composable
 fun App() {
-    QingkeTheme {
-        val repo = remember { AppRepository() }
+    val repo = remember { AppRepository() }
+    val snapshot by repo.state.collectAsState()
+    val bgSource = when (snapshot.settings.backgroundMode) {
+        BACKGROUND_WALLPAPER -> BACKGROUND_WALLPAPER
+        BACKGROUND_CUSTOM -> snapshot.settings.backgroundImageUri
+        else -> ""
+    }
+    val backgroundImage = rememberQingkeBackgroundImage(bgSource)
+    QingkeTheme(settings = snapshot.settings, backgroundImage = backgroundImage) {
         val nav = remember { QingkeNavigator() }
         val snackbar = remember { SnackbarHostState() }
         val scope = rememberCoroutineScope()
-        val snapshot by repo.state.collectAsState()
         val liveTick by repo.liveTick.collectAsState()
         val tabStates = rememberSaveableStateHolder()
         var noticeLoading by remember { mutableStateOf(emptySet<String>()) }
@@ -204,7 +218,7 @@ fun App() {
                         }
                     }
                 if (repo.state.value.session.loggedIn) {
-                    if (repo.state.value.settings.gzusUsesCas()) {
+                    if (repo.state.value.settings.needsKeepAlive()) {
                         runCatching { repo.keepAlive() }
                     }
                     if (repo.state.value.settings.autoSyncOnStart) {
@@ -228,10 +242,10 @@ fun App() {
         }
 
         LaunchedEffect(snapshot.session.loggedIn, snapshot.settings.schoolId, snapshot.settings.gzusLoginChannel) {
-            if (!snapshot.session.loggedIn || !snapshot.settings.gzusUsesCas()) return@LaunchedEffect
+            if (!snapshot.session.loggedIn || !snapshot.settings.needsKeepAlive()) return@LaunchedEffect
             while (isActive) {
                 delay(8 * 60_000L)
-                if (!repo.state.value.session.loggedIn || !repo.state.value.settings.gzusUsesCas()) break
+                if (!repo.state.value.session.loggedIn || !repo.state.value.settings.needsKeepAlive()) break
                 runCatching { repo.keepAlive() }
                     .onFailure { failed ->
                         val message = failed.friendlyNetworkMessage()
@@ -339,7 +353,15 @@ fun App() {
             containerColor = MiuixTheme.colorScheme.surface,
             bottomBar = {
                 if (!wide) {
-                    QingkeBottomBar(selected = nav.tab, backdrop = backdrop, onSelect = { nav.goTab(it) })
+                    CompositionLocalProvider(LocalQingkeFloatingBar provides snapshot.settings.floatingBottomBar) {
+                        QingkeBottomBar(
+                            selected = nav.tab,
+                            backdrop = backdrop,
+                            floating = snapshot.settings.floatingBottomBar,
+                            blurEnabled = snapshot.settings.blurEnabled,
+                            onSelect = { nav.goTab(it) },
+                        )
+                    }
                 }
             },
             snackbarHost = { SnackbarHost(state = snackbar) },
@@ -579,6 +601,7 @@ fun App() {
                         }
                         .background(MiuixTheme.colorScheme.surface),
                     containerColor = MiuixTheme.colorScheme.surface,
+                    contentWindowInsets = WindowInsets.statusBars,
                     topBar = {
                         SmallTopAppBar(
                             title = routeTitle(dest),
@@ -786,6 +809,23 @@ fun App() {
                                     toast(if (alias.isBlank()) "已恢复默认缩写" else "已保存缩写")
                                 },
                             )
+                            is Route.RoomAliases -> RoomAliasesScreen(
+                                snapshot = snapshot,
+                                contentPadding = padding,
+                                onSaveAlias = { room, alias ->
+                                    repo.updateSettings { settings ->
+                                        val map = settings.roomAliases.toMutableMap()
+                                        val key = room.trim()
+                                        if (alias.isBlank()) {
+                                            map.remove(key)
+                                        } else {
+                                            map[key] = alias.trim().take(8)
+                                        }
+                                        settings.copy(roomAliases = map)
+                                    }
+                                    toast(if (alias.isBlank()) "已恢复默认缩写" else "已保存缩写")
+                                },
+                            )
                             is Route.CoursePick -> CoursePickScreen(
                                 snapshot = snapshot,
                                 nav = nav,
@@ -866,6 +906,11 @@ fun App() {
                                     }
                                 },
                             )
+                            is Route.ThemeSettings -> ThemeSettingsScreen(
+                                settings = snapshot.settings,
+                                contentPadding = padding,
+                                onUpdate = { transform -> repo.updateSettings(transform) },
+                            )
                             is Route.XiaoaiImport -> XiaoaiImportScreen(
                                 snapshot = snapshot,
                                 contentPadding = padding,
@@ -910,8 +955,10 @@ private fun routeTitle(route: Route): String = when (route) {
     is Route.Utility -> "宿舍水电"
     is Route.XiaoaiImport -> "导入小爱"
     is Route.CourseAliases -> "课表缩写"
+    is Route.RoomAliases -> "教室缩写"
     is Route.ScheduleShifts -> "调课"
     is Route.CoursePick -> "选课"
+    is Route.ThemeSettings -> "主题设置"
     is Route.Tab -> "青课"
 }
 

@@ -65,6 +65,7 @@ import cn.edu.gzus.qingke.data.resolvedCurrentWeek
 import cn.edu.gzus.qingke.data.teachingWeeks
 import cn.edu.gzus.qingke.data.termStartMonday
 import cn.edu.gzus.qingke.data.uniqueCourses
+import cn.edu.gzus.qingke.data.uniqueRooms
 import cn.edu.gzus.qingke.data.weekdayIndex
 import cn.edu.gzus.qingke.nav.QingkeNavigator
 import cn.edu.gzus.qingke.nav.Route
@@ -320,16 +321,33 @@ fun MineScreen(
                 onPickWeek(week)
             },
         )
+        SmallTitle(text = "外观")
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(0.dp),
+        ) {
+            ArrowPreference(
+                title = "主题设置",
+                summary = "背景 / 底栏 / 模糊 / 紧凑课表",
+                onClick = { nav.open(Route.ThemeSettings) },
+            )
+        }
         SmallTitle(text = "课表")
         Card(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             insideMargin = PaddingValues(0.dp),
         ) {
             val courses = uniqueCourses(snapshot.slots)
+            val rooms = uniqueRooms(snapshot.slots)
             ArrowPreference(
                 title = "课表缩写",
                 summary = if (courses.isEmpty()) "同步课表后才能改格子里的简称" else "${courses.size} 门课 · 点进去改",
                 onClick = { nav.open(Route.CourseAliases) },
+            )
+            ArrowPreference(
+                title = "教室缩写",
+                summary = if (rooms.isEmpty()) "同步课表后才能改格子里的教室" else "${rooms.size} 个教室 · 点进去改",
+                onClick = { nav.open(Route.RoomAliases) },
             )
             if (snapshot.settings.school() == School.Gzus) {
                 val pulled = snapshot.scheduleAdjust

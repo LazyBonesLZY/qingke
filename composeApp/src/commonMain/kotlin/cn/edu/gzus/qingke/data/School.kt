@@ -109,6 +109,12 @@ fun AppSnapshot.school(): School = settings.school()
 
 fun AppSettings.gzusUsesCas(): Boolean = school() == School.Gzus && gzusLoginChannel == GZUS_LOGIN_CAS
 
+/**
+ * 会话会自己过期的门户，前台要隔几分钟打一下。
+ * 广软是 CAS 票，广生态是强智 jsxsd 的 JSESSIONID。
+ */
+fun AppSettings.needsKeepAlive(): Boolean = gzusUsesCas() || school() == School.Gdsty
+
 fun AppSnapshot.showsGzusHall(): Boolean = settings.school() == School.Gzus
 
 data class ResolvedSchool(

@@ -20,8 +20,10 @@ sealed class Route(val transition: Transition) {
     data object Leave : Route(Transition.SlideIn)
     data object Utility : Route(Transition.SlideIn)
     data object CourseAliases : Route(Transition.SlideIn)
+    data object RoomAliases : Route(Transition.SlideIn)
     data object ScheduleShifts : Route(Transition.SlideIn)
     data object CoursePick : Route(Transition.SlideIn)
+    data object ThemeSettings : Route(Transition.SlideIn)
 }
 
 class QingkeNavigator(start: TabDest = TabDest.Today) {

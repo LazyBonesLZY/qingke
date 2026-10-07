@@ -36,6 +36,15 @@ enum class School(
         supportsFreeRooms = false,
         hasPeriodClock = false,
     ),
+    Gdsty(
+        id = "gdsty",
+        label = "广东生态工程职业学院",
+        jwxtName = "生态教务",
+        loginUrl = GDTSY_AIC_LOGIN_URL,
+        changePasswordUrl = GDTSY_CHANGE_PASSWORD_URL,
+        supportsFreeRooms = false,
+        hasPeriodClock = true,
+    ),
     Custom(
         id = "custom",
         label = "自定义教务",
@@ -50,18 +59,20 @@ enum class School(
         get() = when (this) {
             Gzus, Gzist, Custom -> MajorPeriods
             Zhku -> ZhkuPeriods
+            Gdsty -> GdstyPeriods
         }
 
     val showsCaptcha: Boolean
-        get() = this == Gzist || this == Gzus
+        get() = this == Gzist || this == Gzus || this == Gdsty
 
     val requiresCaptcha: Boolean
-        get() = this == Gzist
+        get() = this == Gzist || this == Gdsty
 
     val captchaHint: String
         get() = when (this) {
             Gzist -> "门户算术验证码，填得数"
             Gzus -> "教务验证码，登录多了会要"
+            Gdsty -> "综合系统验证码，4 位数字"
             Zhku, Custom -> ""
         }
 
@@ -79,6 +90,17 @@ val ZhkuPeriods = listOf(
     PeriodBlock(4, "6-7", "", "", "下午"),
     PeriodBlock(5, "8-9", "", "", "下午"),
     PeriodBlock(6, "10-12", "", "", "晚上"),
+)
+
+// 教务课表页每行节次都带着起止时间，照抄，不要自己编。
+val GdstyPeriods = listOf(
+    PeriodBlock(1, "1-2", "08:30", "09:50", "上午"),
+    PeriodBlock(2, "3-4", "10:20", "11:50", "上午"),
+    PeriodBlock(3, "中午", "12:20", "13:50", "中午"),
+    PeriodBlock(4, "5-6", "14:10", "15:40", "下午"),
+    PeriodBlock(5, "7-8", "16:00", "17:30", "下午"),
+    PeriodBlock(6, "9-10", "18:30", "20:00", "晚上"),
+    PeriodBlock(7, "11-12", "20:10", "21:40", "晚上"),
 )
 
 fun AppSettings.school(): School = School.of(schoolId)
@@ -147,12 +169,14 @@ fun AppSettings.resolved(): ResolvedSchool {
             kind = when (item) {
                 School.Zhku -> "kingosoft"
                 School.Gzist -> "lyuap"
+                School.Gdsty -> "kingosoft"
                 else -> "zhengfang"
             },
             origin = when (item) {
                 School.Gzus -> JWXT_ORIGIN
                 School.Zhku -> "https://edu-admin.zhku.edu.cn"
                 School.Gzist -> GZIST_JWXT_ORIGIN
+                School.Gdsty -> GDTSY_JWXT_ORIGIN
                 School.Custom -> ""
             },
             loginName = item.jwxtName,
@@ -219,6 +243,8 @@ interface SchoolPortal {
     suspend fun fetchNotices(): List<NoticeItem>
     suspend fun fetchNoticeDetail(id: String): NoticeItem
     suspend fun keepAlive(): Boolean = true
+    /** 强智那套会话是页面上探的，别的门户不用管。 */
+    suspend fun ensureSession() {}
     suspend fun fetchHall(): HallSnapshot? = null
     suspend fun fetchLeaveForm(affairId: String = ""): LeaveForm? = null
     suspend fun submitLeave(form: LeaveForm, values: Map<String, String>): String =

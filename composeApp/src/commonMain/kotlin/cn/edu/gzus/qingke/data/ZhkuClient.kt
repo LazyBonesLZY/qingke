@@ -106,7 +106,7 @@ class ZhkuClient(
         }
     }
 
-    suspend fun ensureSession() {
+    override suspend fun ensureSession() {
         keepZhkuCookie()
         val home = fetchHome()
         if (isZhkuPasswordChange(home.body, home.url)) throw JwxtNeedFirstLogin()
@@ -454,11 +454,13 @@ internal fun parseZhkuTimetable(html: String, courses: List<ZhkuCourse>): List<L
     return slots
 }
 
-private fun parseZhkuCell(
+internal fun parseZhkuCell(
     inner: String,
     weekday: Int,
     periodLabel: String,
     catalog: Map<String, ZhkuCourse>,
+    // 各校课表页的节次行写法不一样，格子里没写 [xx节] 时才轮到它兜底。
+    periodFromLabel: (String) -> String = ::zhkuPeriodFromLabel,
 ): LessonSlot? {
     val fonts = Regex("""<font([^>]*)>([\s\S]*?)</font>""", RegexOption.IGNORE_CASE).findAll(inner).map { match ->
         val attrs = match.groupValues[1]
@@ -482,7 +484,7 @@ private fun parseZhkuCell(
     val notice = fonts.firstOrNull { it.name == "tzdbh" || it.title.contains("通知单") }?.text
         .orEmpty()
         .removePrefix("通知单编号：")
-    val period = parsed.period.ifBlank { zhkuPeriodFromLabel(periodLabel) }
+    val period = parsed.period.ifBlank { periodFromLabel(periodLabel) }
     return LessonSlot(
         courseId = course?.courseId?.ifBlank { null } ?: notice.ifBlank { courseName },
         courseName = courseName,

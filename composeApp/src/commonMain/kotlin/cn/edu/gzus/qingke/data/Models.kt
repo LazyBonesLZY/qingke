@@ -217,7 +217,7 @@ fun CustomJwxt.originClean(): String {
  * 学年学期、周历、选课队列。课表缩写和调课留着，换回去还能用。
  */
 fun AppSettings.forSchool(school: School): AppSettings {
-    val kingosoft = school == School.Zhku ||
+    val kingosoft = school == School.Zhku || school == School.Gdsty ||
         (school == School.Custom && customJwxt.normalizedKind() == "kingosoft")
     return copy(
         schoolId = school.id,

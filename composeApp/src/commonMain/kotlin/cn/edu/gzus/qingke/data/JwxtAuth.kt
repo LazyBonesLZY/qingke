@@ -34,6 +34,23 @@ const val GZIST_CHANGE_PASSWORD_URL = "https://ids.gzist.edu.cn/lyuapServer/logi
 const val GZIST_JWXT_ORIGIN = "https://jw.gzist.edu.cn"
 const val GZIST_SSO_SERVICE = "http://jw.gzist.edu.cn/sso/lyiotlogin"
 
+// 广东生态工程职业学院：综合系统（AIC，ASP.NET）出票，教务本身是强智 jsxsd。
+// 教务不给直登——jsxsd 登录页要验证码，而且账号只认 SSO 过来的票。
+const val GDTSY_AIC_ORIGIN = "https://aic.gdsty.edu.cn"
+const val GDTSY_JWXT_ORIGIN = "https://jw.gdsty.edu.cn"
+const val GDTSY_AIC_LOGIN_URL = "$GDTSY_AIC_ORIGIN/xsgl/xs/login/login.aspx"
+const val GDTSY_AIC_SLOGIN_URL =
+    "$GDTSY_AIC_ORIGIN/xsgl/xs/index/ilogin/slogin.aspx?AppId=410bcb4493ca4c05bfacf70585f04c47"
+const val GDTSY_CHANGE_PASSWORD_URL = "$GDTSY_AIC_ORIGIN/wx_xgmm/views/ewm.html"
+/** 课表页下拉里唯一的节次模板，取不到选中值时的兜底。 */
+const val GDTSY_KBJCMSID = "97AEEC590D96F04DE053110AA8C0F71A"
+/** 登录页 JsEncryptHelper.js 里的 1024 位公钥，拆成模数和指数喂 rsaEncrypt。 */
+const val GDTSY_RSA_MODULUS_B64 =
+    "gtIa0SI2956A1jbWw6QDW47eSMLtjRXg8FNehHPO06KnqCJtiiPnDrPNST/Wkw5P45AJVPe5jfMGZBDA6+brQGbTFYbexi1991sfV46sVLA37BpKjS/HVyZJVg7vWYfNFItlIPt+NHeXWbSrXfp79PUGaho3Z0qfT03xQwWNd90="
+const val GDTSY_RSA_EXPONENT_B64 = "AQAB"
+/** 登录按钮的 value 里是全角空格，服务端按这个字符串认提交。 */
+const val GDTSY_LOGIN_BUTTON = " 登\u3000录"
+
 data class LoginCaptcha(
     val id: String,
     val bytes: ByteArray,

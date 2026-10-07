@@ -403,7 +403,8 @@ fun LessonSlot.occupiesBlock(block: PeriodBlock): Boolean {
     val start = period.substringBefore("-").toIntOrNull()
     val end = period.substringAfter("-", start?.toString().orEmpty()).toIntOrNull()
     if (start == null || end == null) return periodToBlock(period) == block.label
-    val blockStart = block.label.substringBefore("-").toIntOrNull() ?: return false
+    // 中午那种没有编号的节次块，只能整块对上名字。
+    val blockStart = block.label.substringBefore("-").toIntOrNull() ?: return periodToBlock(period) == block.label
     val blockEnd = block.label.substringAfter("-").toIntOrNull() ?: blockStart
     return start <= blockEnd && end >= blockStart
 }

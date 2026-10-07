@@ -18,6 +18,7 @@ class AppRepository(
     private val gzusCas: GzusCasClient = GzusCasClient(ecard = ecard),
     private val zhku: ZhkuClient = ZhkuClient(),
     private val gzist: GzistClient = GzistClient(),
+    private val gdsty: GdstyClient = GdstyClient(),
     private val xiaoai: XiaoaiClient = XiaoaiClient(),
     private val holidays: HolidayClient = HolidayClient(),
     private val updates: UpdateClient = UpdateClient(),
@@ -29,6 +30,7 @@ class AppRepository(
             School.Gzus -> if (settings.gzusUsesCas()) gzusCas else gzus
             School.Zhku -> zhku
             School.Gzist -> gzist
+            School.Gdsty -> gdsty
             School.Custom -> customPortal(settings.customJwxt)
         }
     }
@@ -247,8 +249,7 @@ class AppRepository(
             return
         }
         if (usesZhkuSession()) {
-            val client = portal() as ZhkuClient
-            runCatching { client.ensureSession() }.getOrElse { failed ->
+            runCatching { portal().ensureSession() }.getOrElse { failed ->
                 if (failed is JwxtNeedFirstLogin) throw failed
                 if (isTransientNetwork(failed)) return
                 if (isSessionLost(failed.message.orEmpty())) {
@@ -512,6 +513,7 @@ class AppRepository(
     private fun usesZhkuSession(): Boolean {
         val settings = _state.value.settings
         return settings.school() == School.Zhku ||
+            settings.school() == School.Gdsty ||
             (settings.school() == School.Custom && settings.customJwxt.normalizedKind() == "kingosoft")
     }
 

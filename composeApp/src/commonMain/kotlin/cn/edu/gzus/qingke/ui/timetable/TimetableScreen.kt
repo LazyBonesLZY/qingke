@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -582,149 +583,156 @@ private fun ColumnScope.WeekGrid(
     val dayColumns = remember(slots, monday, settings, today, adjust) {
         (0..6).map { offset -> slots.forDate(monday.plus(DatePeriod(days = offset)), settings, today, adjust) }
     }
-    Card(
+    // 自适应：先量出可用高度，再按公式反算单块行高。
+    // 用显式高度而不是 weight(span)——连课合并后日列的 runs 数少于标签列的 blocks 数，
+    // spacedBy 产生的间隙数不同，weight 会让两侧行高对不齐。
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
             .then(if (fit) Modifier.weight(1f) else Modifier),
-        insideMargin = PaddingValues(if (fit) 4.dp else 6.dp),
     ) {
-        Column(
-            modifier = if (fit) Modifier.fillMaxSize() else Modifier,
-            verticalArrangement = Arrangement.spacedBy(if (fit || compact) 2.dp else CellGap),
+        val inside = if (fit) 4.dp else 6.dp
+        val headerApprox = if (compact) 46.dp else 54.dp
+        val minReadable = if (compact) 38.dp else 50.dp
+        // 三段式：够高就拉伸铺满整屏；略挤就压到可读下限仍然铺满；再挤才回退固定行高 + 卡片内滚动。
+        val bodyAvail = (maxHeight - headerApprox - inside * 2).coerceAtLeast(0.dp)
+        val bySpace = if (blocks.isEmpty()) {
+            cellHeight
+        } else {
+            ((bodyAvail - cellGap * (blocks.size - 1)) / blocks.size).coerceAtLeast(0.dp)
+        }
+        val useFit = fit && bySpace >= minReadable
+        val blockHeight = if (useFit) bySpace else cellHeight
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(if (fit) Modifier.fillMaxSize() else Modifier),
+            insideMargin = PaddingValues(inside),
         ) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(cellGap)) {
-                Spacer(Modifier.width(slotCol))
-                WeekdayNames.forEachIndexed { index, name ->
-                    val date = monday.plus(DatePeriod(days = index))
-                    val isToday = date == today
-                    val holiday = holidays.lookup(date)
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Text(
-                            name,
-                            textAlign = TextAlign.Center,
-                            fontSize = if (compact) 10.sp else 11.sp,
-                            fontWeight = if (isToday) FontWeight.SemiBold else FontWeight.Medium,
-                            color = if (isToday) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onSurfaceContainerVariant,
-                        )
-                        Text(
-                            weekDateLabel(date, monday),
-                            textAlign = TextAlign.Center,
-                            fontSize = if (compact) 10.sp else 11.sp,
-                            fontWeight = if (isToday) FontWeight.SemiBold else FontWeight.Normal,
-                            color = if (isToday) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onBackground,
-                        )
-                        if (holiday != null) {
-                            Text(
-                                holiday.chip(),
-                                textAlign = TextAlign.Center,
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = if (holiday.off) MiuixTheme.colorScheme.primary else workColor,
-                            )
-                        }
-                        val mark = adjustDayLabel(date, settings, adjust, today)
-                        if (mark.isNotBlank()) {
-                            Text(
-                                if (mark == "放假") "假" else "调",
-                                textAlign = TextAlign.Center,
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = MiuixTheme.colorScheme.primary,
-                            )
-                        }
-                    }
-                }
-            }
-            // 连课合并：同一门课连着占多个节次块时合成一条长块。
-            // 每列的 run 高度按跨块数分配权重，Σspan == 块数，所以各列总高天然对齐。
-            val dayRuns = remember(dayColumns, blocks) {
-                (0..6).map { index -> runsForDay(dayColumns[index], blocks) }
-            }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .then(if (fit) Modifier.weight(1f) else Modifier),
-                horizontalArrangement = Arrangement.spacedBy(cellGap),
+            Column(
+                modifier = when {
+                    useFit -> Modifier.fillMaxSize()
+                    fit -> Modifier.verticalScroll(rememberScrollState())
+                    else -> Modifier
+                },
+                verticalArrangement = Arrangement.spacedBy(cellGap),
             ) {
-                Column(
-                    modifier = Modifier
-                        .width(slotCol)
-                        .then(if (fit) Modifier.fillMaxHeight() else Modifier),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(cellGap),
-                ) {
-                    blocks.forEach { block ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(cellGap)) {
+                    Spacer(Modifier.width(slotCol))
+                    WeekdayNames.forEachIndexed { index, name ->
+                        val date = monday.plus(DatePeriod(days = index))
+                        val isToday = date == today
+                        val holiday = holidays.lookup(date)
                         Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .then(
-                                    if (fit) Modifier.weight(1f)
-                                    else Modifier.height(cellHeight),
-                                ),
+                            modifier = Modifier.weight(1f),
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center,
                         ) {
                             Text(
-                                block.label,
+                                name,
                                 textAlign = TextAlign.Center,
-                                fontSize = if (compact) 9.sp else 10.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
-                                maxLines = 1,
+                                fontSize = if (compact) 10.sp else 11.sp,
+                                fontWeight = if (isToday) FontWeight.SemiBold else FontWeight.Medium,
+                                color = if (isToday) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onSurfaceContainerVariant,
                             )
-                            if (clockShown && block.start.isNotBlank() && block.end.isNotBlank()) {
+                            Text(
+                                weekDateLabel(date, monday),
+                                textAlign = TextAlign.Center,
+                                fontSize = if (compact) 10.sp else 11.sp,
+                                fontWeight = if (isToday) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (isToday) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onBackground,
+                            )
+                            if (holiday != null) {
                                 Text(
-                                    block.start,
+                                    holiday.chip(),
                                     textAlign = TextAlign.Center,
-                                    fontSize = if (compact) 6.sp else 8.sp,
-                                    color = MiuixTheme.colorScheme.onSurfaceContainerVariant.copy(alpha = 0.86f),
-                                    maxLines = 1,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = if (holiday.off) MiuixTheme.colorScheme.primary else workColor,
                                 )
+                            }
+                            val mark = adjustDayLabel(date, settings, adjust, today)
+                            if (mark.isNotBlank()) {
                                 Text(
-                                    block.end,
+                                    if (mark == "放假") "假" else "调",
                                     textAlign = TextAlign.Center,
-                                    fontSize = if (compact) 6.sp else 8.sp,
-                                    color = MiuixTheme.colorScheme.onSurfaceContainerVariant.copy(alpha = 0.86f),
-                                    maxLines = 1,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MiuixTheme.colorScheme.primary,
                                 )
                             }
                         }
                     }
                 }
-                for (weekday in 1..7) {
-                    val date = monday.plus(DatePeriod(days = weekday - 1))
+                // 连课合并：同一门课连着占多个节次块时合成一条长块。
+                val dayRuns = remember(dayColumns, blocks) {
+                    (0..6).map { index -> runsForDay(dayColumns[index], blocks) }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(if (useFit) Modifier.fillMaxHeight() else Modifier),
+                    horizontalArrangement = Arrangement.spacedBy(cellGap),
+                ) {
                     Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .then(if (fit) Modifier.fillMaxHeight() else Modifier),
+                        modifier = Modifier.width(slotCol),
+                        horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(cellGap),
                     ) {
-                        dayRuns[weekday - 1].forEach { run ->
-                            WeekCell(
-                                slots = run.slots,
-                                today = date == today,
-                                shape = shape,
-                                aliases = aliases,
-                                roomAliases = settings.roomAliases,
-                                settings = settings,
-                                compact = compact,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .then(
-                                        if (fit) {
-                                            Modifier.weight(run.span.toFloat())
-                                        } else {
-                                            Modifier.height(
-                                                cellHeight * run.span + cellGap * (run.span - 1),
-                                            )
-                                        },
-                                    ),
-                                onOpen = onOpen,
-                            )
+                        blocks.forEach { block ->
+                            Column(
+                                modifier = Modifier.fillMaxWidth().height(blockHeight),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center,
+                            ) {
+                                Text(
+                                    block.label,
+                                    textAlign = TextAlign.Center,
+                                    fontSize = if (compact) 9.sp else 10.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                                    maxLines = 1,
+                                )
+                                if (clockShown && block.start.isNotBlank() && block.end.isNotBlank()) {
+                                    Text(
+                                        block.start,
+                                        textAlign = TextAlign.Center,
+                                        fontSize = if (compact) 6.sp else 8.sp,
+                                        color = MiuixTheme.colorScheme.onSurfaceContainerVariant.copy(alpha = 0.86f),
+                                        maxLines = 1,
+                                    )
+                                    Text(
+                                        block.end,
+                                        textAlign = TextAlign.Center,
+                                        fontSize = if (compact) 6.sp else 8.sp,
+                                        color = MiuixTheme.colorScheme.onSurfaceContainerVariant.copy(alpha = 0.86f),
+                                        maxLines = 1,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    for (weekday in 1..7) {
+                        val date = monday.plus(DatePeriod(days = weekday - 1))
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(cellGap),
+                        ) {
+                            dayRuns[weekday - 1].forEach { run ->
+                                WeekCell(
+                                    slots = run.slots,
+                                    today = date == today,
+                                    shape = shape,
+                                    aliases = aliases,
+                                    roomAliases = settings.roomAliases,
+                                    settings = settings,
+                                    compact = compact,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(blockHeight * run.span + cellGap * (run.span - 1)),
+                                    onOpen = onOpen,
+                                )
+                            }
                         }
                     }
                 }

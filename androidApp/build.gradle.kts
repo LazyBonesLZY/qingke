@@ -16,13 +16,17 @@ android {
         applicationId = "cn.edu.gzus.qingke"
         minSdk = 26
         targetSdk = 36
-        versionCode = 72
-        versionName = "1.7.22"
+        versionCode = 73
+        versionName = "1.7.23"
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
     }
     packaging {
+        // 提取 native 库再装：老设备/第三方安装器对 extractNativeLibs=false 支持参差不齐。
+        jniLibs {
+            useLegacyPackaging = true
+        }
         resources {
             excludes += setOf(
                 "META-INF/LICENSE.txt",
@@ -43,6 +47,10 @@ android {
             storePassword = keystoreProps.getProperty("storePassword", "")
             keyAlias = keystoreProps.getProperty("keyAlias", "qingke")
             keyPassword = keystoreProps.getProperty("keyPassword", "")
+            // 三套签名都开：部分第三方安装器和安全扫描只认 v1/v3。
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
         }
     }
     buildTypes {

@@ -10,6 +10,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.delay
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -30,10 +36,6 @@ import cn.edu.gzus.qingke.data.isLow
 import cn.edu.gzus.qingke.data.nextExam
 import cn.edu.gzus.qingke.data.nextLesson
 import cn.edu.gzus.qingke.data.nowDateTime
-import cn.edu.gzus.qingke.data.formatPeriodWithClock
-import cn.edu.gzus.qingke.data.periodClockRange
-import cn.edu.gzus.qingke.data.periodEnd
-import cn.edu.gzus.qingke.data.periodStart
 import cn.edu.gzus.qingke.data.resolvedCurrentWeek
 import cn.edu.gzus.qingke.data.resolved
 import cn.edu.gzus.qingke.data.isLeave
@@ -62,7 +64,16 @@ fun TodayScreen(
     contentPadding: PaddingValues,
     onSync: () -> Unit,
 ) {
-    val now = nowDateTime()
+    // 首页显示的是「下一节还有几分钟」「还剩几分」和上课进度，必须自己按时间重算。
+    // 以前 now 只在 composition 时取一次，整屏就冻住了（切 tab 或跨天才刷新）。
+    var tick by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (isActive) {
+            delay(TODAY_TICK_MILLIS)
+            tick++
+        }
+    }
+    val now = remember(tick) { nowDateTime() }
     val week = resolvedCurrentWeek(snapshot.settings, now.date)
     val weekCount = snapshot.settings.resolvedWeekCount(snapshot.slots)
     val weekday = weekdayIndex(now.date)
@@ -82,7 +93,7 @@ fun TodayScreen(
     val remain = next?.second
     val startMillis = if (hasClock) hero?.let { combineMillis(now.date, school.periodStartOf(it.period)) } ?: 0L else 0L
     val endMillis = if (hasClock) hero?.let { combineMillis(now.date, school.periodEndOf(it.period)) } ?: 0L else 0L
-    val nowMs = Clock.System.now().toEpochMilliseconds()
+    val nowMs = remember(tick) { Clock.System.now().toEpochMilliseconds() }
     val inClass = hasClock && remain != null && remain <= 0 && hero != null
     val progress = when {
         !inClass || endMillis <= startMillis -> 0f
@@ -309,3 +320,6 @@ fun TodayScreen(
         Spacer(Modifier.height(16.dp))
     }
 }
+
+/** 首页心跳间隔。倒计时是分钟级的，10 秒足够让显示跟得上，又不至于白耗电。 */
+private const val TODAY_TICK_MILLIS = 10_000L

@@ -169,10 +169,10 @@ fun convertQingkeToXiaoai(snapshot: AppSnapshot): XiaoaiConvertResult {
         night = 4,
         sections = if (snapshot.resolved().hasPeriodClock) {
             val school = snapshot.resolved()
+            // 只输出真的知道时间的节次。以前对不知道的节用内置广软表凭空补齐，
+            // 广生态（只有 1-12 节）会多出 13-16 四段假时间，还和 11/12 段在时间上重叠。
             (1..16).mapNotNull { index ->
-                // 优先按学校作息块均分；块里没时间才退回内置表。
-                val span = school.sectionTime(index)
-                    ?: (periodStart("$index-$index") to periodEnd("$index-$index"))
+                val span = school.sectionTime(index) ?: return@mapNotNull null
                 XiaoaiTimerSection(
                     section = index,
                     startTime = span.first,

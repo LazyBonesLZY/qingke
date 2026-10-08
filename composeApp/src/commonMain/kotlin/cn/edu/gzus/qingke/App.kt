@@ -85,7 +85,6 @@ import cn.edu.gzus.qingke.ui.components.QingkeBottomBar
 import cn.edu.gzus.qingke.ui.components.QingkePullRefresh
 import cn.edu.gzus.qingke.ui.components.QingkeSideRail
 import cn.edu.gzus.qingke.ui.components.QingkeWideFrame
-import cn.edu.gzus.qingke.ui.components.qingkeLayer
 import cn.edu.gzus.qingke.ui.components.rememberQingkeBackdrop
 import cn.edu.gzus.qingke.ui.detail.CourseDetailScreen
 import cn.edu.gzus.qingke.ui.grades.GradesScreen
@@ -345,7 +344,14 @@ fun App() {
         var pageWidthPx by remember { mutableFloatStateOf(1f) }
 
         BoxWithConstraints(Modifier.fillMaxSize()) {
-            val wide = maxWidth >= 840.dp || (maxWidth >= 720.dp && maxWidth > maxHeight)
+            // 宽屏判定必须用**未缩放**的尺寸。QingkeTheme 把 density 乘了 uiScale，
+            // 这里的 maxWidth 是缩放后的 dp，界面缩放一大就会掉出 840/720 阈值，
+            // 把平板/横屏从两栏打回单栏（连带废掉课表自适应）。
+            val uiScale = LocalQingkeUiScale.current
+            val logicalWidth = maxWidth * uiScale
+            val logicalHeight = maxHeight * uiScale
+            val wide = logicalWidth >= 840.dp ||
+                (logicalWidth >= 720.dp && logicalWidth > logicalHeight)
             CompositionLocalProvider(LocalQingkeWide provides wide) {
             Row(Modifier.fillMaxSize()) {
             if (wide) {

@@ -201,7 +201,7 @@ fun ThemeSettingsScreen(
                     label = choice.label,
                     summary = if (choice.hex.isEmpty()) "按课程自动配色" else choice.hex,
                     swatch = choice.swatch,
-                    selected = settings.courseTintHex.equals(choice.hex, ignoreCase = true),
+                    selected = normalizeTintHex(settings.courseTintHex) == normalizeTintHex(choice.hex),
                     onClick = {
                         onUpdate { it.copy(courseTintHex = choice.hex) }
                         showTintDialog = false
@@ -399,8 +399,11 @@ private fun tintLabel(hex: String): String {
         ?: "自定义 #$normalized"
 }
 
+/** 存的 hex 可能不带 "#"，比较前统一归一化，否则标签有名字但预览色块和 ✓ 都对不上。 */
+private fun normalizeTintHex(hex: String): String = hex.trim().removePrefix("#").uppercase()
+
 private fun tintSwatch(hex: String): Color? = CourseTintChoices
-    .firstOrNull { it.hex.isNotEmpty() && it.hex.equals(hex.trim(), ignoreCase = true) }
+    .firstOrNull { it.hex.isNotEmpty() && normalizeTintHex(it.hex) == normalizeTintHex(hex) }
     ?.swatch
 
 private data class AlphaChoice(val value: Float, val summary: String)

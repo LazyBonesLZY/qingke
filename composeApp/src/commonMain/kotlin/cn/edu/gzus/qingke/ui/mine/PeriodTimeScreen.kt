@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import cn.edu.gzus.qingke.data.AppSettings
 import cn.edu.gzus.qingke.data.AppSnapshot
+import cn.edu.gzus.qingke.data.normalizeClock
 import cn.edu.gzus.qingke.data.resolved
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
@@ -29,22 +30,6 @@ import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-
-/** 把 "8:5" / "08：05" / "0805" 之类都归一成 "HH:mm"，非法返回 null。 */
-internal fun normalizeClock(raw: String): String? {
-    val digits = raw.trim().replace('：', ':').replace(" ", "")
-    if (digits.isEmpty()) return null
-    val parts = when {
-        digits.contains(':') -> digits.split(":", limit = 2)
-        digits.length == 4 -> listOf(digits.substring(0, 2), digits.substring(2))
-        digits.length == 3 -> listOf(digits.substring(0, 1), digits.substring(1))
-        else -> return null
-    }
-    val h = parts.getOrNull(0)?.toIntOrNull() ?: return null
-    val m = parts.getOrNull(1)?.toIntOrNull() ?: return null
-    if (h !in 0..23 || m !in 0..59) return null
-    return "${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}"
-}
 
 /**
  * 两格都合法才写回；两格都清空则撤掉这一节的手动覆盖（回落到教务/内置值）。
@@ -54,7 +39,9 @@ private fun commitOrClear(start: String, end: String, onChange: (String?, String
     val s = normalizeClock(start)
     val e = normalizeClock(end)
     when {
-        s != null && e != null -> onChange(s, e)
+        // 起止反了（"10:00-09:00"）不当成有效输入，否则会原样上屏、
+        // 让进度条和提醒拿到一个负长度区间。
+        s != null && e != null -> if (s <= e) onChange(s, e) else Unit
         start.isBlank() && end.isBlank() -> onChange(null, null)
     }
 }

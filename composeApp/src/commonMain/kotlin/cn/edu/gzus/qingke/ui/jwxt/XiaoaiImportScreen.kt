@@ -1,6 +1,7 @@
 package cn.edu.gzus.qingke.ui.jwxt
 
 import androidx.compose.foundation.layout.Arrangement
+import cn.edu.gzus.qingke.data.sectionTime
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
@@ -80,10 +81,15 @@ fun XiaoaiImportScreen(
             FactsCard(
                 title = "将导入 ${converted.apiCourses.size} 门",
                 fields = listOf(
-                    "节次" to if (snapshot.resolved().hasPeriodClock) {
-                        if (snapshot.school() == School.Gzus) "16 节 · 广软作息" else "16 节 · 正方常见作息，学校没公布就不要开"
-                    } else {
-                        "${snapshot.resolved().jwxtName}没有公布作息，不会写入上课钟点，请在小爱里自己设时间"
+                    "节次" to run {
+                        val school = snapshot.resolved()
+                        val known = (1..16).count { school.sectionTime(it) != null }
+                        when {
+                            known == 0 ->
+                                "${school.jwxtName}没有公布作息，不会写入上课钟点，请在小爱里自己设时间"
+                            known >= 16 -> "16 节 · ${school.jwxtName}作息"
+                            else -> "$known 节 · ${school.jwxtName}作息（其余节次教务没给时间，不写入）"
+                        }
                     },
                     "学期起始" to snapshot.settings.termStart.ifBlank { "还没设第1周周一" },
                     "总周数" to converted.official.timer.totalWeek.toString(),

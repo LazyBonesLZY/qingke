@@ -1,6 +1,7 @@
 package cn.edu.gzus.qingke.ui.detail
 
 import androidx.compose.foundation.layout.Arrangement
+import cn.edu.gzus.qingke.data.periodText
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
@@ -85,7 +86,7 @@ fun CourseDetailScreen(
                         "周${WeekdayNames.getOrElse(slot.weekday - 1) { "?" }}"
                     }
                     LabeledCard(
-                        title = "$weekday  ${slot.periodLabel.ifBlank { slot.period }.let { if (it.endsWith("节")) it else "${it}节" }}",
+                        title = "$weekday  ${periodText(slot.period, slot.periodLabel)}",
                         rows = listOf(
                             "时间" to if (hasClock) clockRangeIn(slot.period, blocks) else "",
                             "调课" to today?.let { settings.shiftNoteFor(slot, it, adjust) }.orEmpty(),

@@ -32,8 +32,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -41,6 +43,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cn.edu.gzus.qingke.data.formatPeriod
+import cn.edu.gzus.qingke.data.clockRangeIn
 import cn.edu.gzus.qingke.data.AppSettings
 import cn.edu.gzus.qingke.data.AppSnapshot
 import cn.edu.gzus.qingke.data.LessonSlot
@@ -67,7 +70,6 @@ import cn.edu.gzus.qingke.data.nowDateTime
 import cn.edu.gzus.qingke.data.resolvedCurrentWeek
 import cn.edu.gzus.qingke.data.resolvedWeekCount
 import cn.edu.gzus.qingke.data.teachingWeekOn
-import cn.edu.gzus.qingke.data.formatPeriodWithClock
 import cn.edu.gzus.qingke.data.weekdayIndex
 import cn.edu.gzus.qingke.data.weeksInUse
 import cn.edu.gzus.qingke.nav.QingkeNavigator
@@ -149,9 +151,15 @@ private fun parseHexColor(hex: String): Color? {
     return if (raw.length == 6) Color(0xFF000000L or value) else Color(value)
 }
 
-/** 自动取字色：亮底用深字，暗底用浅字。带 alpha 的色块先按不透明基色算亮度。 */
-private fun autoInk(tint: Color): Color =
-    if (tint.copy(alpha = 1f).luminance() > 0.6f) CourseInkLight else CourseInkDark
+/**
+ * 自动取字色：亮底用深字，暗底用浅字。
+ *
+ * 必须按**合成后**的颜色算亮度——色块带透明度时会和卡片底色叠在一起，
+ * 只按不透明基色判断，会在「深色底 + 低透明度」时选出和实画底色同色系的字
+ * （例如强调蓝 30% 透明 → 实画是淡蓝，却按深蓝选出浅字，对比度掉到 1.3:1）。
+ */
+private fun autoInk(tint: Color, backdrop: Color): Color =
+    if (tint.compositeOver(backdrop).luminance() > 0.6f) CourseInkLight else CourseInkDark
 
 /** 课程色块底色：settings.courseTintHex 非空时全局覆盖，否则按 key 哈希取默认调色板，再套 settings.courseTintAlpha。 */
 private fun resolveTint(settings: AppSettings, key: String, dark: Boolean): Color {
@@ -160,25 +168,28 @@ private fun resolveTint(settings: AppSettings, key: String, dark: Boolean): Colo
     return base.copy(alpha = settings.courseTintAlpha.coerceIn(0.2f, 1f))
 }
 
-/** 课程色块字色：auto 按底色亮度、light/dark 强制、custom 用 courseInkHex。 */
-private fun resolveInk(settings: AppSettings, tint: Color): Color = when (settings.courseInkMode) {
-    "light" -> CourseInkLight
-    "dark" -> CourseInkDark
-    "custom" -> parseHexColor(settings.courseInkHex) ?: autoInk(tint)
-    else -> autoInk(tint)
-}
+/** 课程色块字色：auto 按合成后底色亮度、light/dark 强制、custom 用 courseInkHex。 */
+private fun resolveInk(settings: AppSettings, tint: Color, backdrop: Color): Color =
+    when (settings.courseInkMode) {
+        "light" -> CourseInkLight
+        "dark" -> CourseInkDark
+        "custom" -> parseHexColor(settings.courseInkHex) ?: autoInk(tint, backdrop)
+        else -> autoInk(tint, backdrop)
+    }
 
 /** 某一列里连续占着同一组课的一段（span 为跨了几个节次块）。 */
 private class DayRun(val span: Int, val slots: List<LessonSlot>)
 
 /**
  * 把一天切成若干 run：相邻节次块里是**同一组课**就并成一段，渲染成一条长块。
- * 一组课判等用 courseId（缺则课名）的有序列表，所以连着两节的高数会合并，
- * 而"高数 1-2 节 + 英语 3-4 节"这种不同课不会被并。
+ * 一组课判等用 courseId（缺则课名）**排序后**的列表：连着两节的高数会合并，
+ * "高数 1-2 节 + 英语 3-4 节"这种不同课不会被并。
+ * 排序是必要的——同一块里有多门冲突课时，教务给的源顺序在不同行可能不同，
+ * 不排序就会把本该合并的一组课判成不同。
  */
 private fun runsForDay(daySlots: List<LessonSlot>, blocks: List<PeriodBlock>): List<DayRun> {
     val cells = blocks.map { block -> daySlots.filter { it.occupiesBlock(block) } }
-    val keys = cells.map { cell -> cell.map { it.courseId.ifBlank { it.courseName } } }
+    val keys = cells.map { cell -> cell.map { it.courseId.ifBlank { it.courseName } }.sorted() }
     val runs = mutableListOf<DayRun>()
     var i = 0
     while (i < cells.size) {
@@ -571,7 +582,11 @@ private fun ColumnScope.WeekGrid(
 ) {
     val shape = RoundedCornerShape(if (compact) CellRadiusCompact else CellRadius)
     val workColor = if (isSystemInDarkTheme()) Color(0xFFE8B86D) else Color(0xFFC9782A)
-    val clockShown = hasClock && blocks.any { it.start.isNotBlank() }
+    // 左列的起止时间走和今日卡/提醒同一套解析（clockRangeIn 会在整校都没有作息时
+    // 回落内置表）。只看 block.start 的话，用户打开「有节次时间」后会出现
+    // 「左列没时间、今日卡却有」的自相矛盾。
+    fun clockOf(label: String): String = clockRangeIn(label, blocks)
+    val clockShown = hasClock && blocks.any { clockOf(it.label).isNotBlank() }
     val slotCol = when {
         compact && clockShown -> SlotColWithClockCompact
         compact -> SlotColCompact
@@ -676,8 +691,15 @@ private fun ColumnScope.WeekGrid(
                         .fillMaxWidth()
                         .then(if (useFit) Modifier.weight(1f) else Modifier),
                 ) {
+                    // 取整到整数 px：Dp 小数会让每个子项各自 roundToPx，n 个块累计
+                    // 最多溢出 n/2 px，最后一行被卡片圆角裁掉一点。宁可底部留不到 1px 空隙。
                     val blockHeight = if (useFit && blocks.isNotEmpty()) {
-                        ((maxHeight - cellGap * (blocks.size - 1)) / blocks.size).coerceAtLeast(2.dp)
+                        with(LocalDensity.current) {
+                            val availPx = maxHeight.toPx()
+                            val gapPx = cellGap.toPx()
+                            val rowPx = (availPx - gapPx * (blocks.size - 1)) / blocks.size
+                            rowPx.toInt().coerceAtLeast(2).toDp()
+                        }
                     } else {
                         cellHeight
                     }
@@ -706,16 +728,17 @@ private fun ColumnScope.WeekGrid(
                                     color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
                                     maxLines = 1,
                                 )
-                                if (clockShown && block.start.isNotBlank() && block.end.isNotBlank()) {
+                                val clock = clockOf(block.label)
+                                if (clockShown && clock.contains("-")) {
                                     Text(
-                                        block.start,
+                                        clock.substringBefore("-"),
                                         textAlign = TextAlign.Center,
                                         fontSize = if (compact) 6.sp else 8.sp,
                                         color = MiuixTheme.colorScheme.onSurfaceContainerVariant.copy(alpha = 0.86f),
                                         maxLines = 1,
                                     )
                                     Text(
-                                        block.end,
+                                        clock.substringAfter("-"),
                                         textAlign = TextAlign.Center,
                                         fontSize = if (compact) 6.sp else 8.sp,
                                         color = MiuixTheme.colorScheme.onSurfaceContainerVariant.copy(alpha = 0.86f),
@@ -770,7 +793,8 @@ private fun WeekCell(
     val dark = isSystemInDarkTheme()
     val first = slots.firstOrNull()
     val tint = first?.let { resolveTint(settings, it.courseId.ifBlank { it.courseName }, dark) }
-    val ink = resolveInk(settings, tint ?: courseTint("", dark))
+    // 字色按「色块叠在卡片底色上」的合成结果判断，见 autoInk 的注释。
+    val ink = resolveInk(settings, tint ?: courseTint("", dark), MiuixTheme.colorScheme.surfaceContainer)
     val empty = MiuixTheme.colorScheme.surfaceContainer.copy(alpha = 0.72f)
     Box(
         modifier = modifier

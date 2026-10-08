@@ -170,30 +170,76 @@ private fun blocksFor(blocks: List<PeriodBlock>, period: String): List<PeriodBlo
     }
 }
 
+/** 整所学校有没有任何一节带作息。用来区分「这个块没时间」和「全校都没作息」。 */
+private fun ResolvedSchool.anyBlockHasClock(): Boolean =
+    periodBlocks.any { it.start.isNotBlank() && it.end.isNotBlank() }
+
+/**
+ * 这一节的时间是不是已知的。
+ *
+ * 消费方靠它决定「不显示时间」还是「显示算出来的时间」——比如上课提醒在未知时必须不弹，
+ * 而不是拿别的学校的作息顶上去。
+ */
+fun ResolvedSchool.clockKnown(period: String): Boolean =
+    blocksFor(periodBlocks, period).any { it.start.isNotBlank() && it.end.isNotBlank() }
+
 /**
  * 下面这组是**按学校自己的作息**算时间，而不是用写死的表。
  *
  * 内置的 [periodStart] / [periodEnd] 是照广软的作息抄的；广生态之类的学校作息完全不同，
  * 拿它去算课程时间，就会出现「课表左边一列写 08:30，课程行却写 09:00」这种对不上的情况，
- * 上课提醒也会在错的时间弹。查不到对应节次块才退回内置表。
+ * 上课提醒也会在错的时间弹。
+ *
+ * 关键：**只有在整所学校都没有作息时才退回内置表**。某个块单独没时间（仲恺预设、自定义强智
+ * 的块本来就是空的，或教务只抄到一部分）必须返回空串——否则课表左列「没时间」、今日卡和提醒
+ * 「有别的学校的时间」，又变成两处对不上。
  */
-fun ResolvedSchool.periodStartOf(period: String): String =
-    blocksFor(periodBlocks, period).firstOrNull { it.start.isNotBlank() }?.start ?: periodStart(period)
+fun ResolvedSchool.periodStartOf(period: String): String {
+    val hit = blocksFor(periodBlocks, period).firstOrNull { it.start.isNotBlank() }
+    if (hit != null) return hit.start
+    return if (anyBlockHasClock()) "" else periodStart(period)
+}
 
-fun ResolvedSchool.periodEndOf(period: String): String =
-    blocksFor(periodBlocks, period).lastOrNull { it.end.isNotBlank() }?.end ?: periodEnd(period)
+fun ResolvedSchool.periodEndOf(period: String): String {
+    val hit = blocksFor(periodBlocks, period).lastOrNull { it.end.isNotBlank() }
+    if (hit != null) return hit.end
+    return if (anyBlockHasClock()) "" else periodEnd(period)
+}
 
 fun ResolvedSchool.clockRangeOf(period: String): String {
     val hit = blocksFor(periodBlocks, period).filter { it.start.isNotBlank() && it.end.isNotBlank() }
-    if (hit.isEmpty()) return periodClockRange(period)
-    return "${hit.first().start}-${hit.last().end}"
+    if (hit.isNotEmpty()) return "${hit.first().start}-${hit.last().end}"
+    return if (anyBlockHasClock()) "" else periodClockRange(period)
 }
 
 /** 同上，但直接吃节次块列表（调用方手上没有 ResolvedSchool 时用）。 */
 fun clockRangeIn(period: String, blocks: List<PeriodBlock>): String {
     val hit = blocksFor(blocks, period).filter { it.start.isNotBlank() && it.end.isNotBlank() }
-    if (hit.isEmpty()) return periodClockRange(period)
-    return "${hit.first().start}-${hit.last().end}"
+    if (hit.isNotEmpty()) return "${hit.first().start}-${hit.last().end}"
+    val anyClock = blocks.any { it.start.isNotBlank() && it.end.isNotBlank() }
+    return if (anyClock) "" else periodClockRange(period)
+}
+
+/** 把 "8:5" / "08：05" / "0805" 之类都归一成 "HH:mm"，非法返回 null。 */
+fun normalizeClock(raw: String): String? {
+    val digits = raw.trim().replace('：', ':').replace(" ", "")
+    if (digits.isEmpty()) return null
+    val parts = when {
+        digits.contains(':') -> digits.split(":", limit = 2)
+        digits.length == 4 -> listOf(digits.substring(0, 2), digits.substring(2))
+        digits.length == 3 -> listOf(digits.substring(0, 1), digits.substring(1))
+        else -> return null
+    }
+    val h = parts.getOrNull(0)?.toIntOrNull() ?: return null
+    val m = parts.getOrNull(1)?.toIntOrNull() ?: return null
+    if (h !in 0..23 || m !in 0..59) return null
+    return "${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}"
+}
+
+/** 节次文本：「1、2节」；「中午」这类没有编号的块不再硬套「节」字。 */
+fun periodText(period: String, label: String = ""): String {
+    val text = label.ifBlank { period }
+    return if (text.any { it.isDigit() } && !text.endsWith("节")) "${text}节" else text
 }
 
 private fun clockMinutes(clock: String): Int? {
@@ -232,12 +278,6 @@ fun ResolvedSchool.sectionTime(index: Int): Pair<String, String>? {
 fun ResolvedSchool.formatPeriod(period: String, periodLabel: String = "", hasClock: Boolean): String {
     val label = periodLabel.ifBlank { period }
     val clock = if (hasClock) clockRangeOf(period) else ""
-    return if (clock.isBlank()) label else "$label · $clock"
-}
-
-fun formatPeriodWithClock(period: String, periodLabel: String = "", hasClock: Boolean): String {
-    val label = periodLabel.ifBlank { period }
-    val clock = if (hasClock) periodClockRange(period) else ""
     return if (clock.isBlank()) label else "$label · $clock"
 }
 
@@ -291,10 +331,12 @@ fun nextLiveLesson(
 ): LiveLesson? = liveLessonFrom(slots.forDate(date, settings, today, adjust), time, blocks)
 
 private fun blockStart(blocks: List<PeriodBlock>, period: String): String =
-    blocksFor(blocks, period).firstOrNull { it.start.isNotBlank() }?.start ?: periodStart(period)
+    blocksFor(blocks, period).firstOrNull { it.start.isNotBlank() }?.start
+        ?: if (blocks.any { it.start.isNotBlank() && it.end.isNotBlank() }) "" else periodStart(period)
 
 private fun blockEnd(blocks: List<PeriodBlock>, period: String): String =
-    blocksFor(blocks, period).lastOrNull { it.end.isNotBlank() }?.end ?: periodEnd(period)
+    blocksFor(blocks, period).lastOrNull { it.end.isNotBlank() }?.end
+        ?: if (blocks.any { it.start.isNotBlank() && it.end.isNotBlank() }) "" else periodEnd(period)
 
 private fun liveLessonFrom(
     day: List<LessonSlot>,

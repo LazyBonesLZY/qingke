@@ -238,17 +238,15 @@ private fun ResolvedSchool.applyPeriodTimes(times: Map<String, String>): Pair<Re
     var changed = false
     val patched = periodBlocks.map { block ->
         val parts = times[block.label]?.trim().orEmpty().split("-", limit = 2)
-        if (parts.size != 2) {
+        // 两侧都必须能解析成 HH:mm 才采纳。半截值（"14:10-"）会让
+        // periodEndOf 拿到真值、clockRangeOf 却整块跳过，两个 helper 互相打架。
+        val start = parts.getOrNull(0)?.trim().orEmpty().let(::normalizeClock)
+        val end = parts.getOrNull(1)?.trim().orEmpty().let(::normalizeClock)
+        if (parts.size != 2 || start == null || end == null) {
             block
         } else {
-            val start = parts[0].trim()
-            val end = parts[1].trim()
-            if (start.isBlank() && end.isBlank()) {
-                block
-            } else {
-                changed = true
-                block.copy(start = start, end = end)
-            }
+            changed = true
+            block.copy(start = start, end = end)
         }
     }
     return copy(periodBlocks = patched) to changed

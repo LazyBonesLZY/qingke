@@ -142,9 +142,12 @@ object QingkeWidgets {
         val now = nowDateTime()
         val nowMs = System.currentTimeMillis()
         val today = now.date
+        // 只遍历学校真实的节次块。以前硬探 1..16，广生态（只有 1-12 节）
+        // 会多出 13-16 四个内置广软时刻，白排 4 次无意义唤醒。
         val next = if (school.hasPeriodClock) {
-            (1..16)
-                .flatMap { listOf(school.periodStartOf("$it-$it"), school.periodEndOf("$it-$it")) }
+            school.periodBlocks
+                .flatMap { listOf(it.start, it.end) }
+                .filter { it.isNotBlank() }
                 .mapNotNull { combineMillis(today, it).takeIf { ms -> ms > nowMs } }
                 .minOrNull()
         } else {
@@ -709,10 +712,8 @@ object QingkeWidgets {
         left.period == right.period &&
             (left.courseId.isNotBlank() && left.courseId == right.courseId || left.courseName == right.courseName)
 
-    private fun periodText(slot: LessonSlot): String {
-        val period = slot.periodLabel.ifBlank { slot.period }
-        return if (period.endsWith("节")) period else "${period}节"
-    }
+    private fun periodText(slot: LessonSlot): String =
+        cn.edu.gzus.qingke.data.periodText(slot.period, slot.periodLabel)
 
     private fun ink(dark: Boolean): Int = if (dark) 0xFFF4F4F5.toInt() else 0xFF1A1A1A.toInt()
 

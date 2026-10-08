@@ -536,15 +536,55 @@ private fun zhkuPeriodSpan(raw: String): String {
     return if (lo == hi) "$lo" else "$lo-$hi"
 }
 
-internal fun zhkuPeriodFromLabel(label: String): String = when {
-    label.contains("十一十二") -> "10-12"
-    label.contains("第一二") || label.contains("一二节") -> "1-2"
-    label.contains("第三四") || label.contains("三四节") -> "3-4"
-    label.contains("第六七") || label.contains("六七节") -> "6-7"
-    label.contains("第八九") || label.contains("八九节") -> "8-9"
-    label.contains("第五节") -> "5"
-    label.contains("第十") -> "10-12"
-    else -> ""
+/** 中文数字节号：十一/十二 要整体识别，不能拆成 十 + 一。 */
+private val ZhkuCnDigits = mapOf(
+    '一' to 1, '二' to 2, '三' to 3, '四' to 4, '五' to 5,
+    '六' to 6, '七' to 7, '八' to 8, '九' to 9,
+)
+
+private fun zhkuCnNumbers(label: String): List<Int> {
+    val out = mutableListOf<Int>()
+    var i = 0
+    while (i < label.length) {
+        val c = label[i]
+        if (c == '十') {
+            val next = ZhkuCnDigits[label.getOrNull(i + 1)]
+            if (next != null) {
+                out += 10 + next
+                i += 2
+            } else {
+                out += 10
+                i += 1
+            }
+            continue
+        }
+        ZhkuCnDigits[c]?.let { out += it }
+        i++
+    }
+    return out
+}
+
+internal fun zhkuPeriodFromLabel(label: String): String {
+    if (label.contains("中午")) return "中午"
+    // 阿拉伯数字写法（「1、2节」「第1,2节」）没有歧义，优先按节号区间解析。
+    val arabic = Regex("""\d+""").findAll(label).map { it.value.toInt() }.toList()
+    val nums = arabic.ifEmpty { zhkuCnNumbers(label) }
+    if (nums.isNotEmpty()) {
+        val lo = nums.min()
+        val hi = nums.max()
+        return if (lo == hi) "$lo" else "$lo-$hi"
+    }
+    // 剩下的少数固定写法。
+    return when {
+        label.contains("十一十二") -> "10-12"
+        label.contains("第一二") || label.contains("一二节") -> "1-2"
+        label.contains("第三四") || label.contains("三四节") -> "3-4"
+        label.contains("第六七") || label.contains("六七节") -> "6-7"
+        label.contains("第八九") || label.contains("八九节") -> "8-9"
+        label.contains("第五节") -> "5"
+        label.contains("第十") -> "10-12"
+        else -> ""
+    }
 }
 
 internal fun parseZhkuPractices(

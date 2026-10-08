@@ -1,6 +1,7 @@
 package cn.edu.gzus.qingke.data
 
 import kotlinx.datetime.DatePeriod
+import cn.edu.gzus.qingke.data.periodText
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.plus
 import kotlinx.serialization.json.Json
@@ -38,6 +39,8 @@ fun AppSnapshot.liveNotice(now: LocalDateTime, nowMs: Long): LiveNotice? {
         ?: return null
     if (!next.inClass && next.minutesToStart > settings.resolvedRemindLead()) return null
     val slot = next.slot
+    // 这一节的作息未知时直接不弹：宁可没有提醒，也不能拿别的学校的作息在错的时间弹。
+    if (!school.clockKnown(slot.period)) return null
     val startMillis = combineMillis(now.date, school.periodStartOf(slot.period))
     val endMillis = combineMillis(now.date, school.periodEndOf(slot.period))
     if (startMillis <= 0L || endMillis <= startMillis) return null
@@ -46,7 +49,7 @@ fun AppSnapshot.liveNotice(now: LocalDateTime, nowMs: Long): LiveNotice? {
         nowMs >= endMillis -> 1f
         else -> ((nowMs - startMillis).toFloat() / (endMillis - startMillis).toFloat()).coerceIn(0f, 1f)
     }
-    val period = slot.periodLabel.ifBlank { slot.period }.let { if (it.endsWith("节")) it else "${it}节" }
+    val period = periodText(slot.period, slot.periodLabel)
     val clock = school.clockRangeOf(slot.period).replace("-", "–")
     val room = slot.room.ifBlank { "教室待定" }
     val eta = if (next.inClass) next.minutesToEnd else next.minutesToStart

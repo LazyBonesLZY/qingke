@@ -1,6 +1,8 @@
 package cn.edu.gzus.qingke.ui.today
 
 import androidx.compose.foundation.layout.Arrangement
+import kotlinx.coroutines.delay
+import cn.edu.gzus.qingke.data.periodText
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
@@ -12,7 +14,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import kotlinx.coroutines.isActive
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
@@ -72,13 +73,12 @@ fun TodayScreen(
     // 不空转耗电；前台则最多每秒推进一次，倒计时和进度条就是实时的。
     var tick by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
-        var lastSecond = -1L
         while (isActive) {
-            val second = withFrameNanos { it } / 1_000_000_000L
-            if (second != lastSecond) {
-                lastSecond = second
-                tick++
-            }
+            // 按整秒对齐的 delay，而不是 withFrameNanos：帧时钟循环会让
+            // BroadcastFrameClock.hasAwaiters 恒真，前台每个 vsync 都产一帧，
+            // App 永不 idle（实测 hasInvalidations 恒 true）。delay 只唤醒一次。
+            delay(1_000L - Clock.System.now().toEpochMilliseconds() % 1_000L)
+            tick++
         }
     }
     // 从后台切回来立刻推一次：帧时钟在后台是停的，回来虽然也会自己推进，
@@ -160,7 +160,7 @@ fun TodayScreen(
                     title = hero.courseName,
                     eyebrow = eta,
                     facts = listOf(
-                        "节次" to (hero.periodLabel.ifBlank { hero.period }.let { if (it.endsWith("节")) it else "${it}节" }),
+                        "节次" to periodText(hero.period, hero.periodLabel),
                         "时间" to if (hasClock) school.clockRangeOf(hero.period).replace("-", "–") else "",
                         "地点" to hero.room,
                         "老师" to hero.teacher,

@@ -132,7 +132,13 @@ fun App() {
         else -> ""
     }
     val backgroundImage = rememberQingkeBackgroundImage(bgSource)
-    QingkeTheme(settings = snapshot.settings, backgroundImage = backgroundImage) {
+    // 模糊底栏的采样图层，必须在 QingkeTheme 之前建好：主题会把背景画进这个图层。
+    val backdrop = rememberQingkeBackdrop()
+    QingkeTheme(
+        settings = snapshot.settings,
+        backgroundImage = backgroundImage,
+        backdrop = backdrop,
+    ) {
         val nav = remember { QingkeNavigator() }
         val snackbar = remember { SnackbarHostState() }
         val scope = rememberCoroutineScope()
@@ -149,7 +155,6 @@ fun App() {
         }
         val captcha by repo.captcha.collectAsState()
         val captchaError by repo.captchaError.collectAsState()
-        val backdrop = rememberQingkeBackdrop()
         var busyJobs by remember { mutableStateOf(emptySet<String>()) }
         val busy = "sync" in busyJobs
         var loginError by remember { mutableStateOf<String?>(null) }
@@ -350,14 +355,8 @@ fun App() {
                     .fillMaxHeight()
                     .onSizeChanged { pageWidthPx = it.width.toFloat().coerceAtLeast(1f) },
             ) {
-        // backdrop 的记录源：整屏铺一层 surface 底色，模糊才有东西可采。
-        // 底色必须是图层的**子节点**——写在 .qingkeLayer() 前面会落在图层外面，
-        // 图层记录到空的，模糊出来就是黑的。
-        // 底栏是 Scaffold 的 bottomBar，必须留在图层外面：放进图层会让它采样到自己，
-        // miuix 的模糊管线会栈溢出直接 SIGSEGV。
-        Box(Modifier.fillMaxSize().qingkeLayer(backdrop)) {
-            Box(Modifier.fillMaxSize().background(MiuixTheme.colorScheme.surface))
-        }
+        // 背景（壁纸 + scrim + 可读性底色）由 QingkeTheme 整屏画好，并同时作为模糊底栏的
+        // 采样图层——底栏要透出的是背景，不是一块纯色。
         Scaffold(
             modifier = Modifier
                 .fillMaxSize()

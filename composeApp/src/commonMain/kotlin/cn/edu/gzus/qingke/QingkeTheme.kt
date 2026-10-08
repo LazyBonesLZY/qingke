@@ -16,6 +16,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import cn.edu.gzus.qingke.data.AppSettings
+import cn.edu.gzus.qingke.ui.components.qingkeLayer
+import top.yukonga.miuix.kmp.blur.LayerBackdrop
 import cn.edu.gzus.qingke.data.BACKGROUND_SYSTEM
 import top.yukonga.miuix.kmp.theme.ColorSchemeMode
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -41,6 +43,7 @@ val LocalQingkeUiScale = staticCompositionLocalOf { 1f }
 fun QingkeTheme(
     settings: AppSettings = AppSettings(),
     backgroundImage: ImageBitmap? = null,
+    backdrop: LayerBackdrop? = null,
     content: @Composable () -> Unit,
 ) {
     val dark = isSystemInDarkTheme()
@@ -100,17 +103,29 @@ fun QingkeTheme(
         ) {
             ApplySystemBars()
             Box(Modifier.fillMaxSize()) {
-                if (customBg) {
-                    Image(
-                        bitmap = backgroundImage,
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop,
-                    )
-                    // 用轻量底衬而不是整层 scrim：只稍微压暗一点，
-                    // 让上面 α0.72~0.80 的 surface 可读，同时壁纸仍透得出。
-                    val scrim = if (dark) Color.Black.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.16f)
-                    Box(Modifier.fillMaxSize().background(scrim))
+                // 背景整屏画一次，并且作为模糊底栏的采样图层。
+                // 关键：壁纸、scrim、可读性底色都要在图层里——图层只有一块纯色的话，
+                // 模糊出来还是纯色（白/黑），透不出背景。
+                // 这个 Box 是 content() 的兄弟节点，底栏在 content() 里面，
+                // 所以底栏不会被记录进它自己采样的图层（否则 miuix 模糊会自反馈崩）。
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .then(if (backdrop != null) Modifier.qingkeLayer(backdrop) else Modifier),
+                ) {
+                    if (customBg) {
+                        Image(
+                            bitmap = backgroundImage,
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop,
+                        )
+                        // 用轻量底衬而不是整层 scrim：只稍微压暗一点，
+                        // 让上面 α0.72~0.80 的 surface 可读，同时壁纸仍透得出。
+                        val scrim = if (dark) Color.Black.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.16f)
+                        Box(Modifier.fillMaxSize().background(scrim))
+                    }
+                    Box(Modifier.fillMaxSize().background(MiuixTheme.colorScheme.surface))
                 }
                 content()
             }

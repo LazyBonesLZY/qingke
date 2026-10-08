@@ -7,6 +7,7 @@ import io.ktor.client.request.header
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import io.ktor.http.Parameters
+import kotlinx.coroutines.delay
 import kotlinx.datetime.DatePeriod
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.plus
@@ -94,14 +95,31 @@ class GdstyClient(
         pendingCaptchaId = ""
         lastStudentId = studentId
 
-        val ticket = fetchTicket()
-        if (ticket.isBlank()) error("综合系统登录了，但没给出教务票据")
-        client.get(ticket) {
-            header(HttpHeaders.UserAgent, QINGKE_UA)
-            header(HttpHeaders.Referrer, "$AIC/")
+        if (!enterJwxt()) error("综合系统登录了，教务会话没建起来。再试一次。")
+    }
+
+    /**
+     * 换票 → 进教务 → 确认会话建起来了。
+     *
+     * AIC 那侧一直很稳，卡住的多半是这一步：票据是一次性的、还有时效，
+     * 教务偶尔会把带票的请求打回登录页。所以失败就重新换一张票再来，别让用户手动重登。
+     */
+    private suspend fun enterJwxt(attempts: Int = 3): Boolean {
+        for (attempt in 0 until attempts) {
+            if (attempt > 0) delay(300L * attempt)
+            val ticket = runCatching { fetchTicket() }.getOrDefault("")
+            if (ticket.isBlank()) continue
+            runCatching {
+                client.get(ticket) {
+                    header(HttpHeaders.UserAgent, QINGKE_UA)
+                    header(HttpHeaders.Referrer, "$AIC/")
+                }
+            }
+            keepJwCookie()
+            val home = runCatching { fetchHome() }.getOrDefault("")
+            if (home.isNotBlank() && !isGdstyLoginPage(home)) return true
         }
-        keepJwCookie()
-        if (isGdstyLoginPage(fetchHome())) error("综合系统登录了，教务会话没建起来。再试一次。")
+        return false
     }
 
     /** slogin.aspx 返回的页面里，跳转地址写在 meta refresh 的 content 里。 */
@@ -437,20 +455,26 @@ internal fun kingosoftPeriodTimes(
     tableId: String,
     keyOf: (rawTh: String) -> String,
 ): Map<String, String> {
+    fun scan(source: String): Map<String, String> {
+        val out = mutableMapOf<String, String>()
+        for (row in source.split(Regex("""<tr\b""", RegexOption.IGNORE_CASE)).drop(1)) {
+            val th = Regex("""<th[^>]*>([\s\S]*?)</th>""", RegexOption.IGNORE_CASE).find(row) ?: continue
+            val raw = th.groupValues[1]
+            val key = keyOf(raw)
+            if (key.isBlank()) continue
+            val hit = ClockRange.find(zhkuPlain(raw)) ?: continue
+            out[key] = "${hit.groupValues[1]}-${hit.groupValues[2]}"
+        }
+        return out
+    }
+
     val table = Regex(
         """<table[^>]*id="${Regex.escape(tableId)}"[^>]*>([\s\S]*?)</table>""",
         RegexOption.IGNORE_CASE,
-    ).find(html)?.groupValues?.get(1) ?: return emptyMap()
-    val out = mutableMapOf<String, String>()
-    for (row in table.split(Regex("""<tr\b""", RegexOption.IGNORE_CASE)).drop(1)) {
-        val th = Regex("""<th[^>]*>([\s\S]*?)</th>""", RegexOption.IGNORE_CASE).find(row) ?: continue
-        val raw = th.groupValues[1]
-        val key = keyOf(raw)
-        if (key.isBlank()) continue
-        val hit = ClockRange.find(zhkuPlain(raw)) ?: continue
-        out[key] = "${hit.groupValues[1]}-${hit.groupValues[2]}"
-    }
-    return out
+    ).find(html)?.groupValues?.get(1)
+    // 有的教务把节次时间挪到另一张表里，表 id 对不上就整页兜底扫一遍。
+    // 匹配要求「N、M节 … HH:mm-HH:mm」同时出现，误抓的概率很低。
+    return if (table != null) scan(table).ifEmpty { scan(html) } else scan(html)
 }
 
 /** 生态：节次行是「1、2节 08:30-09:50」，键与 GdstyPeriods 的 label 对齐。 */

@@ -90,8 +90,10 @@ fun PeriodTimeScreen(
         Spacer(Modifier.height(6.dp))
         Text(
             when {
-                fetched.isNotEmpty() -> "当前时间是从教务课表页自动抄下来的，共 ${fetched.size} 节。你改过的会盖在上面。"
-                else -> "这所学校的课表页没带节次时间，现在用的是内置预设。你可以自己改。"
+                fetched.isNotEmpty() ->
+                    "当前时间是从教务课表页自动抄下来的，共 ${fetched.size} 节。你改过的会盖在上面。"
+                else ->
+                    "还没从教务抄到节次时间。同步一次课表就会自动抄；抄不到就继续用内置预设，也可以自己改。"
             },
             modifier = Modifier.padding(horizontal = 16.dp),
             color = MiuixTheme.colorScheme.onSurfaceContainerVariant,

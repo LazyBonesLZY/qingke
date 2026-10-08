@@ -11,8 +11,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.delay
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
@@ -23,6 +23,7 @@ import cn.edu.gzus.qingke.data.formatPeriod
 import cn.edu.gzus.qingke.data.periodStartOf
 import cn.edu.gzus.qingke.data.periodEndOf
 import cn.edu.gzus.qingke.data.clockRangeOf
+import cn.edu.gzus.qingke.QingkeOnResume
 import cn.edu.gzus.qingke.data.AppSnapshot
 import cn.edu.gzus.qingke.data.WeekdayFull
 import cn.edu.gzus.qingke.data.activeIn
@@ -66,20 +67,35 @@ fun TodayScreen(
 ) {
     // 首页显示的是「下一节还有几分钟」「还剩几分」和上课进度，必须自己按时间重算。
     // 以前 now 只在 composition 时取一次，整屏就冻住了（切 tab 或跨天才刷新）。
+    //
+    // 驱动用帧时钟而不是 delay：Compose 只在出帧时推进，所以退到后台会自动挂起、
+    // 不空转耗电；前台则最多每秒推进一次，倒计时和进度条就是实时的。
     var tick by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
+        var lastSecond = -1L
         while (isActive) {
-            delay(TODAY_TICK_MILLIS)
-            tick++
+            val second = withFrameNanos { it } / 1_000_000_000L
+            if (second != lastSecond) {
+                lastSecond = second
+                tick++
+            }
         }
     }
+    // 从后台切回来立刻推一次：帧时钟在后台是停的，回来虽然也会自己推进，
+    // 但显式再推一次能保证第一帧就是当前时间，不会闪一下旧数据。
+    QingkeOnResume { tick++ }
     val now = remember(tick) { nowDateTime() }
     val week = resolvedCurrentWeek(snapshot.settings, now.date)
     val weekCount = snapshot.settings.resolvedWeekCount(snapshot.slots)
     val weekday = weekdayIndex(now.date)
-    val todaySlots = snapshot.slots.forDate(now.date, snapshot.settings, now.date, snapshot.scheduleAdjust)
-    val weekPractices = if (week >= 1) snapshot.practices.filter { it.activeIn(week) } else emptyList()
-    val school = snapshot.resolved()
+    // 这几个只跟「哪一天/哪份数据」有关，跟秒无关，按天缓存，免得每秒重算。
+    val todaySlots = remember(snapshot, now.date) {
+        snapshot.slots.forDate(now.date, snapshot.settings, now.date, snapshot.scheduleAdjust)
+    }
+    val weekPractices = remember(snapshot, week) {
+        if (week >= 1) snapshot.practices.filter { it.activeIn(week) } else emptyList()
+    }
+    val school = remember(snapshot) { snapshot.resolved() }
     val hasClock = school.hasPeriodClock
     val next = if (hasClock) {
         nextLesson(
@@ -320,6 +336,3 @@ fun TodayScreen(
         Spacer(Modifier.height(16.dp))
     }
 }
-
-/** 首页心跳间隔。倒计时是分钟级的，10 秒足够让显示跟得上，又不至于白耗电。 */
-private const val TODAY_TICK_MILLIS = 10_000L

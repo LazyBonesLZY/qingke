@@ -45,3 +45,8 @@ actual fun rememberQingkeBackgroundImage(source: String): ImageBitmap? = remembe
         decodeImageBytes(file.readBytes())
     }.getOrNull()
 }
+
+/** 桌面端没有前后台概念，空实现。 */
+@Composable
+actual fun QingkeOnResume(onResume: () -> Unit) = Unit
+

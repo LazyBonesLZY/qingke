@@ -153,6 +153,8 @@ fun App() {
                 if (date != calendarDay) calendarDay = date
             }
         }
+        // 从后台切回来先校正一次日期，别等下一个 60 秒。
+        QingkeOnResume { calendarDay = nowDateTime().date }
         val captcha by repo.captcha.collectAsState()
         val captchaError by repo.captchaError.collectAsState()
         var busyJobs by remember { mutableStateOf(emptySet<String>()) }

@@ -21,6 +21,10 @@ import android.util.SizeF
 import android.util.TypedValue
 import android.widget.RemoteViews
 import cn.edu.gzus.qingke.MainActivity
+import cn.edu.gzus.qingke.data.periodStartOf
+import cn.edu.gzus.qingke.data.periodEndOf
+import cn.edu.gzus.qingke.data.clockRangeOf
+import cn.edu.gzus.qingke.data.ResolvedSchool
 import cn.edu.gzus.qingke.data.AppSnapshot
 import cn.edu.gzus.qingke.data.LessonSlot
 import cn.edu.gzus.qingke.data.WeekdayNames
@@ -120,7 +124,7 @@ object QingkeWidgets {
     fun scheduleNextTick(context: Context) {
         runCatching {
             val alarms = context.getSystemService(AlarmManager::class.java) ?: return
-            val at = nextBoundaryMillis(snapshot(context).resolved().hasPeriodClock) ?: return
+            val at = nextBoundaryMillis(snapshot(context).resolved()) ?: return
             val intent = Intent(context, WidgetTickReceiver::class.java)
                 .setAction(ACTION_TICK)
             val pending = PendingIntent.getBroadcast(
@@ -134,13 +138,13 @@ object QingkeWidgets {
     }
 
     /** 今天下一个上课或下课的时刻；今天都过完了就等明天零点过五分。 */
-    private fun nextBoundaryMillis(hasClock: Boolean): Long? {
+    private fun nextBoundaryMillis(school: ResolvedSchool): Long? {
         val now = nowDateTime()
         val nowMs = System.currentTimeMillis()
         val today = now.date
-        val next = if (hasClock) {
+        val next = if (school.hasPeriodClock) {
             (1..16)
-                .flatMap { listOf(periodStart("$it-$it"), periodEnd("$it-$it")) }
+                .flatMap { listOf(school.periodStartOf("$it-$it"), school.periodEndOf("$it-$it")) }
                 .mapNotNull { combineMillis(today, it).takeIf { ms -> ms > nowMs } }
                 .minOrNull()
         } else {
@@ -354,10 +358,11 @@ object QingkeWidgets {
             drawCentered(canvas, "今天没有课", box.centerX(), box.centerY(), paint(context, muted(dark), 14f, false))
             return
         }
-        val hasClock = snap.resolved().hasPeriodClock
+        val school = snap.resolved()
+        val hasClock = school.hasPeriodClock
         val now = nowDateTime()
         val live = if (hasClock) {
-            nextLiveLesson(snap.slots, today, snap.settings, today, now.time, snap.scheduleAdjust)
+            nextLiveLesson(snap.slots, today, snap.settings, today, now.time, snap.scheduleAdjust, school.periodBlocks)
         } else {
             null
         }
@@ -386,7 +391,7 @@ object QingkeWidgets {
         }
         y += dp(context, 4f)
         val meta = paint(context, muted(dark), if (large) 13f else 11f, false)
-        val clock = if (hasClock) periodClockRange(focus.period).replace("-", "–") else ""
+        val clock = if (hasClock) school.clockRangeOf(focus.period).replace("-", "–") else ""
         val detail = listOf(periodText(focus), clock, focus.room).filter { it.isNotBlank() }
         detail.take(if (large) 3 else 2).forEach { line ->
             if (y > box.bottom) return@forEach
@@ -423,9 +428,10 @@ object QingkeWidgets {
             return
         }
         val now = nowDateTime()
-        val hasClock = snap.resolved().hasPeriodClock
+        val school = snap.resolved()
+        val hasClock = school.hasPeriodClock
         val live = if (hasClock) {
-            nextLiveLesson(snap.slots, today, snap.settings, today, now.time, snap.scheduleAdjust)
+            nextLiveLesson(snap.slots, today, snap.settings, today, now.time, snap.scheduleAdjust, school.periodBlocks)
         } else {
             null
         }
@@ -470,7 +476,7 @@ object QingkeWidgets {
             val textLeft = row.left + dp(context, 12f)
             val textW = row.width() - dp(context, 18f)
             val period = periodText(slot)
-            val clock = if (hasClock) periodClockRange(slot.period).replace("-", "–") else ""
+            val clock = if (hasClock) school.clockRangeOf(slot.period).replace("-", "–") else ""
             val name = paint(context, ink(dark), if (threeLine) 13f else 12f, true)
             val meta = paint(context, muted(dark), 10f, false)
             val badge = if (nowClass) "上课中" else if (nextClass) "下一节" else ""

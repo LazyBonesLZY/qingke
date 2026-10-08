@@ -13,6 +13,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import cn.edu.gzus.qingke.data.formatPeriod
+import cn.edu.gzus.qingke.data.periodStartOf
+import cn.edu.gzus.qingke.data.periodEndOf
+import cn.edu.gzus.qingke.data.clockRangeOf
 import cn.edu.gzus.qingke.data.AppSnapshot
 import cn.edu.gzus.qingke.data.WeekdayFull
 import cn.edu.gzus.qingke.data.activeIn
@@ -66,11 +70,18 @@ fun TodayScreen(
     val weekPractices = if (week >= 1) snapshot.practices.filter { it.activeIn(week) } else emptyList()
     val school = snapshot.resolved()
     val hasClock = school.hasPeriodClock
-    val next = if (hasClock) nextLesson(snapshot.slots, now.date, snapshot.settings, now.date, now.time, snapshot.scheduleAdjust) else null
+    val next = if (hasClock) {
+        nextLesson(
+            snapshot.slots, now.date, snapshot.settings, now.date, now.time,
+            snapshot.scheduleAdjust, school.periodBlocks,
+        )
+    } else {
+        null
+    }
     val hero = next?.first ?: if (!hasClock) todaySlots.firstOrNull() else null
     val remain = next?.second
-    val startMillis = if (hasClock) hero?.let { combineMillis(now.date, periodStart(it.period)) } ?: 0L else 0L
-    val endMillis = if (hasClock) hero?.let { combineMillis(now.date, periodEnd(it.period)) } ?: 0L else 0L
+    val startMillis = if (hasClock) hero?.let { combineMillis(now.date, school.periodStartOf(it.period)) } ?: 0L else 0L
+    val endMillis = if (hasClock) hero?.let { combineMillis(now.date, school.periodEndOf(it.period)) } ?: 0L else 0L
     val nowMs = Clock.System.now().toEpochMilliseconds()
     val inClass = hasClock && remain != null && remain <= 0 && hero != null
     val progress = when {
@@ -123,7 +134,7 @@ fun TodayScreen(
                     eyebrow = eta,
                     facts = listOf(
                         "节次" to (hero.periodLabel.ifBlank { hero.period }.let { if (it.endsWith("节")) it else "${it}节" }),
-                        "时间" to if (hasClock) periodClockRange(hero.period).replace("-", "–") else "",
+                        "时间" to if (hasClock) school.clockRangeOf(hero.period).replace("-", "–") else "",
                         "地点" to hero.room,
                         "老师" to hero.teacher,
                     ),
@@ -270,7 +281,7 @@ fun TodayScreen(
             ) {
                 todaySlots.forEach { slot ->
                     InfoCard(
-                        title = "${formatPeriodWithClock(slot.period, slot.periodLabel, hasClock)}  ${slot.courseName}",
+                        title = "${school.formatPeriod(slot.period, slot.periodLabel, hasClock)}  ${slot.courseName}",
                         summary = listOf(slot.room, slot.teacher, "第${week}周").filter { it.isNotBlank() }.joinToString("\n"),
                         height = null,
                         onClick = { nav.open(Route.Course(slot.courseId)) },

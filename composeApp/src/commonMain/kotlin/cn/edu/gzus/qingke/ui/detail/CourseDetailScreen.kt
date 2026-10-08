@@ -16,7 +16,8 @@ import cn.edu.gzus.qingke.data.AppSettings
 import cn.edu.gzus.qingke.data.CloudScheduleAdjust
 import cn.edu.gzus.qingke.data.CourseDetail
 import cn.edu.gzus.qingke.data.WeekdayNames
-import cn.edu.gzus.qingke.data.periodClockRange
+import cn.edu.gzus.qingke.data.clockRangeIn
+import cn.edu.gzus.qingke.data.PeriodBlock
 import cn.edu.gzus.qingke.data.shiftNoteFor
 import kotlinx.datetime.LocalDate
 import cn.edu.gzus.qingke.ui.components.FactGrid
@@ -30,6 +31,7 @@ fun CourseDetailScreen(
     contentPadding: PaddingValues,
     hasClock: Boolean = false,
     settings: AppSettings = AppSettings(),
+    blocks: List<PeriodBlock> = emptyList(),
     today: LocalDate? = null,
     adjust: CloudScheduleAdjust = CloudScheduleAdjust(),
 ) {
@@ -85,7 +87,7 @@ fun CourseDetailScreen(
                     LabeledCard(
                         title = "$weekday  ${slot.periodLabel.ifBlank { slot.period }.let { if (it.endsWith("节")) it else "${it}节" }}",
                         rows = listOf(
-                            "时间" to if (hasClock) periodClockRange(slot.period) else "",
+                            "时间" to if (hasClock) clockRangeIn(slot.period, blocks) else "",
                             "调课" to today?.let { settings.shiftNoteFor(slot, it, adjust) }.orEmpty(),
                             "教室" to slot.room,
                             "教师" to slot.teacher,

@@ -29,13 +29,17 @@ internal fun readSnapshotStore(): AppSnapshot? {
 
 /** 现在该挂哪条上课通知；不该挂就返回 null。应用里的循环和后台闹钟共用这一份判断。 */
 fun AppSnapshot.liveNotice(now: LocalDateTime, nowMs: Long): LiveNotice? {
-    if (!resolved().hasPeriodClock) return null
+    // 时间一律走学校自己的作息块：广生态的作息和内置表差很多，
+    // 用错了会让提醒在错的时间弹。
+    val school = resolved()
+    if (!school.hasPeriodClock) return null
     if (!settings.remindBeforeClass || slots.isEmpty()) return null
-    val next = nextLiveLesson(slots, now.date, settings, now.date, now.time, scheduleAdjust) ?: return null
+    val next = nextLiveLesson(slots, now.date, settings, now.date, now.time, scheduleAdjust, school.periodBlocks)
+        ?: return null
     if (!next.inClass && next.minutesToStart > settings.resolvedRemindLead()) return null
     val slot = next.slot
-    val startMillis = combineMillis(now.date, periodStart(slot.period))
-    val endMillis = combineMillis(now.date, periodEnd(slot.period))
+    val startMillis = combineMillis(now.date, school.periodStartOf(slot.period))
+    val endMillis = combineMillis(now.date, school.periodEndOf(slot.period))
     if (startMillis <= 0L || endMillis <= startMillis) return null
     val progress = when {
         nowMs <= startMillis -> 0f
@@ -43,7 +47,7 @@ fun AppSnapshot.liveNotice(now: LocalDateTime, nowMs: Long): LiveNotice? {
         else -> ((nowMs - startMillis).toFloat() / (endMillis - startMillis).toFloat()).coerceIn(0f, 1f)
     }
     val period = slot.periodLabel.ifBlank { slot.period }.let { if (it.endsWith("节")) it else "${it}节" }
-    val clock = periodClockRange(slot.period).replace("-", "–")
+    val clock = school.clockRangeOf(slot.period).replace("-", "–")
     val room = slot.room.ifBlank { "教室待定" }
     val eta = if (next.inClass) next.minutesToEnd else next.minutesToStart
     return LiveNotice(
@@ -65,16 +69,17 @@ fun AppSnapshot.liveNotice(now: LocalDateTime, nowMs: Long): LiveNotice? {
  * 没挂时等到下一节的提醒点，今天没课了就等明天零点过五分再看。
  */
 fun AppSnapshot.nextLiveWake(now: LocalDateTime, nowMs: Long): Long? {
-    if (!resolved().hasPeriodClock) return null
+    val school = resolved()
+    if (!school.hasPeriodClock) return null
     if (!settings.remindBeforeClass || slots.isEmpty()) return null
     val notice = liveNotice(now, nowMs)
     if (notice != null) {
         val edge = if (notice.inClass) notice.endMillis else notice.startMillis
         return minOf(nowMs + LIVE_STEP_MILLIS, edge + 1_000L)
     }
-    val next = nextLiveLesson(slots, now.date, settings, now.date, now.time, scheduleAdjust)
+    val next = nextLiveLesson(slots, now.date, settings, now.date, now.time, scheduleAdjust, school.periodBlocks)
     if (next != null) {
-        val start = combineMillis(now.date, periodStart(next.slot.period))
+        val start = combineMillis(now.date, school.periodStartOf(next.slot.period))
         val at = start - settings.resolvedRemindLead() * 60_000L
         return if (at > nowMs) at else nowMs + LIVE_STEP_MILLIS
     }

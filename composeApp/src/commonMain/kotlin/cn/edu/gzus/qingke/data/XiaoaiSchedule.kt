@@ -168,11 +168,15 @@ fun convertQingkeToXiaoai(snapshot: AppSnapshot): XiaoaiConvertResult {
         afternoon = 6,
         night = 4,
         sections = if (snapshot.resolved().hasPeriodClock) {
-            (1..16).map { index ->
+            val school = snapshot.resolved()
+            (1..16).mapNotNull { index ->
+                // 优先按学校作息块均分；块里没时间才退回内置表。
+                val span = school.sectionTime(index)
+                    ?: (periodStart("$index-$index") to periodEnd("$index-$index"))
                 XiaoaiTimerSection(
                     section = index,
-                    startTime = periodStart("$index-$index"),
-                    endTime = periodEnd("$index-$index"),
+                    startTime = span.first,
+                    endTime = span.second,
                 )
             }
         } else {

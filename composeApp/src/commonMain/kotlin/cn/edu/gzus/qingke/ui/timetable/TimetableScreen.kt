@@ -40,6 +40,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import cn.edu.gzus.qingke.data.formatPeriod
 import cn.edu.gzus.qingke.data.AppSettings
 import cn.edu.gzus.qingke.data.AppSnapshot
 import cn.edu.gzus.qingke.data.LessonSlot
@@ -405,7 +406,7 @@ fun TimetableScreen(
                 ) {
                     daySlots.forEach { slot ->
                         InfoCard(
-                            title = "${formatPeriodWithClock(slot.period, slot.periodLabel, snapshot.resolved().hasPeriodClock)}  ${slot.courseName}",
+                            title = "${snapshot.resolved().formatPeriod(slot.period, slot.periodLabel, snapshot.resolved().hasPeriodClock)}  ${slot.courseName}",
                             summary = listOf(slot.room, slot.teacher, slot.weeks).filter { it.isNotBlank() }.joinToString("\n"),
                             height = null,
                             onClick = { nav.open(Route.Course(slot.courseId)) },

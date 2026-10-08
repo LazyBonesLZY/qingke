@@ -649,6 +649,7 @@ fun App() {
                                 contentPadding = padding,
                                 hasClock = snapshot.resolved().hasPeriodClock,
                                 settings = snapshot.settings,
+                                blocks = snapshot.resolved().periodBlocks,
                                 today = nowDateTime().date,
                                 adjust = snapshot.scheduleAdjust,
                             )

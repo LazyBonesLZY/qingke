@@ -155,6 +155,86 @@ fun periodClockRange(period: String): String {
     return "${periodStart(period)}-${periodEnd(period)}"
 }
 
+/**
+ * 一节课落在哪些节次块上。编号课按区间取重叠的块（「1-4」→ 1-2 和 3-4），
+ * 「中午」这种没有编号的按标签精确匹配。
+ */
+private fun blocksFor(blocks: List<PeriodBlock>, period: String): List<PeriodBlock> {
+    val start = period.substringBefore("-").toIntOrNull()
+    val end = period.substringAfter("-", period).toIntOrNull() ?: start
+    if (start == null || end == null) return blocks.filter { it.label == period }
+    return blocks.filter { block ->
+        val bs = block.label.substringBefore("-").toIntOrNull() ?: return@filter false
+        val be = block.label.substringAfter("-").toIntOrNull() ?: bs
+        start <= be && end >= bs
+    }
+}
+
+/**
+ * 下面这组是**按学校自己的作息**算时间，而不是用写死的表。
+ *
+ * 内置的 [periodStart] / [periodEnd] 是照广软的作息抄的；广生态之类的学校作息完全不同，
+ * 拿它去算课程时间，就会出现「课表左边一列写 08:30，课程行却写 09:00」这种对不上的情况，
+ * 上课提醒也会在错的时间弹。查不到对应节次块才退回内置表。
+ */
+fun ResolvedSchool.periodStartOf(period: String): String =
+    blocksFor(periodBlocks, period).firstOrNull { it.start.isNotBlank() }?.start ?: periodStart(period)
+
+fun ResolvedSchool.periodEndOf(period: String): String =
+    blocksFor(periodBlocks, period).lastOrNull { it.end.isNotBlank() }?.end ?: periodEnd(period)
+
+fun ResolvedSchool.clockRangeOf(period: String): String {
+    val hit = blocksFor(periodBlocks, period).filter { it.start.isNotBlank() && it.end.isNotBlank() }
+    if (hit.isEmpty()) return periodClockRange(period)
+    return "${hit.first().start}-${hit.last().end}"
+}
+
+/** 同上，但直接吃节次块列表（调用方手上没有 ResolvedSchool 时用）。 */
+fun clockRangeIn(period: String, blocks: List<PeriodBlock>): String {
+    val hit = blocksFor(blocks, period).filter { it.start.isNotBlank() && it.end.isNotBlank() }
+    if (hit.isEmpty()) return periodClockRange(period)
+    return "${hit.first().start}-${hit.last().end}"
+}
+
+private fun clockMinutes(clock: String): Int? {
+    val parts = clock.split(":")
+    if (parts.size < 2) return null
+    val h = parts[0].toIntOrNull() ?: return null
+    val m = parts[1].toIntOrNull() ?: return null
+    return h * 60 + m
+}
+
+private fun minutesToClock(total: Int): String =
+    "${(total / 60).toString().padStart(2, '0')}:${(total % 60).toString().padStart(2, '0')}"
+
+/**
+ * 第 [index] 小节自己的起止时间。
+ *
+ * 教务只给整块的时间（「1、2节 08:30-09:50」），要拆到每一小节只能按块内节数均分。
+ * 广软的块是 09:00-10:20，均分出来 09:00-09:40 / 09:40-10:20，和原来写死的表几乎一致；
+ * 广生态那种作息不同的学校则能拿到正确值。块里没时间就返回 null，调用方自己回落。
+ */
+fun ResolvedSchool.sectionTime(index: Int): Pair<String, String>? {
+    val block = blocksFor(periodBlocks, "$index-$index").firstOrNull() ?: return null
+    if (block.start.isBlank() || block.end.isBlank()) return null
+    val bs = block.label.substringBefore("-").toIntOrNull() ?: return null
+    val be = block.label.substringAfter("-").toIntOrNull() ?: bs
+    val count = (be - bs + 1).coerceAtLeast(1)
+    val from = clockMinutes(block.start) ?: return null
+    val to = clockMinutes(block.end) ?: return null
+    if (to <= from) return null
+    val step = (to - from) / count
+    if (step <= 0) return null
+    val offset = (index - bs).coerceIn(0, count - 1)
+    return minutesToClock(from + offset * step) to minutesToClock(from + (offset + 1) * step)
+}
+
+fun ResolvedSchool.formatPeriod(period: String, periodLabel: String = "", hasClock: Boolean): String {
+    val label = periodLabel.ifBlank { period }
+    val clock = if (hasClock) clockRangeOf(period) else ""
+    return if (clock.isBlank()) label else "$label · $clock"
+}
+
 fun formatPeriodWithClock(period: String, periodLabel: String = "", hasClock: Boolean): String {
     val label = periodLabel.ifBlank { period }
     val clock = if (hasClock) periodClockRange(period) else ""
@@ -192,8 +272,13 @@ data class LiveLesson(
     val inClass: Boolean get() = minutesToStart <= 0 && minutesToEnd > 0
 }
 
-fun nextLiveLesson(slots: List<LessonSlot>, week: Int, weekday: Int, time: LocalTime): LiveLesson? =
-    liveLessonFrom(slots.forDay(week, weekday), time)
+fun nextLiveLesson(
+    slots: List<LessonSlot>,
+    week: Int,
+    weekday: Int,
+    time: LocalTime,
+    blocks: List<PeriodBlock> = emptyList(),
+): LiveLesson? = liveLessonFrom(slots.forDay(week, weekday), time, blocks)
 
 fun nextLiveLesson(
     slots: List<LessonSlot>,
@@ -202,19 +287,36 @@ fun nextLiveLesson(
     today: LocalDate,
     time: LocalTime,
     adjust: CloudScheduleAdjust = CloudScheduleAdjust(),
-): LiveLesson? = liveLessonFrom(slots.forDate(date, settings, today, adjust), time)
+    blocks: List<PeriodBlock> = emptyList(),
+): LiveLesson? = liveLessonFrom(slots.forDate(date, settings, today, adjust), time, blocks)
 
-private fun liveLessonFrom(day: List<LessonSlot>, time: LocalTime): LiveLesson? {
+private fun blockStart(blocks: List<PeriodBlock>, period: String): String =
+    blocksFor(blocks, period).firstOrNull { it.start.isNotBlank() }?.start ?: periodStart(period)
+
+private fun blockEnd(blocks: List<PeriodBlock>, period: String): String =
+    blocksFor(blocks, period).lastOrNull { it.end.isNotBlank() }?.end ?: periodEnd(period)
+
+private fun liveLessonFrom(
+    day: List<LessonSlot>,
+    time: LocalTime,
+    blocks: List<PeriodBlock> = emptyList(),
+): LiveLesson? {
     day.forEach { slot ->
-        val toStart = minutesUntil(time, periodStart(slot.period)) ?: return@forEach
-        val toEnd = minutesUntil(time, periodEnd(slot.period)) ?: return@forEach
+        val toStart = minutesUntil(time, blockStart(blocks, slot.period)) ?: return@forEach
+        val toEnd = minutesUntil(time, blockEnd(blocks, slot.period)) ?: return@forEach
         if (toEnd > 0) return LiveLesson(slot, toStart, toEnd)
     }
     return null
 }
 
-fun nextLesson(slots: List<LessonSlot>, week: Int, weekday: Int, time: LocalTime): Pair<LessonSlot, Int>? {
-    val next = nextLiveLesson(slots, week, weekday, time) ?: return null
+fun nextLesson(
+    slots: List<LessonSlot>,
+    week: Int,
+    weekday: Int,
+    time: LocalTime,
+    blocks: List<PeriodBlock> = emptyList(),
+): Pair<LessonSlot, Int>? {
+    val next = nextLiveLesson(slots, week, weekday, time, blocks) ?: return null
     return next.slot to if (next.inClass) 0 else next.minutesToStart
 }
 
@@ -225,8 +327,9 @@ fun nextLesson(
     today: LocalDate,
     time: LocalTime,
     adjust: CloudScheduleAdjust = CloudScheduleAdjust(),
+    blocks: List<PeriodBlock> = emptyList(),
 ): Pair<LessonSlot, Int>? {
-    val next = nextLiveLesson(slots, date, settings, today, time, adjust) ?: return null
+    val next = nextLiveLesson(slots, date, settings, today, time, adjust, blocks) ?: return null
     return next.slot to if (next.inClass) 0 else next.minutesToStart
 }
 

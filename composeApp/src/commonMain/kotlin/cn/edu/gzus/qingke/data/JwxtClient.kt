@@ -227,7 +227,10 @@ class JwxtClient(
             termCode = termCode,
             yearCode = xs.str("XNM").ifBlank { year },
             termLabel = when {
-                xs.str("XQMMC") == "2" || termCode == "12" -> "第2学期"
+                termCode == "12" || termCode == "2" || xs.str("XQMMC").contains("2") ||
+                    xs.str("XQMMC").contains("二") -> "第2学期"
+                termCode == "3" || xs.str("XQMMC").contains("3") ||
+                    xs.str("XQMMC").contains("三") -> "第3学期"
                 else -> "第1学期"
             },
         )
@@ -819,6 +822,14 @@ private fun requireSession(text: String) {
     if (body.contains("用户登录") && (body.contains("name=\"yhm\"") || body.contains("name='yhm'"))) {
         error(SESSION_LOST_HINT)
     }
+    // 正方 ajax 会话失效回 JSON，不含登录表单，之前会当空列表吞掉。
+    // 只看 JSON 体：正常 HTML 页自带超时跳转脚本也含登录字样，不能碰。
+    if (body.startsWith("{") && (
+        body.contains("登录已过期") || body.contains("登录过期") ||
+            body.contains("会话失效") || body.contains("会话超时") ||
+            body.contains("请重新登录") || body.contains("重新登录")
+        )
+    ) error(SESSION_LOST_HINT)
 }
 
 private fun htmlInputValue(html: String, id: String): String {

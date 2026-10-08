@@ -381,7 +381,7 @@ internal data class ZhkuCourse(
 
 internal fun parseZhkuWeeks(html: String): List<ZhkuWeek> =
     Regex(
-        """<tr[^>]*>\s*<td>(\d+)</td>\s*<td title='(\d{4})年(\d{2})月(\d{2})'>""",
+        """<tr[^>]*>\s*<td[^>]*>(\d+)</td>\s*<td[^>]*title\s*=\s*['"](\d{4})年(\d{2})月(\d{2})['"][^>]*>""",
         RegexOption.IGNORE_CASE,
     ).findAll(html).mapNotNull { match ->
         val week = match.groupValues[1].toIntOrNull() ?: return@mapNotNull null
@@ -542,24 +542,52 @@ private val ZhkuCnDigits = mapOf(
     '六' to 6, '七' to 7, '八' to 8, '九' to 9,
 )
 
+/**
+ * 中文数字节次转数字列表。「十一二节」是「十一、十二节」的缩写，
+ * 第二个裸数字要按「十位数」补全（11 后面的 2 是 12，不是第 2 节）。
+ */
 private fun zhkuCnNumbers(label: String): List<Int> {
-    val out = mutableListOf<Int>()
+    val raw = mutableListOf<Pair<Int, Boolean>>()
     var i = 0
     while (i < label.length) {
         val c = label[i]
-        if (c == '十') {
-            val next = ZhkuCnDigits[label.getOrNull(i + 1)]
-            if (next != null) {
-                out += 10 + next
-                i += 2
+        val digit = ZhkuCnDigits[c]
+        if (digit != null && label.getOrNull(i + 1) == '十') {
+            // 「二十一」这种带尾数的是一个数；尾端没数字时（「九十」= 9、10 两节）
+            // 拆成两个数，别合成 90。
+            val after = ZhkuCnDigits[label.getOrNull(i + 2)]
+            if (after != null) {
+                raw += digit * 10 + after to true
+                i += 3
             } else {
-                out += 10
+                raw += digit to false
                 i += 1
             }
             continue
         }
-        ZhkuCnDigits[c]?.let { out += it }
+        if (c == '十') {
+            val next = ZhkuCnDigits[label.getOrNull(i + 1)]
+            if (next != null) {
+                raw += 10 + next to true
+                i += 2
+            } else {
+                raw += 10 to true
+                i += 1
+            }
+            continue
+        }
+        if (digit != null) raw += digit to false
         i++
+    }
+    // 裸数字跟在十位数后面时补十位：「十一二」→ 11, 12；「十一二三」→ 11, 12, 13。
+    // 「一二」「八九」这种十位以下的保持原样。用已补全的前值连锁，
+    // 避免第三个数字回看原始值断链。
+    val out = mutableListOf<Int>()
+    raw.forEach { (value, composed) ->
+        val prev = out.lastOrNull()
+        out += if (!composed && prev != null && prev >= 10 && value in 1..9) {
+            (prev / 10) * 10 + value
+        } else value
     }
     return out
 }
@@ -574,15 +602,13 @@ internal fun zhkuPeriodFromLabel(label: String): String {
         val hi = nums.max()
         return if (lo == hi) "$lo" else "$lo-$hi"
     }
-    // 剩下的少数固定写法。
+    // 数字解析走不到时才看固定写法（正常标签上面已经返回了）。
     return when {
-        label.contains("十一十二") -> "10-12"
         label.contains("第一二") || label.contains("一二节") -> "1-2"
         label.contains("第三四") || label.contains("三四节") -> "3-4"
         label.contains("第六七") || label.contains("六七节") -> "6-7"
         label.contains("第八九") || label.contains("八九节") -> "8-9"
         label.contains("第五节") -> "5"
-        label.contains("第十") -> "10-12"
         else -> ""
     }
 }

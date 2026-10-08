@@ -21,38 +21,49 @@ internal data class CookieRow(
 class PersistCookieStorage : CookiesStorage {
     private val mutex = Mutex()
     private val json = Json { ignoreUnknownKeys = true }
-    private val cookies = mutableListOf<CookieRow>()
+    // 写时复制：读（snapshot/records/wipe/get 快照）直接读引用，
+    // 写（addCookie/retainLatest/load）在锁里整体替换引用。
+    // 这样非 suspend 的 snapshot/records/wipe 不会和并发写入撞出 CME，
+    // 最多读到稍旧的一份，而持久化文件保证重启后一致。
+    @Volatile
+    private var cookies: List<CookieRow> = emptyList()
 
     init {
         load()
     }
 
     private fun load() {
-        cookies.clear()
-        readStore(COOKIE_FILE)?.let { raw ->
-            runCatching { cookies += json.decodeFromString<List<CookieRow>>(raw) }
-        }
+        val raw = readStore(COOKIE_FILE) ?: return
+        runCatching { cookies = json.decodeFromString<List<CookieRow>>(raw) }
     }
 
-    private fun persist() {
-        writeStore(COOKIE_FILE, json.encodeToString(cookies))
+    private fun persist(rows: List<CookieRow>) {
+        writeStore(COOKIE_FILE, json.encodeToString(rows))
     }
 
     override suspend fun get(requestUrl: Url): List<Cookie> = mutex.withLock {
         cookies.filter {
             matches(requestUrl.host, it.domain) && pathMatches(requestUrl.encodedPath, it.path)
-        }.map {
-            Cookie(name = it.name, value = it.value, domain = it.domain, path = it.path)
-        }
+        }.sortedWith(
+            // 同名 cookie 只留一份：path 越长、domain 越具体越优先，
+            // 服务端一般取第一份，旧的宽泛值就不会盖掉新的精确值。
+            compareByDescending<CookieRow> { it.path.length }
+                .thenByDescending { it.domain.trimStart('.').length },
+        ).distinctBy { it.name }
+            .map {
+                Cookie(name = it.name, value = it.value, domain = it.domain, path = it.path)
+            }
     }
 
     override suspend fun addCookie(requestUrl: Url, cookie: Cookie) {
         mutex.withLock {
             val domain = cookie.domain ?: requestUrl.host
             val path = cookie.path ?: "/"
-            cookies.removeAll { it.name == cookie.name && it.domain == domain && it.path == path }
-            cookies += CookieRow(cookie.name, cookie.value, domain, path)
-            persist()
+            val next = cookies.filterNot {
+                it.name == cookie.name && it.domain == domain && it.path == path
+            } + CookieRow(cookie.name, cookie.value, domain, path)
+            cookies = next
+            persist(next)
         }
     }
 
@@ -63,20 +74,20 @@ class PersistCookieStorage : CookiesStorage {
     fun records(): List<CookieRecord> = cookies.map { CookieRecord(it.name, it.value, it.domain, it.path) }
 
     fun wipe() {
-        cookies.clear()
-        persist()
+        cookies = emptyList()
+        persist(emptyList())
     }
 
     suspend fun retainLatest(host: String, name: String) = mutex.withLock {
-        val keepAt = cookies.indexOfLast { it.name == name && matches(host, it.domain) }
+        val rows = cookies
+        val keepAt = rows.indexOfLast { it.name == name && matches(host, it.domain) }
         if (keepAt < 0) return@withLock
-        val next = cookies.filterIndexed { index, row ->
+        val next = rows.filterIndexed { index, row ->
             row.name != name || !matches(host, row.domain) || index == keepAt
         }
-        if (next.size == cookies.size) return@withLock
-        cookies.clear()
-        cookies += next
-        persist()
+        if (next.size == rows.size) return@withLock
+        cookies = next
+        persist(next)
     }
 
     companion object {

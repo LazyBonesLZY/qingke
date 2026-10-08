@@ -34,10 +34,9 @@ class GdstyClient(
     private val cookieHost = JW.substringAfter("://").substringBefore("/")
 
     // 验证码和 __VIEWSTATE 是同一张登录页的产物：重开页面会让用户刚填的码作废，
-    // 所以这两样必须一起留到提交那一刻。
-    private var pendingCaptchaId = ""
-    private var pendingViewState = ""
-    private var pendingViewStateGen = ""
+    // 所以这两样必须一起留到提交那一刻。按 captchaId 分桶存：并发两次登录
+    //（自动重登撞上用户手动点）不会互相覆盖，对方拿旧码提交只会拿到自己的 VIEWSTATE。
+    private val pendingLogins = mutableMapOf<String, Pair<String, String>>()
     private var lastStudentId = ""
 
     @OptIn(ExperimentalEncodingApi::class)
@@ -45,13 +44,17 @@ class GdstyClient(
         val html = client.get("$AIC$AIC_LOGIN_PATH") {
             header(HttpHeaders.UserAgent, QINGKE_UA)
         }.bodyAsText()
-        pendingViewState = hiddenField(html, "__VIEWSTATE")
-        pendingViewStateGen = hiddenField(html, "__VIEWSTATEGENERATOR")
+        val viewState = hiddenField(html, "__VIEWSTATE")
+        val viewStateGen = hiddenField(html, "__VIEWSTATEGENERATOR")
         val encoded = AIC_CAPTCHA.find(html)?.groupValues?.get(1) ?: return null
         val bytes = runCatching { Base64.decode(encoded) }.getOrNull() ?: return null
         if (bytes.isEmpty()) return null
         val id = md5Hex(encoded)
-        pendingCaptchaId = id
+        pendingLogins[id] = viewState to viewStateGen
+        if (pendingLogins.size > 5) {
+            val drop = pendingLogins.keys.firstOrNull()
+            if (drop != null && drop != id) pendingLogins.remove(drop)
+        }
         return LoginCaptcha(id = id, bytes = bytes, hint = "综合系统验证码，4 位数字")
     }
 
@@ -62,14 +65,17 @@ class GdstyClient(
         captchaId: String,
     ): Result<Unit> = runCatching {
         if (captcha.isBlank()) error("这所学校要从综合系统进，先填验证码")
-        if (pendingViewState.isBlank() || captchaId != pendingCaptchaId) {
+        val pending = pendingLogins[captchaId]
+        if (pending == null) {
             error("验证码过期了，点一下验证码换一张再登")
         }
+        val (viewState, viewStateGen) = pending
+        if (viewState.isBlank()) error("验证码过期了，点一下验证码换一张再登")
         val response = client.submitForm(
             url = "$AIC$AIC_LOGIN_PATH",
             formParameters = Parameters.build {
-                append("__VIEWSTATE", pendingViewState)
-                append("__VIEWSTATEGENERATOR", pendingViewStateGen)
+                append("__VIEWSTATE", viewState)
+                append("__VIEWSTATEGENERATOR", viewStateGen)
                 append("signupInputUserName", studentId)
                 append("HideUserName", rsaEncrypt(studentId, GDTSY_RSA_MODULUS_B64, GDTSY_RSA_EXPONENT_B64))
                 append("signupInputPassword", rsaEncrypt(password, GDTSY_RSA_MODULUS_B64, GDTSY_RSA_EXPONENT_B64))
@@ -90,9 +96,7 @@ class GdstyClient(
         if (response.status.value !in 300..399 || location.contains("login.aspx", ignoreCase = true)) {
             throw error(gdstyLoginTip(body).ifBlank { "学号或密码不正确" })
         }
-        pendingViewState = ""
-        pendingViewStateGen = ""
-        pendingCaptchaId = ""
+        pendingLogins.remove(captchaId)
         lastStudentId = studentId
 
         if (!enterJwxt()) error("综合系统登录了，教务会话没建起来。再试一次。")
@@ -434,11 +438,13 @@ internal fun gdstyPeriodLabel(raw: String): String =
         .replace(Regex("""\s+"""), " ")
         .trim()
 
-/** 节次行的写法是「1、2节 08:30-09:50」，中午那行没有编号。 */
+/** 节次行的写法是「1、2节 08:30-09:50」，单节是「5节」，中午那行没有编号。 */
 internal fun gdstyPeriodFromLabel(label: String): String {
     if (label.contains("中午")) return "中午"
-    val span = Regex("""(\d+)\s*[、,，]\s*(\d+)""").find(label) ?: return ""
-    return "${span.groupValues[1]}-${span.groupValues[2]}"
+    val span = Regex("""(\d+)\s*[、,，\-－]\s*(\d+)""").find(label)
+    if (span != null) return "${span.groupValues[1]}-${span.groupValues[2]}"
+    val single = Regex("""(?:第\s*)?(\d+)\s*节""").find(label) ?: return ""
+    return single.groupValues[1]
 }
 
 private val ClockRange = Regex("""(\d{1,2}:\d{2})\s*[-—~～]\s*(\d{1,2}:\d{2})""")

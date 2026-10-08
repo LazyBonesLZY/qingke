@@ -750,14 +750,23 @@ private fun ColumnScope.WeekGrid(
                     }
                     for (weekday in 1..7) {
                         val date = monday.plus(DatePeriod(days = weekday - 1))
+                        // 当天整列只描一个外框，各格不再各自圈。
+                        val isTodayCol = date == today
                         Column(
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).then(
+                                if (isTodayCol) {
+                                    Modifier.border(
+                                        1.dp,
+                                        MiuixTheme.colorScheme.primary.copy(alpha = 0.55f),
+                                        shape,
+                                    )
+                                } else Modifier
+                            ),
                             verticalArrangement = Arrangement.spacedBy(cellGap),
                         ) {
                             dayRuns[weekday - 1].forEach { run ->
                                 WeekCell(
                                     slots = run.slots,
-                                    today = date == today,
                                     shape = shape,
                                     aliases = aliases,
                                     roomAliases = settings.roomAliases,
@@ -781,7 +790,6 @@ private fun ColumnScope.WeekGrid(
 @Composable
 private fun WeekCell(
     slots: List<LessonSlot>,
-    today: Boolean,
     shape: RoundedCornerShape,
     aliases: Map<String, String>,
     roomAliases: Map<String, String>,
@@ -800,7 +808,6 @@ private fun WeekCell(
         modifier = modifier
             .clip(shape)
             .background(tint ?: empty)
-            .then(if (today) Modifier.border(1.dp, MiuixTheme.colorScheme.primary.copy(alpha = 0.35f), shape) else Modifier)
             .then(
                 if (first != null) {
                     Modifier.clickable { onOpen(first.courseId) }

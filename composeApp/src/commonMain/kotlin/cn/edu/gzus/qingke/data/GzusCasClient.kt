@@ -36,6 +36,10 @@ class GzusCasClient(
 ) : SchoolPortal by jwxt {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val cas = GZUS_CAS_ORIGIN.trimEnd('/')
+    private val casOrigin = runCatching {
+        val u = Url(cas)
+        "${u.protocol.name}://${u.host}"
+    }.getOrDefault("https://cas.gzus.edu.cn")
     private val ehall = GZUS_EHALL_ORIGIN.trimEnd('/')
     private val keepMutex = Mutex()
     private var cachedTgt = ""
@@ -79,7 +83,7 @@ class GzusCasClient(
         ) {
             header(HttpHeaders.UserAgent, QINGKE_UA)
             header(HttpHeaders.Referrer, "$cas/login?service=$GZUS_JWXT_SSO_SERVICE")
-            header(HttpHeaders.Origin, "https://cas.gzus.edu.cn")
+            header(HttpHeaders.Origin, casOrigin)
         }.bodyAsText()
         if (isCasFirstLogin(raw)) throw JwxtNeedFirstLogin()
         val tickets = parseCasTickets(raw, json)
@@ -435,7 +439,7 @@ class GzusCasClient(
             ) {
                 header(HttpHeaders.UserAgent, QINGKE_UA)
                 header(HttpHeaders.Referrer, "$cas/login")
-                header(HttpHeaders.Origin, "https://cas.gzus.edu.cn")
+                header(HttpHeaders.Origin, casOrigin)
             }.bodyAsText()
         } catch (failed: ResponseException) {
             if (failed.response.status.value in 400..499) error(SESSION_LOST_HINT)

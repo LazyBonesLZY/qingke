@@ -1055,6 +1055,8 @@ private fun AppSnapshot.widgetSignature(): Int {
     h = 31 * h + settings.autoPullScheduleAdjust.hashCode()
     h = 31 * h + scheduleAdjust.offs.hashCode()
     h = 31 * h + scheduleAdjust.shifts.hashCode()
+    h = 31 * h + profile.periodTimes.hashCode()
+    h = 31 * h + settings.periodTimeOverrides.hashCode()
     return h
 }
 

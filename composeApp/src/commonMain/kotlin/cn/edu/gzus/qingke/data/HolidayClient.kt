@@ -35,6 +35,8 @@ class HolidayClient(
         val days = file.days.mapNotNull { item ->
             val date = item.date.trim()
             if (date.length < 10) return@mapNotNull null
+            // CDN 命中错年缓存时整份拒收，不拿错年的日期污染课表。
+            if (date.take(4).toIntOrNull() != year) return@mapNotNull null
             HolidayDay(date = date, name = item.name.trim(), off = item.isOffDay)
         }
         if (days.isEmpty()) error("节假日文件是空的")

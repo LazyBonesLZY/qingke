@@ -44,14 +44,18 @@ private fun computeWeekSet(raw: String): Set<Int> {
     text.split(",", "、", ";", "；").forEach { part ->
         val piece = part.filter { it.isDigit() || it == '-' }
         if (piece.isBlank()) return@forEach
-        val nums = piece.split("-").mapNotNull { it.toIntOrNull() }.filter { it in 1..40 }
-        when (nums.size) {
-            0 -> Unit
-            1 -> out += nums[0]
+        // 区间端点先不限死再钳制：「0-16」这种 0 是脏数据，按 1-16 收；
+        // 「1-2-3」这种多段按最小到最大收，不静默丢第三段。
+        val all = piece.split("-").mapNotNull { it.toIntOrNull() }
+        when {
+            all.isEmpty() -> Unit
+            all.size == 1 -> {
+                if (all[0] in 1..40) out += all[0]
+            }
             else -> {
-                val lo = minOf(nums[0], nums[1])
-                val hi = maxOf(nums[0], nums[1])
-                for (w in lo..hi) out += w
+                val lo = all.min().coerceIn(1, 40)
+                val hi = all.max().coerceIn(1, 40)
+                for (w in minOf(lo, hi)..maxOf(lo, hi)) out += w
             }
         }
     }

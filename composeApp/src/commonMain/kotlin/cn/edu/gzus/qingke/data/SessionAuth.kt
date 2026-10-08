@@ -25,11 +25,16 @@ fun isSessionLost(message: String): Boolean {
     if (isEcardSessionHint(message)) return false
     if (message.contains("要用统一身份认证")) return false
     if (message.contains("登录后才能")) return false
-    if (message.contains("还没有登录")) return false
+    // 客户端未登录守卫是精确文案，只排它自己；
+    // 服务端「你还没有登录，请重新登录」这类必须走下面的重登判断。
+    if (message.trim() == "还没有登录") return false
     return listOf(
         "登录过期",
         "登录已过期",
         "登录失效",
         "会话失效",
+        "会话超时",
+        "登录超时",
+        "重新登录",
     ).any { message.contains(it) }
 }

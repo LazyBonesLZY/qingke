@@ -18,7 +18,12 @@ data class LiveNotice(
     val chip: String,
 )
 
-private const val LIVE_STEP_MILLIS = 5 * 60_000L
+/**
+ * 后台两次推送的间隔。Collapse 的胶囊/shortCriticalText 和正文里的
+ * 「还剩 N 分」都是静态文本，只能靠重新 notify 刷新；秒级数字由系统
+ * Chronometer 自己走字。1 分钟一推，倒计时最多慢 1 分钟；严禁按秒推。
+ */
+private const val LIVE_STEP_MILLIS = 60_000L
 
 private val snapshotJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -68,7 +73,7 @@ fun AppSnapshot.liveNotice(now: LocalDateTime, nowMs: Long): LiveNotice? {
 
 /**
  * 下一次该叫醒后台更新通知的时刻，null 表示不用再叫。
- * 挂着通知时每五分钟推一次进度，并在上课、下课那一刻切状态；
+ * 有通知时每分钟推一次（刷新胶囊文本和进度），并在上课、下课那一刻切状态；
  * 没挂时等到下一节的提醒点，今天没课了就等明天零点过五分再看。
  */
 fun AppSnapshot.nextLiveWake(now: LocalDateTime, nowMs: Long): Long? {

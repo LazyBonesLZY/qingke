@@ -18,7 +18,6 @@ import android.os.Build
 import android.os.Bundle
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
-import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import cn.edu.gzus.qingke.EXTRA_LIVE_DISMISS
@@ -352,7 +351,7 @@ actual fun notifyLiveClass(
         val builder = Notification.Builder(ctx, LIVE_CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_live)
             .setContentTitle(title)
-            .setContentText(detail)
+            .setContentText("$etaText · $detail")
             .setStyle(style)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -371,20 +370,14 @@ actual fun notifyLiveClass(
         nm.notify(LIVE_ID, builder.build())
         return true
     }
-    val card = RemoteViews(ctx.packageName, R.layout.qingke_live_notification).apply {
-        setTextViewText(R.id.qingke_live_title, title)
-        setTextViewText(R.id.qingke_live_badge, status)
-        setTextViewText(R.id.qingke_live_meta, detail.replace("\n", " · "))
-        setTextViewText(R.id.qingke_live_eta, etaText)
-        setProgressBar(R.id.qingke_live_progress, 100, pct, false)
-    }
+    // 低版本走标准模板：禁用自定义 RemoteViews，否则过不了
+    // hasPromotableCharacteristics，自带模板才有流体云/灵动岛资格。
+    // 收起态的秒级数字由系统 Chronometer 按 when 自己走字；
+    // 胶囊 shortCriticalText 和正文倒计时靠每分钟的 notify 刷新。
     val builder = NotificationCompat.Builder(ctx, LIVE_CHANNEL)
         .setSmallIcon(R.drawable.ic_stat_live)
         .setContentTitle(title)
-        .setContentText(detail)
-        .setCustomContentView(card)
-        .setCustomBigContentView(card)
-        .setStyle(NotificationCompat.DecoratedCustomViewStyle())
+        .setContentText("$etaText · ${detail.replace("\n", " · ")}")
         .setSubText(status)
         .setOngoing(true)
         .setOnlyAlertOnce(true)
@@ -396,7 +389,9 @@ actual fun notifyLiveClass(
         .setShowWhen(true)
         .setUsesChronometer(true)
         .setChronometerCountDown(true)
+        .setProgress(100, pct, false)
         .setColor(blue)
+        .setShortCriticalText(chipText)
         .setRequestPromotedOngoing(true)
     nm.notify(LIVE_ID, builder.build())
     return true

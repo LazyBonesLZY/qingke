@@ -300,9 +300,26 @@ actual fun notifyLiveClass(
     nm.createNotificationChannel(channel)
     val now = System.currentTimeMillis()
     val inClass = now >= startMillis && now < endMillis
+    val pct = when {
+        endMillis <= startMillis -> (progress * 100).toInt().coerceIn(0, 100)
+        now <= startMillis -> 0
+        now >= endMillis -> 100
+        else -> (((now - startMillis) * 100L) / (endMillis - startMillis)).toInt().coerceIn(0, 100)
+    }
     val whenMillis = if (inClass) endMillis else startMillis
     val status = if (inClass) "上课中" else "下一节"
-    val chipText = chip.ifBlank { status }
+    val chipText = chip.ifBlank {
+        when {
+            inClass -> "下课 ${etaMinutes}′"
+            etaMinutes > 0 -> "${etaMinutes}′后"
+            else -> "即将"
+        }
+    }
+    val etaText = when {
+        inClass -> "还剩 ${etaMinutes.coerceAtLeast(0)} 分"
+        etaMinutes > 0 -> "${etaMinutes} 分后上课"
+        else -> "即将上课"
+    }
     val launch = PendingIntent.getActivity(
         ctx,
         0,
@@ -316,13 +333,27 @@ actual fun notifyLiveClass(
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
     val blue = 0xFF3482FF.toInt()
+    val track = 0xFFB7D2FF.toInt()
     if (Build.VERSION.SDK_INT >= 36) {
-        // 标准 ProgressStyle 模板，不挂自定义视图才有流体云资格。
-        // 静态进度条在边沿推送下会僵死，直接不画；时间全由 Chronometer 走字。
+        val done = pct.coerceIn(0, 100)
+        val left = (100 - done).coerceAtLeast(1)
+        val style = Notification.ProgressStyle()
+            .setStyledByProgress(true)
+            .setProgress(done)
+            .setProgressSegments(
+                listOf(
+                    Notification.ProgressStyle.Segment(done.coerceAtLeast(1)).setColor(blue),
+                    Notification.ProgressStyle.Segment(left).setColor(track),
+                ),
+            )
+            .setProgressTrackerIcon(android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_live_now))
+            .setProgressStartIcon(android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_live_start))
+            .setProgressEndIcon(android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_live_end))
         val builder = Notification.Builder(ctx, LIVE_CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_live)
             .setContentTitle(title)
             .setContentText(detail)
+            .setStyle(style)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(launch)
@@ -340,13 +371,17 @@ actual fun notifyLiveClass(
         nm.notify(LIVE_ID, builder.build())
         return true
     }
-    // 低版本走自定义胶囊：布局里内嵌 Chronometer 控件，由 SystemUI 按 base
-    // 自己走字（含收起态），App 只在边沿重推一次，又活又省电。
+    // 低版本走自定义胶囊：原卡片（标题/徽标/meta/倒计时文案/进度条）照旧，
+    // 标题行右边多塞一个 Chronometer 控件，由 SystemUI 按 base 自己走字
+    //（含收起态）；静态文案和进度条靠每分钟重推刷新。
     // 注意 API36 的提升校验禁自定义视图，所以这条路只留给 36 以下。
     val remainingMs = (if (inClass) endMillis else startMillis) - now
-    val card = RemoteViews(ctx.packageName, R.layout.qingke_live_countdown).apply {
+    val card = RemoteViews(ctx.packageName, R.layout.qingke_live_notification).apply {
         setTextViewText(R.id.qingke_live_title, title)
-        setTextViewText(R.id.qingke_live_meta, "$status · $detail")
+        setTextViewText(R.id.qingke_live_badge, status)
+        setTextViewText(R.id.qingke_live_meta, detail.replace("\n", " · "))
+        setTextViewText(R.id.qingke_live_eta, etaText)
+        setProgressBar(R.id.qingke_live_progress, 100, pct, false)
         if (remainingMs > 0) {
             setChronometerCountDown(R.id.qingke_live_countdown, true)
             setChronometer(
@@ -363,7 +398,7 @@ actual fun notifyLiveClass(
     val builder = NotificationCompat.Builder(ctx, LIVE_CHANNEL)
         .setSmallIcon(R.drawable.ic_stat_live)
         .setContentTitle(title)
-        .setContentText("$status · ${detail.replace("\n", " · ")}")
+        .setContentText(detail)
         .setCustomContentView(card)
         .setCustomBigContentView(card)
         .setStyle(NotificationCompat.DecoratedCustomViewStyle())
@@ -378,7 +413,7 @@ actual fun notifyLiveClass(
         .setShowWhen(true)
         .setUsesChronometer(true)
         .setChronometerCountDown(true)
-        .setProgress(0, 0, false)
+        .setProgress(100, pct, false)
         .setColor(blue)
         .setShortCriticalText(chipText)
         .setRequestPromotedOngoing(true)

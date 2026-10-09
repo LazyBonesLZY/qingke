@@ -938,7 +938,7 @@ class AppRepository(
                 etaMinutes = if (inClass) remainEnd else remain.coerceAtLeast(0),
                 startMillis = testStartMillis,
                 endMillis = testEndMillis,
-                chip = if (inClass) "上课中" else "下一节",
+                chip = if (inClass) "下课 ${remainEnd}′" else "${remain.coerceAtLeast(1)}′后",
             )
         }
         if (testEndMillis > 0L && nowMs >= testEndMillis) {
@@ -962,9 +962,9 @@ class AppRepository(
             liveWidgetKey = widgetKey
             refreshHomeWidgets()
         }
-        // 通知正文/胶囊/when 全静态，只有换课或上下课边沿才需重推，
-        // 前台心跳的重复调用直接跳过。
-        val postKey = "${notice.title}/${notice.startMillis}/${notice.inClass}"
+        // 通知正文/胶囊按分钟刷新：同分钟内的重复调用直接跳过，
+        // 分钟一变或换课/上下课边沿才重推。
+        val postKey = "${notice.title}/${notice.startMillis}/${notice.inClass}/${notice.etaMinutes}"
         if (postKey == lastLivePost) return true
         lastLivePost = postKey
         return notifyLiveClass(

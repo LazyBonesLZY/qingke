@@ -230,6 +230,53 @@ actual fun requestLiveUpdatePermission() {
     // Runtime prompt is issued from MainActivity on launch.
 }
 
+/** 精确闹钟是否可用：12 以下直接能用，以上看用户给没给。 */
+private fun canScheduleExact(ctx: android.content.Context): Boolean {
+    if (Build.VERSION.SDK_INT < 31) return true
+    return ctx.getSystemService(android.app.AlarmManager::class.java)?.canScheduleExactAlarms() == true
+}
+
+private fun isBatteryWhitelisted(ctx: android.content.Context): Boolean =
+    ctx.getSystemService(android.os.PowerManager::class.java)
+        ?.isIgnoringBatteryOptimizations(ctx.packageName) == true
+
+actual fun liveKeepaliveStatus(): String {
+    val ctx = QingkeApp.app
+    val ignored = isBatteryWhitelisted(ctx)
+    val exact = canScheduleExact(ctx)
+    return when {
+        ignored && exact -> "后台保活正常，提醒和倒计时准时"
+        !ignored && !exact -> "没加电池白名单、没精确闹钟，后台提醒和倒计时可能不准"
+        !ignored -> "没加电池白名单，后台被缓存后倒计时不更新"
+        else -> "缺精确闹钟权限，上课整点可能晚几分钟"
+    }
+}
+
+actual fun keepaliveNeedsFix(): Boolean {
+    val ctx = QingkeApp.app
+    return !isBatteryWhitelisted(ctx) || !canScheduleExact(ctx)
+}
+
+actual fun openKeepaliveSettings() {
+    val ctx = QingkeApp.app
+    // 先要白名单：系统一次弹框点完，不用翻设置。
+    if (!isBatteryWhitelisted(ctx)) {
+        val white = Intent(
+            android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+            android.net.Uri.parse("package:${ctx.packageName}"),
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (runCatching { ctx.startActivity(white) }.isSuccess) return
+    }
+    // 再要精确闹钟（Android 12+ 才要授权）。
+    if (!canScheduleExact(ctx)) {
+        val exact = Intent(
+            android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+            android.net.Uri.parse("package:${ctx.packageName}"),
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { ctx.startActivity(exact) }
+    }
+}
+
 actual fun openLiveUpdateSettings() {
     val ctx = QingkeApp.app
     val promoted = Intent("android.settings.MANAGE_APP_PROMOTED_NOTIFICATIONS").apply {
@@ -425,7 +472,8 @@ actual fun cancelLiveClass() {
     QingkeApp.app.getSystemService(NotificationManager::class.java)?.cancel(LIVE_ID)
 }
 
-// 非精确闹钟，不要额外权限；Doze 时系统可能推迟几分钟，通知上的倒计时照样走。
+// 有精确闹钟权限就精确推边沿；没给退回非精确（Doze 可能晚几分钟，倒计时照样走）。
+// 电池白名单另算：进设置页「后台保活」里点。
 actual fun scheduleLiveWake(atMillis: Long?) {
     if (!QingkeApp.ready()) return
     val ctx = QingkeApp.app
@@ -447,5 +495,13 @@ actual fun scheduleLiveWake(atMillis: Long?) {
         alarms.cancel(pending)
         return
     }
-    runCatching { alarms.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, atMillis, pending) }
+    // 有精确闹钟权限就用精确的：上下课边沿在 Doze 里也准时；没给就退回非精确。
+    val useExact = canScheduleExact(ctx)
+    runCatching {
+        if (useExact) {
+            alarms.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, atMillis, pending)
+        } else {
+            alarms.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, atMillis, pending)
+        }
+    }
 }

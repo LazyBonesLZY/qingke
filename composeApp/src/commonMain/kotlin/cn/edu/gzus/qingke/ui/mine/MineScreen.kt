@@ -58,6 +58,8 @@ import cn.edu.gzus.qingke.data.formatLongDate
 import cn.edu.gzus.qingke.data.formatSync
 import cn.edu.gzus.qingke.data.hasTermStart
 import cn.edu.gzus.qingke.data.liveUpdateStatus
+import cn.edu.gzus.qingke.data.liveKeepaliveStatus
+import cn.edu.gzus.qingke.data.openKeepaliveSettings
 import cn.edu.gzus.qingke.data.mondayOf
 import cn.edu.gzus.qingke.data.nowDateTime
 import cn.edu.gzus.qingke.data.openLiveUpdateSettings
@@ -925,6 +927,11 @@ private fun RemindBlock(
                 title = "提前多久提醒",
                 summary = "上课前 $lead 分钟",
                 onClick = onToggleLead,
+            )
+            ArrowPreference(
+                title = "后台保活",
+                summary = liveKeepaliveStatus(),
+                onClick = { openKeepaliveSettings() },
             )
             if (pickingLead) {
                 ChoiceChipPanel(title = "上课前多久弹出 Live") {

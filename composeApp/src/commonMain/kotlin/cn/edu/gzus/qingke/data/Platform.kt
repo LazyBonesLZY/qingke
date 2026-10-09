@@ -61,3 +61,11 @@ expect fun clearCookieStore()
 expect fun currentCookies(): List<Pair<String, String>>
 
 expect fun requestLiveUpdatePermission()
+
+/** 后台保活状态文案：电池白名单 + 精确闹钟。 */
+expect fun liveKeepaliveStatus(): String
+
+/** 保活有缺项就 true，设置页据此决定文案，点击去补。 */
+expect fun keepaliveNeedsFix(): Boolean
+
+expect fun openKeepaliveSettings()

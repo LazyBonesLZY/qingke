@@ -615,7 +615,12 @@ fun App() {
                                 toast("已停止测试")
                             },
                             onToggleCountdown = { on ->
-                                repo.updateSettings { it.copy(liveCountdownEnabled = on) }
+                                // 一起置迁移标记：用户手动表态过，下次启动就别再强制打开了。
+                                repo.updateSettings {
+                                    it.copy(liveCountdownEnabled = on, liveCountdownMigrated = true)
+                                }
+                                // 立刻重推一次，别让用户等下一轮分钟边界才看到形态变化。
+                                repo.refreshLive()
                             },
                         )
                         }

@@ -18,9 +18,9 @@ data class LiveNotice(
 )
 
 /**
- * 后台两次推送的间隔。胶囊上显示的是「下课 23′」这种静态文案，靠这条链刷新
- * （杀进程后闹钟拉起 receiver 重推，已真机验证）；展开态秒级由 when+Chronometer
- * 自己走，不吃这个间隔。进度条不会自己插值，也靠它跟上。
+ * 后台两次推送的间隔。胶囊上的倒计时由系统计时器（when + Chronometer）自己走，
+ * 不吃这个间隔；它管的是进度条插值、正文文案和 when 锚点的兜底刷新——真正
+ * 要紧的是上下课边沿那一次（见 AppRepository.liveRefreshDelayMs）。
  */
 internal const val LIVE_STEP_MILLIS = 60_000L
 

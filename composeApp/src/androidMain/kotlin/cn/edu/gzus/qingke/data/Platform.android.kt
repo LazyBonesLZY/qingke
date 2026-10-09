@@ -331,6 +331,40 @@ actual fun refreshHomeWidgets() {
 }
 
 /**
+ * 把「上课/下课」画成一张图标位图，放进胶囊左侧的图标槽。
+ *
+ * 收起态胶囊只有一个内容槽，文字和系统计时器互斥（挂了 setShortCriticalText
+ * 就没有计时器）。把状态标签挪到图标槽，内容槽就能留给 when + Chronometer
+ * 由系统自己走字——锚点发布一次就够，锁屏、后台、进程被杀都照走，不依赖保活。
+ *
+ * 状态栏小图标是白色蒙版渲染，所以画白字透明底。图标槽是正方形，位图也必须
+ * 是正方形：长方形会被横向压扁，字就变形。
+ */
+private val liveLabelIconCache = java.util.concurrent.ConcurrentHashMap<String, android.graphics.drawable.Icon>()
+
+private fun liveLabelIcon(text: String): android.graphics.drawable.Icon =
+    liveLabelIconCache.getOrPut(text) {
+        val size = 96
+        val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+        // 声明真实密度，否则 96px 会被当成 96dp 再缩一次。
+        bmp.density = QingkeApp.app.resources.displayMetrics.densityDpi
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.WHITE
+            textAlign = android.graphics.Paint.Align.CENTER
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            textSize = size * 0.48f
+        }
+        // 两个全宽汉字按 0.48 字号排下来几乎顶满画布，粗体字形外扩会啃边。
+        // 先量实际宽度，超了就等比缩到留 4% 边距。
+        val maxWidth = size * 0.92f
+        val measured = paint.measureText(text)
+        if (measured > maxWidth) paint.textSize *= maxWidth / measured
+        val baseline = size / 2f - (paint.descent() + paint.ascent()) / 2f
+        android.graphics.Canvas(bmp).drawText(text, size / 2f, baseline, paint)
+        android.graphics.drawable.Icon.createWithBitmap(bmp)
+    }
+
+/**
  * 构建 Live 通知。抽成独立函数是为了让前台服务能用同一个对象
  * startForeground——前台服务的通知必须就是这条 Live 通知本身，
  * 否则会多出一条常驻条目。
@@ -379,22 +413,11 @@ internal fun buildLiveNotification(
         else -> now + 1_000L
     }
     val status = if (inClass) "上课中" else "下一节"
-    // 倒计时开关：关时胶囊显示静态状态文字（即将上课/上课中，不依赖后台刷新，
-    // ColorOS 划掉应用后闹钟会被冻结数天，刷新不了）；开时挂 shortCriticalText
-    // 带分钟数，靠后台每分钟重推刷新（A 方案：系统计时器+图标位标签）。
-    val chipText = if (countdownEnabled) {
-        when {
-            inClass -> "下课 ${etaMinutes.coerceAtLeast(0)}′"
-            etaMinutes > 0 -> "${etaMinutes}′后"
-            else -> "即将"
-        }
-    } else {
-        when {
-            inClass -> "上课中"
-            etaMinutes > 0 -> "即将上课"
-            else -> "即将上课"
-        }
-    }
+    // 收起态胶囊只有一个内容槽，文字和系统计时器二选一：
+    //   开：图标槽放「上课/下课」标签，内容槽留给 when + Chronometer 自己走秒。
+    //       锚点发布一次就够，锁屏/后台/进程被杀都照走，不靠保活。
+    //   关：图标槽放通用图标，内容槽放静态状态词（一个状态内不变，无需刷新）。
+    // 静态状态词只在关掉开关时用，写在下面前台服务那支分支里。
     val launch = PendingIntent.getActivity(
         ctx,
         0,
@@ -426,7 +449,13 @@ internal fun buildLiveNotification(
             .setProgressStartIcon(android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_live_start))
             .setProgressEndIcon(android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_live_end))
         val builder = Notification.Builder(ctx, LIVE_CHANNEL)
-            .setSmallIcon(R.drawable.ic_stat_live)
+            .setSmallIcon(
+                if (countdownEnabled) {
+                    liveLabelIcon(if (inClass) "下课" else "上课")
+                } else {
+                    android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_stat_live)
+                },
+            )
             .setContentTitle(title)
             .setContentText(detail)
             .setStyle(style)
@@ -438,17 +467,18 @@ internal fun buildLiveNotification(
             .setColor(blue)
             .setColorized(false)
             .setWhen(whenMillis)
-            .setShowWhen(true)
-            .setUsesChronometer(true)
-            .setChronometerCountDown(true)
+            // 关掉实时倒计时时展开卡片也不走秒，跟开关文案（「没有倒计时」）对齐。
+            .setShowWhen(countdownEnabled)
+            .setUsesChronometer(countdownEnabled)
+            .setChronometerCountDown(countdownEnabled)
             .setSubText(status)
             // 到点让系统自己收掉。ongoing 通知不会自己消失，而我们的唤醒链只要
             // 漏一次（Doze 延迟、进程被冻结、闹钟没排上）它就永远挂在那儿。
             // setTimeoutAfter 由 NotificationManagerService 自己计时，不依赖我们。
             .setTimeoutAfter((endMillis - now).coerceAtLeast(1_000L))
-        // 胶囊显示 chipText（文字优先于计时器）。后台每分钟重推刷新；
-        // 展开态的秒级倒计时仍由 when + Chronometer 自己走字。
-        builder.setShortCriticalText(chipText)
+        // 只在关掉实时倒计时时才挂静态状态词：挂了它胶囊就没有计时器（文字优先），
+        // 开着的时候内容槽必须空出来给系统计时器。
+        if (!countdownEnabled) builder.setShortCriticalText(if (inClass) "上课中" else "即将上课")
         builder.addExtras(Bundle().apply { putBoolean("android.requestPromotedOngoing", true) })
         return builder.build()
     }
@@ -466,7 +496,7 @@ internal fun buildLiveNotification(
         setTextViewText(R.id.qingke_live_meta, detail.replace("\n", " · "))
         setTextViewText(R.id.qingke_live_eta, etaText)
         setProgressBar(R.id.qingke_live_progress, 100, pct, false)
-        if (remainingMs > 0) {
+        if (countdownEnabled && remainingMs > 0) {
             setChronometerCountDown(R.id.qingke_live_countdown, true)
             setChronometer(
                 R.id.qingke_live_countdown,
@@ -494,9 +524,9 @@ internal fun buildLiveNotification(
         .setCategory(NotificationCompat.CATEGORY_PROGRESS)
         .setSilent(true)
         .setWhen(whenMillis)
-        .setShowWhen(true)
-        .setUsesChronometer(true)
-        .setChronometerCountDown(true)
+        .setShowWhen(countdownEnabled)
+        .setUsesChronometer(countdownEnabled)
+        .setChronometerCountDown(countdownEnabled)
         .setProgress(100, pct, false)
         .setColor(blue)
         .setTimeoutAfter((endMillis - now).coerceAtLeast(1_000L))

@@ -18,7 +18,11 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
- * 上课期间的常驻前台服务，负责按分钟刷新 Live 通知（胶囊上的「下课 23′」）。
+ * 上课期间的常驻前台服务：让 Live 通知一直挂着，并在分钟边界/上下课边沿重推
+ * 一次（换 when 锚点、跟上进度条与正文）。
+ *
+ * 胶囊上的数字不靠这个服务逐秒刷新——那是系统计时器（when + Chronometer）自己
+ * 走的，进程被冻结也不影响；这个服务管的是「通知别消失」和「锚点别过期」。
  *
  * 为什么必须用前台服务：ColorOS 会把后台闹钟整体冻结——实测把 `adjustment`
  * 推迟近 3 天（`setExactAndAllowWhileIdle` + `USE_EXACT_ALARM` 也照冻），

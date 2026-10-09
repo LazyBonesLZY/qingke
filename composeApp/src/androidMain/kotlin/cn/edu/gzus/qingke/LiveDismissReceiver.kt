@@ -63,7 +63,8 @@ internal fun currentLiveParams(nowMs: Long): LiveParams? {
             etaMinutes = ((end - nowMs) / 60_000L).toInt().coerceAtLeast(0),
             startMillis = start,
             endMillis = end,
-            countdownEnabled = readSnapshotStore()?.settings?.liveCountdownEnabled == true,
+            // 读不到存档时按默认值 true 处理，和 AppSettings 的默认值保持一致。
+            countdownEnabled = readSnapshotStore()?.settings?.liveCountdownEnabled != false,
         )
     }
     if (test != null) {

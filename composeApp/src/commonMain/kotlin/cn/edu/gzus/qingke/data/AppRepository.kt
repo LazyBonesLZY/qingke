@@ -94,6 +94,22 @@ class AppRepository(
             persist(empty)
             return empty
         }
+        // 1.7.33 起胶囊倒计时改成「系统计时器自己走字」，不再靠后台每分钟重推的
+        // 分钟文案。但序列化器带 encodeDefaults，老存档里 liveCountdownEnabled 已经
+        // 固化成 false 写盘了，光改 data class 默认值对老用户无效（显式值压过默认值），
+        // 所以这里强制打开一次。落盘后 liveCountdownMigrated 为 true，之后尊重用户选择。
+        if (!parsed.settings.liveCountdownMigrated) {
+            val migrated = parsed.copy(
+                settings = parsed.settings.copy(
+                    liveCountdownEnabled = true,
+                    liveCountdownMigrated = true,
+                ),
+            )
+            // 这里只落盘、不调 persist()：load() 跑在构造期（_state 还没赋值），
+            // persist 会同步刷新 4 类小组件位图，拖慢首帧。小组件等后续正常 commit 再刷。
+            writeStore(STORE, json.encodeToString(AppSnapshot.serializer(), migrated))
+            return migrated
+        }
         return parsed
     }
 
@@ -963,7 +979,8 @@ class AppRepository(
             // 到测试结束点收尾。常驻前台服务负责后台那一半。
             scheduleLiveWake(minOf(nowMs + LIVE_STEP_MILLIS, testEndMillis + 1_000L))
             // 和真实路径同款去重：前台轮询别每轮都全量重发。
-            val testKey = "test/$testEndMillis/${(testEndMillis - nowMs) / 60_000L}"
+            // 带上开关状态，拨开关后下一轮就会重推，不用等分钟边界。
+            val testKey = "test/$testEndMillis/${(testEndMillis - nowMs) / 60_000L}/${_state.value.settings.liveCountdownEnabled}"
             if (testKey == lastLivePost) {
                 setLiveForeground(true)
                 return true
@@ -1013,8 +1030,8 @@ class AppRepository(
             refreshHomeWidgets()
         }
         // 通知正文/进度按分钟刷新：同分钟内的重复调用直接跳过，
-        // 分钟一变或换课/上下课边沿才重推。
-        val postKey = "${notice.title}/${notice.startMillis}/${notice.inClass}/${notice.etaMinutes}"
+        // 分钟一变、换课、上下课边沿或拨了倒计时开关才重推。
+        val postKey = "${notice.title}/${notice.startMillis}/${notice.inClass}/${notice.etaMinutes}/${snap.settings.liveCountdownEnabled}"
         if (postKey == lastLivePost) {
             // 同分钟内不重推，但常驻服务要确保在跑。
             setLiveForeground(true)

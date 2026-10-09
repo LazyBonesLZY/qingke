@@ -53,7 +53,6 @@ internal fun runLiveTick() {
             etaMinutes = notice.etaMinutes,
             startMillis = notice.startMillis,
             endMillis = notice.endMillis,
-            chip = notice.chip,
         )
     }
     scheduleLiveWake(snap.nextLiveWake(now, nowMs))

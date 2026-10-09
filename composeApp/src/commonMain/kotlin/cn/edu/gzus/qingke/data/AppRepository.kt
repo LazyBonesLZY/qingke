@@ -938,7 +938,6 @@ class AppRepository(
                 etaMinutes = if (inClass) remainEnd else remain.coerceAtLeast(0),
                 startMillis = testStartMillis,
                 endMillis = testEndMillis,
-                chip = if (inClass) "下课 ${remainEnd}′" else "${remain.coerceAtLeast(1)}′后",
             )
         }
         if (testEndMillis > 0L && nowMs >= testEndMillis) {
@@ -962,8 +961,9 @@ class AppRepository(
             liveWidgetKey = widgetKey
             refreshHomeWidgets()
         }
-        // 通知正文/胶囊按分钟刷新：同分钟内的重复调用直接跳过，
-        // 分钟一变或换课/上下课边沿才重推。
+        // 通知正文/进度按分钟刷新：同分钟内的重复调用直接跳过，
+        // 分钟一变或换课/上下课边沿才重推。胶囊上的倒计时是系统自己走字的，
+        // 不靠重推。
         val postKey = "${notice.title}/${notice.startMillis}/${notice.inClass}/${notice.etaMinutes}"
         if (postKey == lastLivePost) return true
         lastLivePost = postKey
@@ -974,7 +974,6 @@ class AppRepository(
             etaMinutes = notice.etaMinutes,
             startMillis = notice.startMillis,
             endMillis = notice.endMillis,
-            chip = notice.chip,
         )
     }
 

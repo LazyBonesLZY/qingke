@@ -326,7 +326,6 @@ actual fun notifyLiveClass(
     etaMinutes: Int,
     startMillis: Long,
     endMillis: Long,
-    chip: String,
 ): Boolean {
     val ctx = QingkeApp.app
     if (Build.VERSION.SDK_INT >= 33 &&
@@ -355,13 +354,6 @@ actual fun notifyLiveClass(
     }
     val whenMillis = if (inClass) endMillis else startMillis
     val status = if (inClass) "上课中" else "下一节"
-    val chipText = chip.ifBlank {
-        when {
-            inClass -> "下课 ${etaMinutes}′"
-            etaMinutes > 0 -> "${etaMinutes}′后"
-            else -> "即将"
-        }
-    }
     val etaText = when {
         inClass -> "还剩 ${etaMinutes.coerceAtLeast(0)} 分"
         etaMinutes > 0 -> "${etaMinutes} 分后上课"
@@ -413,15 +405,17 @@ actual fun notifyLiveClass(
             .setUsesChronometer(true)
             .setChronometerCountDown(true)
             .setSubText(status)
-        builder.setShortCriticalText(chipText)
+        // 收起态（状态条状标签/流体云胶囊）显示的是计时器本身：官方规定
+        // 「用计时器时，芯片中的计时器可以显示时间，只要计时器时间为正就会在
+        // 功能块中显示」。以前这里挂了 setShortCriticalText，那是静态文本，
+        // 胶囊只在上岛那一刻取一次，之后永不刷新——所以看起来冻住。
+        // 不挂它，胶囊就会拿 when + Chronometer 自己走字。
         builder.addExtras(Bundle().apply { putBoolean("android.requestPromotedOngoing", true) })
         nm.notify(LIVE_ID, builder.build())
         return true
     }
-    // 低版本走自定义胶囊：原卡片（标题/徽标/meta/倒计时文案/进度条）照旧，
-    // 标题行右边多塞一个 Chronometer 控件，由 SystemUI 按 base 自己走字
-    //（含收起态）；静态文案和进度条靠每分钟重推刷新。
-    // 注意 API36 的提升校验禁自定义视图，所以这条路只留给 36 以下。
+    // 低版本没有流体云提升（自定义视图会失去资格），就当普通通知用：
+    // 卡片里内嵌 Chronometer 自己走字，静态文案和进度条靠定期重推刷新。
     val remainingMs = (if (inClass) endMillis else startMillis) - now
     val card = RemoteViews(ctx.packageName, R.layout.qingke_live_notification).apply {
         setTextViewText(R.id.qingke_live_title, title)
@@ -462,7 +456,6 @@ actual fun notifyLiveClass(
         .setChronometerCountDown(true)
         .setProgress(100, pct, false)
         .setColor(blue)
-        .setShortCriticalText(chipText)
         .setRequestPromotedOngoing(true)
     nm.notify(LIVE_ID, builder.build())
     return true

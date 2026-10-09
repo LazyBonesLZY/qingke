@@ -15,15 +15,13 @@ data class LiveNotice(
     val etaMinutes: Int,
     val startMillis: Long,
     val endMillis: Long,
-    val chip: String,
 )
 
 /**
- * 后台两次推送的间隔。胶囊 shortCriticalText 和正文里的「还剩 N 分」是静态文本，
- * 靠重推刷新（1 分钟一推，最多慢 1 分钟；严禁按秒推）；秒级数字由卡片里的
- * Chronometer 按边沿锚点自己走字。
+ * 后台两次推送的间隔。胶囊上的倒计时是系统按 when 自己走字的，不靠重推；
+ * 这个间隔只用来让正文和进度条跟上（进度条不会自己插值）。
  */
-private const val LIVE_STEP_MILLIS = 60_000L
+private const val LIVE_STEP_MILLIS = 5 * 60_000L
 
 private val snapshotJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -67,14 +65,13 @@ fun AppSnapshot.liveNotice(now: LocalDateTime, nowMs: Long): LiveNotice? {
         etaMinutes = eta,
         startMillis = startMillis,
         endMillis = endMillis,
-        chip = if (next.inClass) "下课 ${next.minutesToEnd}′" else "${next.minutesToStart}′后",
     )
 }
 
 /**
  * 下一次该叫醒后台更新通知的时刻，null 表示不用再叫。
- * 有通知时每分钟推一次（刷新胶囊分钟数和进度），并在上课、下课那一刻切状态；
- * 没挂时等到下一节的提醒点；都过了也别断链，兜到明天 00:05。
+ * 挂着通知时定期重推（让正文和进度条跟上）并在上下课那一刻切状态；
+ * 没挂时等到下一节的提醒点，都过了也别断链，兜到明天 00:05。
  */
 fun AppSnapshot.nextLiveWake(now: LocalDateTime, nowMs: Long): Long? {
     val school = resolved()
@@ -83,14 +80,20 @@ fun AppSnapshot.nextLiveWake(now: LocalDateTime, nowMs: Long): Long? {
     val notice = liveNotice(now, nowMs)
     if (notice != null) {
         val edge = if (notice.inClass) notice.endMillis else notice.startMillis
-        return minOf(nowMs + LIVE_STEP_MILLIS, edge + 1_000L)
+        return minOf(nowMs + LIVE_STEP_MILLIS, edge + 1_000L).coerceAtLeast(nowMs + 1_000L)
     }
+    return fallbackWake(now, nowMs, school)
+}
+
+/**
+ * 没挂通知时等下一节的提醒点；提醒点已过（作息未知等原因没挂上）就等上课点；
+ * 都过了也别断链，兜到明天 00:05。
+ */
+private fun AppSnapshot.fallbackWake(now: LocalDateTime, nowMs: Long, school: ResolvedSchool): Long? {
     val next = nextLiveLesson(slots, now.date, settings, now.date, now.time, scheduleAdjust, school.periodBlocks)
     if (next != null) {
         val start = combineMillis(now.date, school.periodStartOf(next.slot.period))
         val at = start - settings.resolvedRemindLead() * 60_000L
-        // 提醒点在未来就等它；已过（作息未知等原因没挂上）就等上课点再看一次；
-        // 都过了也别断链，兜到明天 00:05。
         val wake = if (at > nowMs) at else start + 1_000L
         if (wake > nowMs) return wake
     }

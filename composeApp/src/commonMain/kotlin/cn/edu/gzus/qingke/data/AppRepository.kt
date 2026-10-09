@@ -938,19 +938,20 @@ class AppRepository(
         if (testEndMillis > nowMs) {
             // 按固定间隔重推（正文文案/进度条跟上；胶囊秒级由系统自己走），
             // 到测试结束点收尾。常驻前台服务负责后台那一半。
-            setLiveForeground(true)
             scheduleLiveWake(minOf(nowMs + LIVE_STEP_MILLIS, testEndMillis + 1_000L))
-            // 和真实路径同款去重：前台 15s 一轮，别每轮都全量重发。
+            // 和真实路径同款去重：前台轮询别每轮都全量重发。
             val testKey = "test/$testEndMillis/${(testEndMillis - nowMs) / 60_000L}"
-            if (testKey == lastLivePost) return true
-            lastLivePost = testKey
+            if (testKey == lastLivePost) {
+                setLiveForeground(true)
+                return true
+            }
             val progress = when {
                 nowMs <= testStartMillis -> 0f
                 nowMs >= testEndMillis -> 1f
                 else -> ((nowMs - testStartMillis).toFloat() / (testEndMillis - testStartMillis).toFloat()).coerceIn(0f, 1f)
             }
             val remainEnd = ((testEndMillis - nowMs) / 60_000L).toInt().coerceAtLeast(0)
-            return notifyLiveClass(
+            val posted = notifyLiveClass(
                 title = "正在上课（测试）",
                 detail = "3-4节 · 测试教室",
                 progress = progress,
@@ -959,6 +960,9 @@ class AppRepository(
                 endMillis = testEndMillis,
                 countdownEnabled = _state.value.settings.liveCountdownEnabled,
             )
+            if (posted) lastLivePost = testKey else lastLivePost = ""
+            setLiveForeground(posted)
+            return posted
         }
         if (testEndMillis > 0L && nowMs >= testEndMillis) {
             testStartMillis = 0L
@@ -986,12 +990,14 @@ class AppRepository(
             refreshHomeWidgets()
         }
         // 通知正文/进度按分钟刷新：同分钟内的重复调用直接跳过，
-        // 分钟一变或换课/上下课边沿才重推。胶囊上的倒计时是系统自己走字的，
-        // 不靠重推。
+        // 分钟一变或换课/上下课边沿才重推。
         val postKey = "${notice.title}/${notice.startMillis}/${notice.inClass}/${notice.etaMinutes}"
-        if (postKey == lastLivePost) return true
-        lastLivePost = postKey
-        return notifyLiveClass(
+        if (postKey == lastLivePost) {
+            // 同分钟内不重推，但常驻服务要确保在跑。
+            setLiveForeground(true)
+            return true
+        }
+        val posted = notifyLiveClass(
             title = notice.title,
             detail = notice.detail,
             progress = notice.progress,
@@ -1000,6 +1006,11 @@ class AppRepository(
             endMillis = notice.endMillis,
             countdownEnabled = snap.settings.liveCountdownEnabled,
         )
+        // 服务只在通知真的挂出来时跑：被划掉 / 没权限时 buildLiveNotification
+        // 返回 null，这时起服务只会「冷启动→判 null→自停」空转。
+        if (posted) lastLivePost = postKey else lastLivePost = ""
+        setLiveForeground(posted)
+        return posted
     }
 
     private fun coursePickTaskOf(offer: CoursePickOffer, section: CoursePickSection): CoursePickTask {

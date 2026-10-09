@@ -521,6 +521,9 @@ actual fun notifyLiveClass(
 }
 
 actual fun cancelLiveClass() {
+    // 撤通知的同时把常驻服务也停掉：退出登录 / 会话过期 / 换登录通道这些路径
+    // 只调 cancelLiveClass，不停服务的话下一分钟服务会把通知推回来。
+    setLiveForeground(false)
     QingkeApp.app.getSystemService(NotificationManager::class.java)?.cancel(LIVE_ID)
 }
 

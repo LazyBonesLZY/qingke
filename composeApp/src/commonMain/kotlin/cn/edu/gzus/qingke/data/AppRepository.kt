@@ -934,7 +934,7 @@ class AppRepository(
                 etaMinutes = if (inClass) remainEnd else remain.coerceAtLeast(0),
                 startMillis = testStartMillis,
                 endMillis = testEndMillis,
-                chip = if (inClass) "下课 ${remainEnd}′" else "${remain.coerceAtLeast(1)}′后",
+                chip = if (inClass) "上课中" else "下一节",
             )
         }
         if (testEndMillis > 0L && nowMs >= testEndMillis) {

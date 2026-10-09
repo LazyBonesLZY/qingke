@@ -299,26 +299,9 @@ actual fun notifyLiveClass(
     nm.createNotificationChannel(channel)
     val now = System.currentTimeMillis()
     val inClass = now >= startMillis && now < endMillis
-    val pct = when {
-        endMillis <= startMillis -> (progress * 100).toInt().coerceIn(0, 100)
-        now <= startMillis -> 0
-        now >= endMillis -> 100
-        else -> (((now - startMillis) * 100L) / (endMillis - startMillis)).toInt().coerceIn(0, 100)
-    }
     val whenMillis = if (inClass) endMillis else startMillis
     val status = if (inClass) "上课中" else "下一节"
-    val chipText = chip.ifBlank {
-        when {
-            inClass -> "下课 ${etaMinutes}′"
-            etaMinutes > 0 -> "${etaMinutes}′后"
-            else -> "即将"
-        }
-    }
-    val etaText = when {
-        inClass -> "还剩 ${etaMinutes.coerceAtLeast(0)} 分"
-        etaMinutes > 0 -> "${etaMinutes} 分后上课"
-        else -> "即将上课"
-    }
+    val chipText = chip.ifBlank { status }
     val launch = PendingIntent.getActivity(
         ctx,
         0,
@@ -332,27 +315,13 @@ actual fun notifyLiveClass(
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
     val blue = 0xFF3482FF.toInt()
-    val track = 0xFFB7D2FF.toInt()
     if (Build.VERSION.SDK_INT >= 36) {
-        val done = pct.coerceIn(0, 100)
-        val left = (100 - done).coerceAtLeast(1)
-        val style = Notification.ProgressStyle()
-            .setStyledByProgress(true)
-            .setProgress(done)
-            .setProgressSegments(
-                listOf(
-                    Notification.ProgressStyle.Segment(done.coerceAtLeast(1)).setColor(blue),
-                    Notification.ProgressStyle.Segment(left).setColor(track),
-                ),
-            )
-            .setProgressTrackerIcon(android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_live_now))
-            .setProgressStartIcon(android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_live_start))
-            .setProgressEndIcon(android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_live_end))
+        // 标准 ProgressStyle 模板，不挂自定义视图才有流体云资格。
+        // 静态进度条在边沿推送下会僵死，直接不画；时间全由 Chronometer 走字。
         val builder = Notification.Builder(ctx, LIVE_CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_live)
             .setContentTitle(title)
-            .setContentText("$etaText · $detail")
-            .setStyle(style)
+            .setContentText(detail)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(launch)
@@ -372,12 +341,11 @@ actual fun notifyLiveClass(
     }
     // 低版本走标准模板：禁用自定义 RemoteViews，否则过不了
     // hasPromotableCharacteristics，自带模板才有流体云/灵动岛资格。
-    // 收起态的秒级数字由系统 Chronometer 按 when 自己走字；
-    // 胶囊 shortCriticalText 和正文倒计时靠每分钟的 notify 刷新。
+    // 收起态的秒级数字由系统 Chronometer 按 when 自己走字，后台只在边沿推。
     val builder = NotificationCompat.Builder(ctx, LIVE_CHANNEL)
         .setSmallIcon(R.drawable.ic_stat_live)
         .setContentTitle(title)
-        .setContentText("$etaText · ${detail.replace("\n", " · ")}")
+        .setContentText(detail.replace("\n", " · "))
         .setSubText(status)
         .setOngoing(true)
         .setOnlyAlertOnce(true)
@@ -389,7 +357,7 @@ actual fun notifyLiveClass(
         .setShowWhen(true)
         .setUsesChronometer(true)
         .setChronometerCountDown(true)
-        .setProgress(100, pct, false)
+        .setProgress(0, 0, false)
         .setColor(blue)
         .setShortCriticalText(chipText)
         .setRequestPromotedOngoing(true)

@@ -19,11 +19,10 @@ data class LiveNotice(
 )
 
 /**
- * 后台两次推送的间隔。Collapse 的胶囊/shortCriticalText 和正文里的
- * 「还剩 N 分」都是静态文本，只能靠重新 notify 刷新；秒级数字由系统
- * Chronometer 自己走字。1 分钟一推，倒计时最多慢 1 分钟；严禁按秒推。
+ * 省电策略：后台只在状态边沿叫醒（提醒点、上课点、下课点），中间不叫醒。
+ * 秒级数字由系统 Chronometer 按 when 自己走字；胶囊和正文只放静态文案
+ * （"上课中/下一节"），不放分钟数，所以不存在 stale。
  */
-private const val LIVE_STEP_MILLIS = 60_000L
 
 private val snapshotJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -67,13 +66,13 @@ fun AppSnapshot.liveNotice(now: LocalDateTime, nowMs: Long): LiveNotice? {
         etaMinutes = eta,
         startMillis = startMillis,
         endMillis = endMillis,
-        chip = if (next.inClass) "下课 ${next.minutesToEnd}′" else "${next.minutesToStart}′后",
+        chip = if (next.inClass) "上课中" else "下一节",
     )
 }
 
 /**
  * 下一次该叫醒后台更新通知的时刻，null 表示不用再叫。
- * 有通知时每分钟推一次（刷新胶囊文本和进度），并在上课、下课那一刻切状态；
+ * 有通知时只在边沿推一次（上课中→等下课点，课前→等上课点），中间不叫醒；
  * 没挂时等到下一节的提醒点，今天没课了就等明天零点过五分再看。
  */
 fun AppSnapshot.nextLiveWake(now: LocalDateTime, nowMs: Long): Long? {
@@ -83,13 +82,14 @@ fun AppSnapshot.nextLiveWake(now: LocalDateTime, nowMs: Long): Long? {
     val notice = liveNotice(now, nowMs)
     if (notice != null) {
         val edge = if (notice.inClass) notice.endMillis else notice.startMillis
-        return minOf(nowMs + LIVE_STEP_MILLIS, edge + 1_000L)
+        return (edge + 1_000L).takeIf { it > nowMs }
     }
     val next = nextLiveLesson(slots, now.date, settings, now.date, now.time, scheduleAdjust, school.periodBlocks)
     if (next != null) {
         val start = combineMillis(now.date, school.periodStartOf(next.slot.period))
         val at = start - settings.resolvedRemindLead() * 60_000L
-        return if (at > nowMs) at else nowMs + LIVE_STEP_MILLIS
+        // 提醒点在未来就等它；已过（作息未知等原因没挂上）就等上课点再看一次。
+        return (if (at > nowMs) at else start + 1_000L).takeIf { it > nowMs }
     }
     return combineMillis(now.date.plus(DatePeriod(days = 1)), "00:05").takeIf { it > nowMs }
 }

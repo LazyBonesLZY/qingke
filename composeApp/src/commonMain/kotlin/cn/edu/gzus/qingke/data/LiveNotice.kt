@@ -18,10 +18,11 @@ data class LiveNotice(
 )
 
 /**
- * 后台两次推送的间隔。胶囊上的倒计时是系统按 when 自己走字的，不靠重推；
- * 这个间隔只用来让正文和进度条跟上（进度条不会自己插值）。
+ * 后台两次推送的间隔。胶囊上显示的是「下课 23′」这种静态文案，只能靠重推刷新，
+ * 所以压到 1 分钟（最多慢 1 分钟；严禁按秒推）。展开卡片的秒级数字由
+ * when+Chronometer 自己走，不吃这个间隔。进度条不会自己插值，也靠它跟上。
  */
-private const val LIVE_STEP_MILLIS = 5 * 60_000L
+private const val LIVE_STEP_MILLIS = 60_000L
 
 private val snapshotJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 

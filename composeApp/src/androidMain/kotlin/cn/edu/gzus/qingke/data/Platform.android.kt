@@ -354,6 +354,14 @@ actual fun notifyLiveClass(
     }
     val whenMillis = if (inClass) endMillis else startMillis
     val status = if (inClass) "上课中" else "下一节"
+    // 收起态胶囊只有一个文字槽，文字优先于计时器。放「下课 23′」这种带分钟
+    // 的文案：胶囊靠后台每分钟重推刷新（LiveNotice 的 LIVE_STEP_MILLIS），
+    // 秒级则由展开卡片的 when+Chronometer 自己走。
+    val chipText = when {
+        inClass -> "下课 ${etaMinutes.coerceAtLeast(0)}′"
+        etaMinutes > 0 -> "${etaMinutes}′后"
+        else -> "即将"
+    }
     val etaText = when {
         inClass -> "还剩 ${etaMinutes.coerceAtLeast(0)} 分"
         etaMinutes > 0 -> "${etaMinutes} 分后上课"
@@ -405,12 +413,8 @@ actual fun notifyLiveClass(
             .setUsesChronometer(true)
             .setChronometerCountDown(true)
             .setSubText(status)
-        // 收起态胶囊只有一个文字槽，而且文字优先于计时器：挂了它，胶囊显示
-        // 这段文字；不挂，才轮到 when+Chronometer 自己走字。
-        // 这里放「上课中/下一节」这种状态词——一个状态内它根本不变化，
-        // 所以不存在过期问题（之前放「下课 23′」这种会变的数字，上岛取一次
-        // 就冻住了）。倒计时照样在展开卡片上，由下面的 Chronometer 走。
-        builder.setShortCriticalText(status)
+        // 收起态胶囊的文字（见上面 chipText 的说明）。
+        builder.setShortCriticalText(chipText)
         builder.addExtras(Bundle().apply { putBoolean("android.requestPromotedOngoing", true) })
         nm.notify(LIVE_ID, builder.build())
         return true

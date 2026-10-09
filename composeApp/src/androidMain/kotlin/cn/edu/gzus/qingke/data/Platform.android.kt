@@ -314,27 +314,6 @@ actual fun refreshHomeWidgets() {
     cn.edu.gzus.qingke.widget.QingkeWidgets.refreshAll(QingkeApp.app)
 }
 
-/**
- * 把「上课/下课」画成一张图标位图。胶囊左侧那个图标槽本来只放一个通用小图标，
- * 正好拿来当状态标签：右边留给系统按 when 自己走字的计时器，文字和倒计时就都在了。
- * 状态栏的小图标是白色蒙版渲染，所以这里画白字透明底。
- */
-private fun liveLabelIcon(text: String): android.graphics.drawable.Icon {
-    // 图标槽是正方形，位图也得是正方形：给长方形会被横向压扁，字就变形。
-    // 两个字并排，字号取到刚好塞满宽度，这样每字约占半格。
-    val size = 96
-    val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
-    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-        color = android.graphics.Color.WHITE
-        textSize = size * 0.48f
-        textAlign = android.graphics.Paint.Align.CENTER
-        typeface = android.graphics.Typeface.DEFAULT_BOLD
-    }
-    val baseline = size / 2f - (paint.descent() + paint.ascent()) / 2f
-    android.graphics.Canvas(bmp).drawText(text, size / 2f, baseline, paint)
-    return android.graphics.drawable.Icon.createWithBitmap(bmp)
-}
-
 actual fun notifyLiveClass(
     title: String,
     detail: String,
@@ -370,6 +349,13 @@ actual fun notifyLiveClass(
     }
     val whenMillis = if (inClass) endMillis else startMillis
     val status = if (inClass) "上课中" else "下一节"
+    // 胶囊文字槽：带分钟的文案（C 方案）。后台唤醒链已验证可靠——杀进程后
+    // 闹钟每分钟拉起 LiveTickReceiver 重推刷新它；setTimeoutAfter 兜底收尾。
+    val chipText = when {
+        inClass -> "下课 ${etaMinutes.coerceAtLeast(0)}′"
+        etaMinutes > 0 -> "${etaMinutes}′后"
+        else -> "即将"
+    }
     val launch = PendingIntent.getActivity(
         ctx,
         0,
@@ -401,7 +387,7 @@ actual fun notifyLiveClass(
             .setProgressStartIcon(android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_live_start))
             .setProgressEndIcon(android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_live_end))
         val builder = Notification.Builder(ctx, LIVE_CHANNEL)
-            .setSmallIcon(liveLabelIcon(if (inClass) "下课" else "上课"))
+            .setSmallIcon(R.drawable.ic_stat_live)
             .setContentTitle(title)
             .setContentText(detail)
             .setStyle(style)
@@ -421,8 +407,9 @@ actual fun notifyLiveClass(
             // 漏一次（Doze 延迟、进程被冻结、闹钟没排上）它就永远挂在那儿。
             // setTimeoutAfter 由 NotificationManagerService 自己计时，不依赖我们。
             .setTimeoutAfter((endMillis - now).coerceAtLeast(1_000L))
-        // 不挂 setShortCriticalText：胶囊的文字槽留给系统计时器（when +
-        // Chronometer 自己走字，永不过期）。状态标签改由左侧图标承载。
+        // 胶囊显示 chipText（文字优先于计时器）。后台每分钟重推刷新；
+        // 展开态的秒级倒计时仍由 when + Chronometer 自己走字。
+        builder.setShortCriticalText(chipText)
         builder.addExtras(Bundle().apply { putBoolean("android.requestPromotedOngoing", true) })
         nm.notify(LIVE_ID, builder.build())
         return true

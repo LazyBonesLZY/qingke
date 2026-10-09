@@ -136,6 +136,7 @@ fun MineScreen(
     liveTesting: Boolean,
     onLiveTest: () -> Unit,
     onStopLiveTest: () -> Unit,
+    onToggleCountdown: (Boolean) -> Unit = {},
 ) {
     var pickingDate by remember { mutableStateOf(false) }
     var pickingWeek by remember { mutableStateOf(false) }
@@ -409,6 +410,7 @@ fun MineScreen(
             },
             onLiveTest = onLiveTest,
             onStopLiveTest = onStopLiveTest,
+            onToggleCountdown = onToggleCountdown,
         )
         UpdateBlock(
             update = update,
@@ -906,6 +908,7 @@ private fun RemindBlock(
     onPickLead: (Int) -> Unit,
     onLiveTest: () -> Unit,
     onStopLiveTest: () -> Unit,
+    onToggleCountdown: (Boolean) -> Unit = {},
 ) {
     val lead = snapshot.settings.resolvedRemindLead()
     val liveStatus = liveUpdateStatus(lead)
@@ -925,6 +928,16 @@ private fun RemindBlock(
             onCheckedChange = { if (school.hasPeriodClock) onToggleRemind(it) },
         )
         if (school.hasPeriodClock) {
+            SwitchPreference(
+                title = "胶囊实时倒计时",
+                summary = if (snapshot.settings.liveCountdownEnabled) {
+                    "显示秒级倒计时（上课中数下课、课前数上课）"
+                } else {
+                    "只显示静态状态（即将上课/上课中），省电且不依赖后台刷新"
+                },
+                checked = snapshot.settings.liveCountdownEnabled,
+                onCheckedChange = onToggleCountdown,
+            )
             ArrowPreference(
                 title = "提前多久提醒",
                 summary = "上课前 $lead 分钟",

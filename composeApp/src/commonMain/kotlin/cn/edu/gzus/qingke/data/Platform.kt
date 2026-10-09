@@ -34,6 +34,7 @@ expect fun notifyLiveClass(
     etaMinutes: Int,
     startMillis: Long,
     endMillis: Long,
+    countdownEnabled: Boolean,
 ): Boolean
 
 expect fun refreshHomeWidgets()

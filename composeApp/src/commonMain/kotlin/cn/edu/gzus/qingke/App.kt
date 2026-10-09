@@ -608,6 +608,9 @@ fun App() {
                                 repo.stopLiveTest()
                                 toast("已停止测试")
                             },
+                            onToggleCountdown = { on ->
+                                repo.updateSettings { it.copy(liveCountdownEnabled = on) }
+                            },
                         )
                         }
                     }

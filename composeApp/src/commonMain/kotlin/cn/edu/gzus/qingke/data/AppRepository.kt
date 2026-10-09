@@ -956,6 +956,7 @@ class AppRepository(
                 etaMinutes = remainEnd,
                 startMillis = testStartMillis,
                 endMillis = testEndMillis,
+                countdownEnabled = _state.value.settings.liveCountdownEnabled,
             )
         }
         if (testEndMillis > 0L && nowMs >= testEndMillis) {
@@ -993,6 +994,7 @@ class AppRepository(
             etaMinutes = notice.etaMinutes,
             startMillis = notice.startMillis,
             endMillis = notice.endMillis,
+            countdownEnabled = snap.settings.liveCountdownEnabled,
         )
     }
 

@@ -51,6 +51,7 @@ internal fun runLiveTick() {
             etaMinutes = ((end - nowMs) / 60_000L).toInt().coerceAtLeast(0),
             startMillis = start,
             endMillis = end,
+            countdownEnabled = readSnapshotStore()?.settings?.liveCountdownEnabled == true,
         )
         scheduleLiveWake(minOf(nowMs + LIVE_STEP_MILLIS, end + 1_000L))
         return
@@ -77,6 +78,7 @@ internal fun runLiveTick() {
             etaMinutes = notice.etaMinutes,
             startMillis = notice.startMillis,
             endMillis = notice.endMillis,
+            countdownEnabled = snap.settings.liveCountdownEnabled,
         )
     }
     scheduleLiveWake(snap.nextLiveWake(now, nowMs))

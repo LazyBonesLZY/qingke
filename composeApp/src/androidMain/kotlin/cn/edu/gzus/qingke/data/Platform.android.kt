@@ -230,9 +230,21 @@ actual fun requestLiveUpdatePermission() {
     // Runtime prompt is issued from MainActivity on launch.
 }
 
-/** 精确闹钟是否可用：12 以下直接能用，以上看用户给没给。 */
+/**
+ * 精确闹钟是否可用。USE_EXACT_ALARM（manifest 声明、33+ 安装即授予）时恒真；
+ * 否则 12 以下直接能用，以上看用户给没给 SCHEDULE_EXACT_ALARM。
+ * 注意 canScheduleExactAlarms() 只查 appop 位，OEM 上可能谎报，别当唯一依据。
+ */
 private fun canScheduleExact(ctx: android.content.Context): Boolean {
     if (Build.VERSION.SDK_INT < 31) return true
+    if (Build.VERSION.SDK_INT >= 33 &&
+        androidx.core.content.ContextCompat.checkSelfPermission(
+            ctx,
+            "android.permission.USE_EXACT_ALARM",
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    ) {
+        return true
+    }
     return ctx.getSystemService(android.app.AlarmManager::class.java)?.canScheduleExactAlarms() == true
 }
 
@@ -321,6 +333,7 @@ actual fun notifyLiveClass(
     etaMinutes: Int,
     startMillis: Long,
     endMillis: Long,
+    countdownEnabled: Boolean,
 ): Boolean {
     val ctx = QingkeApp.app
     if (Build.VERSION.SDK_INT >= 33 &&
@@ -349,12 +362,21 @@ actual fun notifyLiveClass(
     }
     val whenMillis = if (inClass) endMillis else startMillis
     val status = if (inClass) "上课中" else "下一节"
-    // 胶囊文字槽：带分钟的文案（C 方案）。后台唤醒链已验证可靠——杀进程后
-    // 闹钟每分钟拉起 LiveTickReceiver 重推刷新它；setTimeoutAfter 兜底收尾。
-    val chipText = when {
-        inClass -> "下课 ${etaMinutes.coerceAtLeast(0)}′"
-        etaMinutes > 0 -> "${etaMinutes}′后"
-        else -> "即将"
+    // 倒计时开关：关时胶囊显示静态状态文字（即将上课/上课中，不依赖后台刷新，
+    // ColorOS 划掉应用后闹钟会被冻结数天，刷新不了）；开时挂 shortCriticalText
+    // 带分钟数，靠后台每分钟重推刷新（A 方案：系统计时器+图标位标签）。
+    val chipText = if (countdownEnabled) {
+        when {
+            inClass -> "下课 ${etaMinutes.coerceAtLeast(0)}′"
+            etaMinutes > 0 -> "${etaMinutes}′后"
+            else -> "即将"
+        }
+    } else {
+        when {
+            inClass -> "上课中"
+            etaMinutes > 0 -> "即将上课"
+            else -> "即将上课"
+        }
     }
     val launch = PendingIntent.getActivity(
         ctx,
@@ -493,13 +515,15 @@ actual fun scheduleLiveWake(atMillis: Long?) {
         alarms.cancel(pending)
         return
     }
-    // 有精确闹钟权限就用精确的：上下课边沿在 Doze 里也准时；没给就退回非精确。
-    // 恰在排点时权限被撤销（SecurityException）也要退回非精确，别让唤醒链断掉。
-    if (canScheduleExact(ctx)) {
-        val exact = runCatching {
-            alarms.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, atMillis, pending)
-        }
-        if (exact.isSuccess) return
+    // 精确闹钟是唯一可靠通道：ColorOS 对非精确闹钟施加 adjustment 策略，
+    // 实测能把投递推迟近 3 天。USE_EXACT_ALARM（manifest 声明、33+ 安装即
+    // 授予）让 setExactAndAllowWhileIdle 不看 canScheduleExactAlarms()——
+    // 后者查的是 SCHEDULE_EXACT_ALARM 那个 appop 位，部分 OEM 上谎报。
+    // 先无条件试精确（有 USE_EXACT_ALARM 时必成），抛异常才降级非精确。
+    val exactOk = runCatching {
+        alarms.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, atMillis, pending)
+    }.isSuccess
+    if (!exactOk) {
+        runCatching { alarms.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, atMillis, pending) }
     }
-    runCatching { alarms.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, atMillis, pending) }
 }

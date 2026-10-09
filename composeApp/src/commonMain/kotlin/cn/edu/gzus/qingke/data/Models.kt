@@ -150,6 +150,8 @@ fun defaultZfTermCode(today: LocalDate = nowDateTime().date): String =
 @Serializable
 data class AppSettings(
     val remindBeforeClass: Boolean = true,
+    /** 胶囊实时倒计时：开=秒级系统计时器，关=静态状态文字（即将上课/上课中）。 */
+    val liveCountdownEnabled: Boolean = false,
     val darkModeFollowSystem: Boolean = false,
     val backgroundMode: String = BACKGROUND_SYSTEM,
     val backgroundImageUri: String = "",

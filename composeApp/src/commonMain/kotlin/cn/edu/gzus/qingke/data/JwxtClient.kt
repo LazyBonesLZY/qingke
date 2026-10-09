@@ -226,12 +226,17 @@ class JwxtClient(
             yearName = yearName,
             termCode = termCode,
             yearCode = xs.str("XNM").ifBlank { year },
-            termLabel = when {
-                termCode == "12" || termCode == "2" || xs.str("XQMMC").contains("2") ||
-                    xs.str("XQMMC").contains("二") -> "第2学期"
-                termCode == "3" || xs.str("XQMMC").contains("3") ||
-                    xs.str("XQMMC").contains("三") -> "第3学期"
-                else -> "第1学期"
+            termLabel = run {
+                // XQMMC 可能是 "2"，也可能是 "第二学期" 甚至 "2024-2025学年第一学期"：
+                // 含年份时数字 2 会误判，必须按学期字精确匹配。
+                val name = xs.str("XQMMC")
+                when {
+                    termCode == "12" || termCode == "2" || name == "2" ||
+                        name.contains("第二学期") || name.contains("第2学期") -> "第2学期"
+                    termCode == "3" || name == "3" ||
+                        name.contains("第三学期") || name.contains("第3学期") -> "第3学期"
+                    else -> "第1学期"
+                }
             },
         )
         return Triple(profile, slots, practices)
@@ -824,12 +829,8 @@ private fun requireSession(text: String) {
     }
     // 正方 ajax 会话失效回 JSON，不含登录表单，之前会当空列表吞掉。
     // 只看 JSON 体：正常 HTML 页自带超时跳转脚本也含登录字样，不能碰。
-    if (body.startsWith("{") && (
-        body.contains("登录已过期") || body.contains("登录过期") ||
-            body.contains("会话失效") || body.contains("会话超时") ||
-            body.contains("请重新登录") || body.contains("重新登录")
-        )
-    ) error(SESSION_LOST_HINT)
+    // 关键词走统一的 isSessionLost，和各端重登判断保持一致。
+    if (body.startsWith("{") && isSessionLost(body)) error(SESSION_LOST_HINT)
 }
 
 private fun htmlInputValue(html: String, id: String): String {

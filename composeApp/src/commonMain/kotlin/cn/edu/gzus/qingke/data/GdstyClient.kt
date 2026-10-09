@@ -36,7 +36,8 @@ class GdstyClient(
     // 验证码和 __VIEWSTATE 是同一张登录页的产物：重开页面会让用户刚填的码作废，
     // 所以这两样必须一起留到提交那一刻。按 captchaId 分桶存：并发两次登录
     //（自动重登撞上用户手动点）不会互相覆盖，对方拿旧码提交只会拿到自己的 VIEWSTATE。
-    private val pendingLogins = mutableMapOf<String, Pair<String, String>>()
+    // 不可变引用整体替换：读写不加锁也不会 CME，最多极端并发下后写覆盖先写。
+    private var pendingLogins: Map<String, Pair<String, String>> = emptyMap()
     private var lastStudentId = ""
 
     @OptIn(ExperimentalEncodingApi::class)
@@ -50,11 +51,10 @@ class GdstyClient(
         val bytes = runCatching { Base64.decode(encoded) }.getOrNull() ?: return null
         if (bytes.isEmpty()) return null
         val id = md5Hex(encoded)
-        pendingLogins[id] = viewState to viewStateGen
-        if (pendingLogins.size > 5) {
-            val drop = pendingLogins.keys.firstOrNull()
-            if (drop != null && drop != id) pendingLogins.remove(drop)
-        }
+        val kept = pendingLogins + (id to (viewState to viewStateGen))
+        pendingLogins = if (kept.size > 5) {
+            kept.entries.drop(kept.size - 5).associate { it.key to it.value }
+        } else kept
         return LoginCaptcha(id = id, bytes = bytes, hint = "综合系统验证码，4 位数字")
     }
 
@@ -96,7 +96,7 @@ class GdstyClient(
         if (response.status.value !in 300..399 || location.contains("login.aspx", ignoreCase = true)) {
             throw error(gdstyLoginTip(body).ifBlank { "学号或密码不正确" })
         }
-        pendingLogins.remove(captchaId)
+        pendingLogins = pendingLogins - captchaId
         lastStudentId = studentId
 
         if (!enterJwxt()) error("综合系统登录了，教务会话没建起来。再试一次。")
@@ -352,7 +352,7 @@ internal fun parseGdstyWeeks(html: String): List<ZhkuWeek> {
         .findAll(table)
         .mapNotNull { row ->
             val week = row.groupValues[1].toIntOrNull() ?: return@mapNotNull null
-            val monday = Regex("""title='(\d{4})年(\d{2})月(\d{2})'""")
+            val monday = Regex("""title\s*=\s*['"](\d{4})年(\d{1,2})月(\d{1,2})['"]""")
                 .findAll(row.groupValues[2])
                 .mapNotNull { match ->
                     val parts = match.groupValues
@@ -441,7 +441,7 @@ internal fun gdstyPeriodLabel(raw: String): String =
 /** 节次行的写法是「1、2节 08:30-09:50」，单节是「5节」，中午那行没有编号。 */
 internal fun gdstyPeriodFromLabel(label: String): String {
     if (label.contains("中午")) return "中午"
-    val span = Regex("""(\d+)\s*[、,，\-－]\s*(\d+)""").find(label)
+    val span = Regex("""(\d+)\s*[、,，\-－～~—到]\s*(\d+)""").find(label)
     if (span != null) return "${span.groupValues[1]}-${span.groupValues[2]}"
     val single = Regex("""(?:第\s*)?(\d+)\s*节""").find(label) ?: return ""
     return single.groupValues[1]

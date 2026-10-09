@@ -88,8 +88,10 @@ fun AppSnapshot.nextLiveWake(now: LocalDateTime, nowMs: Long): Long? {
     if (next != null) {
         val start = combineMillis(now.date, school.periodStartOf(next.slot.period))
         val at = start - settings.resolvedRemindLead() * 60_000L
-        // 提醒点在未来就等它；已过（作息未知等原因没挂上）就等上课点再看一次。
-        return (if (at > nowMs) at else start + 1_000L).takeIf { it > nowMs }
+        // 提醒点在未来就等它；已过（作息未知等原因没挂上）就等上课点再看一次；
+        // 都过了也别断链，兜到明天 00:05。
+        val wake = if (at > nowMs) at else start + 1_000L
+        if (wake > nowMs) return wake
     }
     return combineMillis(now.date.plus(DatePeriod(days = 1)), "00:05").takeIf { it > nowMs }
 }

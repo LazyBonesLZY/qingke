@@ -74,8 +74,17 @@ class PersistCookieStorage : CookiesStorage {
     fun records(): List<CookieRecord> = cookies.map { CookieRecord(it.name, it.value, it.domain, it.path) }
 
     fun wipe() {
-        cookies = emptyList()
-        persist(emptyList())
+        // 自旋拿锁：addCookie 的 persist 在做文件 IO，窗口虽小但撞上时
+        // 无锁清空会被随后落盘的旧引用复活。登出路径低频，自旋可接受。
+        while (!mutex.tryLock()) {
+            // busy wait
+        }
+        try {
+            cookies = emptyList()
+            persist(emptyList())
+        } finally {
+            mutex.unlock()
+        }
     }
 
     suspend fun retainLatest(host: String, name: String) = mutex.withLock {

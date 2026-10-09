@@ -68,6 +68,7 @@ class AppRepository(
     private var testStartMillis = 0L
     private var testEndMillis = 0L
     private var liveWidgetKey = ""
+    private var lastLivePost = ""
     private val pickMutex = Mutex()
 
     fun hasLiveTest(): Boolean = testEndMillis > nowMillis()
@@ -903,8 +904,8 @@ class AppRepository(
         return when {
             !posted && status.contains("权限") -> "没有通知权限，先到系统设置打开通知"
             !posted -> "没有发出通知：$status"
-            status.contains("未开启") -> "通知已发出。进度在走，系统还没开 Live Update 的话，去设置打开。"
-            else -> "通知已发出。这是上课中进度，大约 8 分钟走完。"
+            status.contains("未开启") -> "通知已发出。倒计时在走，系统还没开 Live Update 的话，去设置打开。"
+            else -> "通知已发出。这是上课中倒计时，大约 8 分钟走完。"
         }
     }
 
@@ -919,6 +920,9 @@ class AppRepository(
     fun refreshLive(): Boolean {
         val nowMs = nowMillis()
         if (testEndMillis > nowMs) {
+            // 测试态也排一个结束唤醒：App 被划掉后后台 tick 走真实课表，
+            // 到点用它收尾，避免测试通知赖着不走或被真实课表提前覆盖。
+            scheduleLiveWake(testEndMillis + 1_000L)
             val remain = ((testStartMillis - nowMs) / 60_000L).toInt()
             val progress = when {
                 nowMs <= testStartMillis -> 0f
@@ -948,6 +952,7 @@ class AppRepository(
         scheduleLiveWake(snap.nextLiveWake(now, nowMs))
         val notice = snap.liveNotice(now, nowMs)
         if (notice == null) {
+            lastLivePost = ""
             cancelLiveClass()
             return false
         }
@@ -957,6 +962,11 @@ class AppRepository(
             liveWidgetKey = widgetKey
             refreshHomeWidgets()
         }
+        // 通知正文/胶囊/when 全静态，只有换课或上下课边沿才需重推，
+        // 前台心跳的重复调用直接跳过。
+        val postKey = "${notice.title}/${notice.startMillis}/${notice.inClass}"
+        if (postKey == lastLivePost) return true
+        lastLivePost = postKey
         return notifyLiveClass(
             title = notice.title,
             detail = notice.detail,
@@ -1049,6 +1059,7 @@ private fun AppSnapshot.widgetSignature(): Int {
     h = 31 * h + settings.currentWeek
     h = 31 * h + settings.weekCount
     h = 31 * h + settings.schoolId.hashCode()
+    h = 31 * h + settings.customJwxt.hashCode()
     h = 31 * h + settings.courseAliases.hashCode()
     h = 31 * h + settings.roomAliases.hashCode()
     h = 31 * h + settings.scheduleShifts.hashCode()

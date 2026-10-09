@@ -38,7 +38,9 @@ class GzusCasClient(
     private val cas = GZUS_CAS_ORIGIN.trimEnd('/')
     private val casOrigin = runCatching {
         val u = Url(cas)
-        "${u.protocol.name}://${u.host}"
+        val defaultPort = u.protocol.defaultPort
+        if (u.port == defaultPort) "${u.protocol.name}://${u.host}"
+        else "${u.protocol.name}://${u.host}:${u.port}"
     }.getOrDefault("https://cas.gzus.edu.cn")
     private val ehall = GZUS_EHALL_ORIGIN.trimEnd('/')
     private val keepMutex = Mutex()

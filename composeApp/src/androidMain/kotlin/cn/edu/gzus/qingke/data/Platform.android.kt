@@ -18,6 +18,7 @@ import android.os.Build
 import android.os.Bundle
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import cn.edu.gzus.qingke.EXTRA_LIVE_DISMISS
@@ -339,13 +340,33 @@ actual fun notifyLiveClass(
         nm.notify(LIVE_ID, builder.build())
         return true
     }
-    // 低版本走标准模板：禁用自定义 RemoteViews，否则过不了
-    // hasPromotableCharacteristics，自带模板才有流体云/灵动岛资格。
-    // 收起态的秒级数字由系统 Chronometer 按 when 自己走字，后台只在边沿推。
+    // 低版本走自定义胶囊：布局里内嵌 Chronometer 控件，由 SystemUI 按 base
+    // 自己走字（含收起态），App 只在边沿重推一次，又活又省电。
+    // 注意 API36 的提升校验禁自定义视图，所以这条路只留给 36 以下。
+    val remainingMs = (if (inClass) endMillis else startMillis) - now
+    val card = RemoteViews(ctx.packageName, R.layout.qingke_live_countdown).apply {
+        setTextViewText(R.id.qingke_live_title, title)
+        setTextViewText(R.id.qingke_live_meta, "$status · $detail")
+        if (remainingMs > 0) {
+            setChronometerCountDown(R.id.qingke_live_countdown, true)
+            setChronometer(
+                R.id.qingke_live_countdown,
+                android.os.SystemClock.elapsedRealtime() + remainingMs,
+                null,
+                true,
+            )
+            setViewVisibility(R.id.qingke_live_countdown, android.view.View.VISIBLE)
+        } else {
+            setViewVisibility(R.id.qingke_live_countdown, android.view.View.GONE)
+        }
+    }
     val builder = NotificationCompat.Builder(ctx, LIVE_CHANNEL)
         .setSmallIcon(R.drawable.ic_stat_live)
         .setContentTitle(title)
-        .setContentText(detail.replace("\n", " · "))
+        .setContentText("$status · ${detail.replace("\n", " · ")}")
+        .setCustomContentView(card)
+        .setCustomBigContentView(card)
+        .setStyle(NotificationCompat.DecoratedCustomViewStyle())
         .setSubText(status)
         .setOngoing(true)
         .setOnlyAlertOnce(true)
@@ -381,6 +402,13 @@ actual fun scheduleLiveWake(atMillis: Long?) {
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
     if (atMillis == null) {
+        alarms.cancel(pending)
+        return
+    }
+    // 没通知权限排了也白排：tick 起来读完快照只能 no-op，还占一次叫醒。
+    if (Build.VERSION.SDK_INT >= 33 &&
+        ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+    ) {
         alarms.cancel(pending)
         return
     }

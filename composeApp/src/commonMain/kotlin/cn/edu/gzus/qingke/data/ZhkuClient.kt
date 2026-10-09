@@ -381,7 +381,7 @@ internal data class ZhkuCourse(
 
 internal fun parseZhkuWeeks(html: String): List<ZhkuWeek> =
     Regex(
-        """<tr[^>]*>\s*<td[^>]*>(\d+)</td>\s*<td[^>]*title\s*=\s*['"](\d{4})年(\d{2})月(\d{2})['"][^>]*>""",
+        """<tr[^>]*>\s*<td[^>]*>(\d+)</td>\s*<td[^>]*title\s*=\s*['"](\d{4})年(\d{1,2})月(\d{1,2})['"][^>]*>""",
         RegexOption.IGNORE_CASE,
     ).findAll(html).mapNotNull { match ->
         val week = match.groupValues[1].toIntOrNull() ?: return@mapNotNull null

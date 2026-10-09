@@ -4,10 +4,12 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import cn.edu.gzus.qingke.data.cancelLiveClass
+import cn.edu.gzus.qingke.data.LIVE_STEP_MILLIS
 import cn.edu.gzus.qingke.data.liveNotice
 import cn.edu.gzus.qingke.data.nextLiveWake
 import cn.edu.gzus.qingke.data.notifyLiveClass
 import cn.edu.gzus.qingke.data.nowDateTime
+import cn.edu.gzus.qingke.data.readLiveTestWindow
 import cn.edu.gzus.qingke.data.readSnapshotStore
 import cn.edu.gzus.qingke.data.scheduleLiveWake
 
@@ -34,6 +36,24 @@ class LiveTickReceiver : BroadcastReceiver() {
 }
 
 internal fun runLiveTick() {
+    val nowMs = System.currentTimeMillis()
+    // 测试窗口优先：它和真实课次走同一条通知路，只是窗口落盘在本地。
+    // 之前这里不认识它，测试通知被划到后台就再没人重推，看着像「胶囊不能刷新」。
+    val test = readLiveTestWindow()
+    if (test != null && test.second > nowMs) {
+        val (start, end) = test
+        val progress = ((nowMs - start).toFloat() / (end - start).toFloat()).coerceIn(0f, 1f)
+        notifyLiveClass(
+            title = "正在上课（测试）",
+            detail = "3-4节 · 测试教室",
+            progress = progress,
+            etaMinutes = ((end - nowMs) / 60_000L).toInt().coerceAtLeast(0),
+            startMillis = start,
+            endMillis = end,
+        )
+        scheduleLiveWake(minOf(nowMs + LIVE_STEP_MILLIS, end + 1_000L))
+        return
+    }
     val snap = readSnapshotStore()
     if (snap == null) {
         cancelLiveClass()
@@ -41,7 +61,6 @@ internal fun runLiveTick() {
         return
     }
     val now = nowDateTime()
-    val nowMs = System.currentTimeMillis()
     val notice = snap.liveNotice(now, nowMs)
     if (notice == null) {
         cancelLiveClass()

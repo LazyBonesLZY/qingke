@@ -898,6 +898,7 @@ class AppRepository(
         val now = nowMillis()
         testStartMillis = now - 2 * 60_000
         testEndMillis = now + 8 * 60_000
+        writeLiveTestWindow(testStartMillis, testEndMillis)
         _liveTick.update { it + 1 }
         val posted = refreshLive()
         val status = liveUpdateStatus(_state.value.settings.resolvedRemindLead())
@@ -912,6 +913,7 @@ class AppRepository(
     fun stopLiveTest() {
         testStartMillis = 0L
         testEndMillis = 0L
+        writeLiveTestWindow(0L, 0L)
         _liveTick.update { it + 1 }
         cancelLiveClass()
         refreshLive()
@@ -920,9 +922,9 @@ class AppRepository(
     fun refreshLive(): Boolean {
         val nowMs = nowMillis()
         if (testEndMillis > nowMs) {
-            // 测试态也排一个结束唤醒：App 被划掉后后台 tick 走真实课表，
-            // 到点用它收尾，避免测试通知赖着不走或被真实课表提前覆盖。
-            scheduleLiveWake(testEndMillis + 1_000L)
+            // 和真实课表一样按 LIVE_STEP 重推（胶囊是静态文案，靠重推刷新），
+            // 到测试结束点收尾。App 被划掉后由 LiveTickReceiver 接着干同样的事。
+            scheduleLiveWake(minOf(nowMs + LIVE_STEP_MILLIS, testEndMillis + 1_000L))
             val remain = ((testStartMillis - nowMs) / 60_000L).toInt()
             val progress = when {
                 nowMs <= testStartMillis -> 0f
@@ -943,6 +945,7 @@ class AppRepository(
         if (testEndMillis > 0L && nowMs >= testEndMillis) {
             testStartMillis = 0L
             testEndMillis = 0L
+            writeLiveTestWindow(0L, 0L)
             _liveTick.update { it + 1 }
         }
         val snap = _state.value

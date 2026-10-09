@@ -22,7 +22,26 @@ data class LiveNotice(
  * 所以压到 1 分钟（最多慢 1 分钟；严禁按秒推）。展开卡片的秒级数字由
  * when+Chronometer 自己走，不吃这个间隔。进度条不会自己插值，也靠它跟上。
  */
-private const val LIVE_STEP_MILLIS = 60_000L
+internal const val LIVE_STEP_MILLIS = 60_000L
+
+/** 测试用的假课次窗口落盘用的键。 */
+private const val LIVE_TEST_FILE = "qingke-live-test"
+
+/**
+ * 读测试窗口。落盘是为了 App 被划掉之后，后台的 tick 还能接着刷新那条测试通知
+ *（否则它只在内存里，后台不认识它，还会把它当真实课表取消掉）。
+ */
+internal fun readLiveTestWindow(): Pair<Long, Long>? {
+    val parts = readStore(LIVE_TEST_FILE)?.split(",") ?: return null
+    if (parts.size != 2) return null
+    val start = parts[0].toLongOrNull() ?: return null
+    val end = parts[1].toLongOrNull() ?: return null
+    return if (end > start) start to end else null
+}
+
+internal fun writeLiveTestWindow(start: Long, end: Long) {
+    writeStore(LIVE_TEST_FILE, if (start <= 0L || end <= start) "" else "$start,$end")
+}
 
 private val snapshotJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 

@@ -157,8 +157,6 @@ actual fun requestLiveUpdatePermission() = Unit
 
 actual fun liveKeepaliveStatus(): String = "桌面端常驻运行，无需保活"
 
-actual fun keepaliveNeedsFix(): Boolean = false
-
 actual fun openKeepaliveSettings() = Unit
 
 actual fun notifyLiveClass(

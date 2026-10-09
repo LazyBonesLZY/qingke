@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import top.yukonga.miuix.kmp.utils.Platform
+import top.yukonga.miuix.kmp.utils.platform
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -928,11 +930,13 @@ private fun RemindBlock(
                 summary = "上课前 $lead 分钟",
                 onClick = onToggleLead,
             )
-            ArrowPreference(
-                title = "后台保活",
-                summary = liveKeepaliveStatus(),
-                onClick = { openKeepaliveSettings() },
-            )
+            if (platform() != Platform.Desktop) {
+                ArrowPreference(
+                    title = "后台保活",
+                    summary = liveKeepaliveStatus(),
+                    onClick = { openKeepaliveSettings() },
+                )
+            }
             if (pickingLead) {
                 ChoiceChipPanel(title = "上课前多久弹出 Live") {
                     RemindLeadMinutes.chunked(4).forEach { row ->
@@ -951,7 +955,7 @@ private fun RemindBlock(
                 onClick = { if (liveTesting) onStopLiveTest() else onLiveTest() },
             )
         }
-        if (school.hasPeriodClock && liveStatus.contains("未开启") || liveStatus.contains("权限") || liveStatus.contains("还没开")) {
+        if (school.hasPeriodClock && (liveStatus.contains("权限") || liveStatus.contains("还没开"))) {
             ArrowPreference(
                 title = "打开系统通知设置",
                 summary = liveStatus,

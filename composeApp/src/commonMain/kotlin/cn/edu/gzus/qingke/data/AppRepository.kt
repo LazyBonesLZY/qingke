@@ -71,6 +71,19 @@ class AppRepository(
     private var lastLivePost = ""
     private val pickMutex = Mutex()
 
+    init {
+        // 测试窗口落盘后，进程重建（App 被划掉再重开）时把内存态接回来：
+        // 不接的话 hasLiveTest() 恒 false（「停止测试」按钮消失、后台 receiver
+        // 却还在每分钟重推测试通知），前台真实课次还会和它交替翻转同一条通知。
+        val restored = readLiveTestWindow()
+        if (restored != null && restored.second > nowMillis()) {
+            testStartMillis = restored.first
+            testEndMillis = restored.second
+        } else if (restored != null) {
+            writeLiveTestWindow(0L, 0L)
+        }
+    }
+
     fun hasLiveTest(): Boolean = testEndMillis > nowMillis()
 
     private fun load(): AppSnapshot {
@@ -905,7 +918,8 @@ class AppRepository(
         return when {
             !posted && status.contains("权限") -> "没有通知权限，先到系统设置打开通知"
             !posted -> "没有发出通知：$status"
-            status.contains("未开启") -> "通知已发出。倒计时在走，系统还没开 Live Update 的话，去设置打开。"
+            // liveUpdateStatus 实际文案是「状态栏 Live 还没开」，不含「未开启」。
+            status.contains("还没开") -> "通知已发出。倒计时在走，系统还没开 Live Update 的话，去设置打开。"
             else -> "通知已发出。这是上课中倒计时，大约 8 分钟走完。"
         }
     }
@@ -922,22 +936,24 @@ class AppRepository(
     fun refreshLive(): Boolean {
         val nowMs = nowMillis()
         if (testEndMillis > nowMs) {
-            // 和真实课表一样按 LIVE_STEP 重推（胶囊是静态文案，靠重推刷新），
+            // 按固定间隔重推（正文文案/进度条跟上；胶囊秒级由系统自己走），
             // 到测试结束点收尾。App 被划掉后由 LiveTickReceiver 接着干同样的事。
             scheduleLiveWake(minOf(nowMs + LIVE_STEP_MILLIS, testEndMillis + 1_000L))
-            val remain = ((testStartMillis - nowMs) / 60_000L).toInt()
+            // 和真实路径同款去重：前台 15s 一轮，别每轮都全量重发。
+            val testKey = "test/$testEndMillis/${(testEndMillis - nowMs) / 60_000L}"
+            if (testKey == lastLivePost) return true
+            lastLivePost = testKey
             val progress = when {
                 nowMs <= testStartMillis -> 0f
                 nowMs >= testEndMillis -> 1f
                 else -> ((nowMs - testStartMillis).toFloat() / (testEndMillis - testStartMillis).toFloat()).coerceIn(0f, 1f)
             }
-            val inClass = nowMs >= testStartMillis
             val remainEnd = ((testEndMillis - nowMs) / 60_000L).toInt().coerceAtLeast(0)
             return notifyLiveClass(
-                title = if (inClass) "正在上课（测试）" else "下一节（测试）",
+                title = "正在上课（测试）",
                 detail = "3-4节 · 测试教室",
                 progress = progress,
-                etaMinutes = if (inClass) remainEnd else remain.coerceAtLeast(0),
+                etaMinutes = remainEnd,
                 startMillis = testStartMillis,
                 endMillis = testEndMillis,
             )

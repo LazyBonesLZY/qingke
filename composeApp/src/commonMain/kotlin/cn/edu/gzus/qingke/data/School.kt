@@ -242,7 +242,9 @@ private fun ResolvedSchool.applyPeriodTimes(times: Map<String, String>): Pair<Re
         // periodEndOf 拿到真值、clockRangeOf 却整块跳过，两个 helper 互相打架。
         val start = parts.getOrNull(0)?.trim().orEmpty().let(::normalizeClock)
         val end = parts.getOrNull(1)?.trim().orEmpty().let(::normalizeClock)
-        if (parts.size != 2 || start == null || end == null) {
+        if (parts.size != 2 || start == null || end == null || end <= start) {
+            // 和手动编辑入口同一套校验：倒置区间照抄会把块写坏，
+            // 通知被静默吞掉而首页还在按它显示。
             block
         } else {
             changed = true

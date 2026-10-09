@@ -319,7 +319,7 @@ fun App() {
                 val live = repo.refreshLive()
                 val testing = repo.hasLiveTest()
                 if (!snapshot.settings.remindBeforeClass && !testing) {
-                    if (!testing) cancelLiveClass()
+                    cancelLiveClass()
                     break
                 }
                 delay(if (live || testing) 15_000 else 60_000)

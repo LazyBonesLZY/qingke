@@ -252,11 +252,6 @@ actual fun liveKeepaliveStatus(): String {
     }
 }
 
-actual fun keepaliveNeedsFix(): Boolean {
-    val ctx = QingkeApp.app
-    return !isBatteryWhitelisted(ctx) || !canScheduleExact(ctx)
-}
-
 actual fun openKeepaliveSettings() {
     val ctx = QingkeApp.app
     // 先要白名单：系统一次弹框点完，不用翻设置。
@@ -375,11 +370,6 @@ actual fun notifyLiveClass(
     }
     val whenMillis = if (inClass) endMillis else startMillis
     val status = if (inClass) "上课中" else "下一节"
-    val etaText = when {
-        inClass -> "还剩 ${etaMinutes.coerceAtLeast(0)} 分"
-        etaMinutes > 0 -> "${etaMinutes} 分后上课"
-        else -> "即将上课"
-    }
     val launch = PendingIntent.getActivity(
         ctx,
         0,
@@ -396,13 +386,14 @@ actual fun notifyLiveClass(
     val track = 0xFFB7D2FF.toInt()
     if (Build.VERSION.SDK_INT >= 36) {
         val done = pct.coerceIn(0, 100)
-        val left = (100 - done).coerceAtLeast(1)
+        // 完成态不留轨道尾巴、起步不画 1 格蓝条：两段加起来恒 100。
+        val left = 100 - done
         val style = Notification.ProgressStyle()
             .setStyledByProgress(true)
             .setProgress(done)
             .setProgressSegments(
                 listOf(
-                    Notification.ProgressStyle.Segment(done.coerceAtLeast(1)).setColor(blue),
+                    Notification.ProgressStyle.Segment(done).setColor(blue),
                     Notification.ProgressStyle.Segment(left).setColor(track),
                 ),
             )
@@ -426,6 +417,10 @@ actual fun notifyLiveClass(
             .setUsesChronometer(true)
             .setChronometerCountDown(true)
             .setSubText(status)
+            // 到点让系统自己收掉。ongoing 通知不会自己消失，而我们的唤醒链只要
+            // 漏一次（Doze 延迟、进程被冻结、闹钟没排上）它就永远挂在那儿。
+            // setTimeoutAfter 由 NotificationManagerService 自己计时，不依赖我们。
+            .setTimeoutAfter((endMillis - now).coerceAtLeast(1_000L))
         // 不挂 setShortCriticalText：胶囊的文字槽留给系统计时器（when +
         // Chronometer 自己走字，永不过期）。状态标签改由左侧图标承载。
         builder.addExtras(Bundle().apply { putBoolean("android.requestPromotedOngoing", true) })
@@ -434,6 +429,11 @@ actual fun notifyLiveClass(
     }
     // 低版本没有流体云提升（自定义视图会失去资格），就当普通通知用：
     // 卡片里内嵌 Chronometer 自己走字，静态文案和进度条靠定期重推刷新。
+    val etaText = when {
+        inClass -> "还剩 ${etaMinutes.coerceAtLeast(0)} 分"
+        etaMinutes > 0 -> "${etaMinutes} 分后上课"
+        else -> "即将上课"
+    }
     val remainingMs = (if (inClass) endMillis else startMillis) - now
     val card = RemoteViews(ctx.packageName, R.layout.qingke_live_notification).apply {
         setTextViewText(R.id.qingke_live_title, title)
@@ -474,7 +474,7 @@ actual fun notifyLiveClass(
         .setChronometerCountDown(true)
         .setProgress(100, pct, false)
         .setColor(blue)
-        .setRequestPromotedOngoing(true)
+        .setTimeoutAfter((endMillis - now).coerceAtLeast(1_000L))
     nm.notify(LIVE_ID, builder.build())
     return true
 }
@@ -507,12 +507,12 @@ actual fun scheduleLiveWake(atMillis: Long?) {
         return
     }
     // 有精确闹钟权限就用精确的：上下课边沿在 Doze 里也准时；没给就退回非精确。
-    val useExact = canScheduleExact(ctx)
-    runCatching {
-        if (useExact) {
+    // 恰在排点时权限被撤销（SecurityException）也要退回非精确，别让唤醒链断掉。
+    if (canScheduleExact(ctx)) {
+        val exact = runCatching {
             alarms.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, atMillis, pending)
-        } else {
-            alarms.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, atMillis, pending)
         }
+        if (exact.isSuccess) return
     }
+    runCatching { alarms.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, atMillis, pending) }
 }

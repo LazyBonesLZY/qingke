@@ -12,6 +12,7 @@ import cn.edu.gzus.qingke.data.nowDateTime
 import cn.edu.gzus.qingke.data.readLiveTestWindow
 import cn.edu.gzus.qingke.data.readSnapshotStore
 import cn.edu.gzus.qingke.data.scheduleLiveWake
+import cn.edu.gzus.qingke.data.writeLiveTestWindow
 
 internal const val LIVE_PREFS = "qingke_live"
 internal const val LIVE_DISMISSED_KEY = "dismissed"
@@ -53,6 +54,10 @@ internal fun runLiveTick() {
         )
         scheduleLiveWake(minOf(nowMs + LIVE_STEP_MILLIS, end + 1_000L))
         return
+    }
+    if (test != null) {
+        // 后台跑完的测试：清掉落盘窗口，别留永久陈旧文件。
+        writeLiveTestWindow(0L, 0L)
     }
     val snap = readSnapshotStore()
     if (snap == null) {

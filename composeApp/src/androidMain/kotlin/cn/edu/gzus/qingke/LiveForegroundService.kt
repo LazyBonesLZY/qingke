@@ -86,11 +86,22 @@ class LiveForegroundService : Service() {
         )
     }
 
-    /** 对齐到下一分钟 +1s 重推一次，分钟文案翻转后 1 秒内跟上。 */
+    /**
+     * 重推一次，睡到下一次该醒的时刻。
+     *
+     * 醒的时刻取「分钟边界」和「上下课边沿」的较小值：只对齐分钟的话，上课那
+     * 一刻到下一次分钟边界之间，通知里的 when 还指着已经过去的上课点，系统
+     * 计时器会显示成负数。
+     */
     private suspend fun refreshLoop() {
         val minuteMs = 60_000L
         while (scope.isActive) {
-            delay(minuteMs - (System.currentTimeMillis() % minuteMs) + 1_000L)
+            val nowMs = System.currentTimeMillis()
+            val params = currentLiveParams(nowMs) ?: break
+            val edge = if (nowMs < params.startMillis) params.startMillis else params.endMillis
+            val toMinute = minuteMs - (nowMs % minuteMs) + 1_000L
+            val toEdge = edge - nowMs + 1_000L
+            delay(minOf(toMinute, toEdge).coerceAtLeast(1_000L))
             val notification = currentNotification() ?: break
             getSystemService(NotificationManager::class.java)?.notify(LIVE_ID, notification)
         }

@@ -933,6 +933,29 @@ class AppRepository(
         refreshLive()
     }
 
+    /**
+     * 下一次该刷新的毫秒数：分钟边界（让「下课 4′」跟上）与上下课边沿取较小值。
+     *
+     * 只对齐分钟不行：通知里的 when 锚点是发出去那一刻定死的（课前指上课点），
+     * 上课铃一响就该改指下课点，但要等下一次重推才更新。上课点多半不在整分上
+     *（比如 10:00:30），那么从上课那一刻到下一次分钟边界之间，通知里的 when
+     * 还指着已经过去的时间，系统计时器会读成负数。所以边沿必须单独叫醒。
+     */
+    fun liveRefreshDelayMs(): Long {
+        val nowMs = nowMillis()
+        val minuteMs = 60_000L
+        val toMinute = minuteMs - (nowMs % minuteMs) + 1_000L
+        val edge = if (testEndMillis > nowMs) {
+            // 测试窗口起点恒在过去，只需盯结束点。
+            testEndMillis
+        } else {
+            val snap = _state.value
+            val notice = snap.liveNotice(nowDateTime(), nowMs) ?: return toMinute
+            if (notice.inClass) notice.endMillis else notice.startMillis
+        }
+        return minOf(toMinute, edge - nowMs + 1_000L).coerceAtLeast(1_000L)
+    }
+
     fun refreshLive(): Boolean {
         val nowMs = nowMillis()
         if (testEndMillis > nowMs) {

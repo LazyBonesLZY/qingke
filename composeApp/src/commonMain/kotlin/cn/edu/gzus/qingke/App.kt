@@ -323,10 +323,9 @@ fun App() {
                     break
                 }
                 if (live || testing) {
-                    // 对齐到下一分钟边界 +1s：胶囊的分钟文案（下课 4′→3′）要
-                    // 在分钟翻转后 1 秒内跟上，而不是等下一轮 15s 轮询。
-                    val minuteMs = 60_000L
-                    delay(minuteMs - (Clock.System.now().toEpochMilliseconds() % minuteMs) + 1_000L)
+                    // 分钟边界与上下课边沿取较小值：只对齐分钟的话，上课那一刻
+                    // 到下一次分钟边界之间倒计时锚点还指着已过去的点，会显示负数。
+                    delay(repo.liveRefreshDelayMs())
                 } else {
                     delay(60_000)
                 }

@@ -370,7 +370,14 @@ internal fun buildLiveNotification(
         now >= endMillis -> 100
         else -> (((now - startMillis) * 100L) / (endMillis - startMillis)).toInt().coerceIn(0, 100)
     }
-    val whenMillis = if (inClass) endMillis else startMillis
+    // inClass 为假时锚点指上课点。万一上课点已经过去（边沿重推晚了一拍，
+    // 比如服务刚被杀过），改指下课点，别让系统计时器读成负数。
+    val whenMillis = when {
+        inClass -> endMillis
+        startMillis > now -> startMillis
+        endMillis > now -> endMillis
+        else -> now + 1_000L
+    }
     val status = if (inClass) "上课中" else "下一节"
     // 倒计时开关：关时胶囊显示静态状态文字（即将上课/上课中，不依赖后台刷新，
     // ColorOS 划掉应用后闹钟会被冻结数天，刷新不了）；开时挂 shortCriticalText

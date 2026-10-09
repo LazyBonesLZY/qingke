@@ -44,6 +44,13 @@ expect fun cancelLiveClass()
 /** 排下一次后台更新上课通知的时刻；null 就撤掉。 */
 expect fun scheduleLiveWake(atMillis: Long?)
 
+/**
+ * 有课时拉起常驻前台服务按分钟刷新 Live 通知，没课时撤掉。
+ * ColorOS 会冻结后台闹钟，前台服务不受该策略影响，所以这是「不开电池白名单
+ * 也能正常刷新」的关键通道。
+ */
+expect fun setLiveForeground(active: Boolean)
+
 expect fun resetLiveDismiss()
 
 expect fun liveUpdateStatus(leadMinutes: Int = DefaultRemindLeadMinutes): String

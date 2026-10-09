@@ -322,7 +322,14 @@ fun App() {
                     cancelLiveClass()
                     break
                 }
-                delay(if (live || testing) 15_000 else 60_000)
+                if (live || testing) {
+                    // 对齐到下一分钟边界 +1s：胶囊的分钟文案（下课 4′→3′）要
+                    // 在分钟翻转后 1 秒内跟上，而不是等下一轮 15s 轮询。
+                    val minuteMs = 60_000L
+                    delay(minuteMs - (Clock.System.now().toEpochMilliseconds() % minuteMs) + 1_000L)
+                } else {
+                    delay(60_000)
+                }
             }
         }
 

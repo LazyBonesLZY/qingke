@@ -47,7 +47,12 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 private const val LIVE_CHANNEL = "qingke_live_class"
-private const val LIVE_ID = 1001
+internal const val LIVE_ID = 1001
+
+actual fun setLiveForeground(active: Boolean) {
+    if (!QingkeApp.ready()) return
+    cn.edu.gzus.qingke.LiveForegroundService.sync(QingkeApp.app, active)
+}
 
 actual fun createHttpClient(): HttpClient = HttpClient(OkHttp) {
     install(HttpCookies) { storage = PersistCookieStorage.shared }
@@ -254,13 +259,12 @@ private fun isBatteryWhitelisted(ctx: android.content.Context): Boolean =
 
 actual fun liveKeepaliveStatus(): String {
     val ctx = QingkeApp.app
-    val ignored = isBatteryWhitelisted(ctx)
-    val exact = canScheduleExact(ctx)
-    return when {
-        ignored && exact -> "后台保活正常，提醒和倒计时准时"
-        !ignored && !exact -> "没加电池白名单、没精确闹钟，后台提醒和倒计时可能不准"
-        !ignored -> "没加电池白名单，后台被缓存后倒计时不更新"
-        else -> "缺精确闹钟权限，上课整点可能晚几分钟"
+    // 上课期间由前台服务按分钟刷新 Live 通知，不依赖被 ColorOS 冻结的后台闹钟，
+    // 所以白名单/精确闹钟现在是加分项而不是必需项。
+    return if (isBatteryWhitelisted(ctx)) {
+        "后台保活正常，提醒和倒计时准时"
+    } else {
+        "上课期间由前台服务刷新倒计时；加电池白名单可以更稳"
     }
 }
 
@@ -326,7 +330,13 @@ actual fun refreshHomeWidgets() {
     cn.edu.gzus.qingke.widget.QingkeWidgets.refreshAll(QingkeApp.app)
 }
 
-actual fun notifyLiveClass(
+/**
+ * 构建 Live 通知。抽成独立函数是为了让前台服务能用同一个对象
+ * startForeground——前台服务的通知必须就是这条 Live 通知本身，
+ * 否则会多出一条常驻条目。
+ * 返回 null 表示这次不该显示（没权限 / 已被划掉）。
+ */
+internal fun buildLiveNotification(
     title: String,
     detail: String,
     progress: Float,
@@ -334,17 +344,17 @@ actual fun notifyLiveClass(
     startMillis: Long,
     endMillis: Long,
     countdownEnabled: Boolean,
-): Boolean {
+): Notification? {
     val ctx = QingkeApp.app
     if (Build.VERSION.SDK_INT >= 33 &&
         ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
     ) {
-        return false
+        return null
     }
     val key = "$title:$startMillis"
     val prefs = ctx.getSharedPreferences(LIVE_PREFS, android.content.Context.MODE_PRIVATE)
-    if (prefs.getString(LIVE_DISMISSED_KEY, "") == key) return false
-    val nm = ctx.getSystemService(NotificationManager::class.java) ?: return false
+    if (prefs.getString(LIVE_DISMISSED_KEY, "") == key) return null
+    val nm = ctx.getSystemService(NotificationManager::class.java) ?: return null
     val channel = NotificationChannel(LIVE_CHANNEL, "上课进度", NotificationManager.IMPORTANCE_DEFAULT).apply {
         description = "下一节课和上课中的 Live Update"
         setShowBadge(false)
@@ -433,8 +443,7 @@ actual fun notifyLiveClass(
         // 展开态的秒级倒计时仍由 when + Chronometer 自己走字。
         builder.setShortCriticalText(chipText)
         builder.addExtras(Bundle().apply { putBoolean("android.requestPromotedOngoing", true) })
-        nm.notify(LIVE_ID, builder.build())
-        return true
+        return builder.build()
     }
     // 低版本没有流体云提升（自定义视图会失去资格），就当普通通知用：
     // 卡片里内嵌 Chronometer 自己走字，静态文案和进度条靠定期重推刷新。
@@ -484,7 +493,30 @@ actual fun notifyLiveClass(
         .setProgress(100, pct, false)
         .setColor(blue)
         .setTimeoutAfter((endMillis - now).coerceAtLeast(1_000L))
-    nm.notify(LIVE_ID, builder.build())
+    return builder.build()
+}
+
+/** 发一条 Live 通知（前台服务路径也走 buildLiveNotification）。 */
+actual fun notifyLiveClass(
+    title: String,
+    detail: String,
+    progress: Float,
+    etaMinutes: Int,
+    startMillis: Long,
+    endMillis: Long,
+    countdownEnabled: Boolean,
+): Boolean {
+    val notification = buildLiveNotification(
+        title = title,
+        detail = detail,
+        progress = progress,
+        etaMinutes = etaMinutes,
+        startMillis = startMillis,
+        endMillis = endMillis,
+        countdownEnabled = countdownEnabled,
+    ) ?: return false
+    QingkeApp.app.getSystemService(NotificationManager::class.java)
+        ?.notify(LIVE_ID, notification)
     return true
 }
 

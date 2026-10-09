@@ -175,6 +175,8 @@ actual fun cancelLiveClass() = Unit
 
 actual fun scheduleLiveWake(atMillis: Long?) = Unit
 
+actual fun setLiveForeground(active: Boolean) = Unit
+
 actual fun resetLiveDismiss() = Unit
 
 actual fun liveUpdateStatus(leadMinutes: Int): String = "仅 Android 支持 Live Update"

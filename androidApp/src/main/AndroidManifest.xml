@@ -8,6 +8,11 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- 前台服务驱动 Live 通知刷新：ColorOS 会把后台闹钟冻结数天
+         （adjustment），但不会冻结前台服务——外卖/导航类 App 同款做法。
+         服务的通知就是 Live 通知本身，不多出常驻条目。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- 保活用：电池白名单（防后台被缓存）+ 精确闹钟（上下课整点准时）。
          USE_EXACT_ALARM 是日历/课表类应用的自动授予权限（33+），ColorOS 上
          SCHEDULE_EXACT_ALARM 的 appops 默认不给且 canScheduleExactAlarms()
@@ -59,6 +64,16 @@
         <receiver
             android:name="cn.edu.gzus.qingke.LiveTickReceiver"
             android:exported="false" />
+        <!-- 上课期间常驻，按分钟刷新 Live 通知。ColorOS 会冻结后台闹钟，
+             前台服务不受该策略影响（外卖/导航类同款做法）。 -->
+        <service
+            android:name="cn.edu.gzus.qingke.LiveForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="保持上课进度通知与胶囊倒计时按分钟刷新" />
+        </service>
         <receiver
             android:name="cn.edu.gzus.qingke.widget.WidgetTickReceiver"
             android:exported="false" />

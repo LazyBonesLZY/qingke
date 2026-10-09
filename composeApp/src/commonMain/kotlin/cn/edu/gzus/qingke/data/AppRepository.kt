@@ -937,7 +937,8 @@ class AppRepository(
         val nowMs = nowMillis()
         if (testEndMillis > nowMs) {
             // 按固定间隔重推（正文文案/进度条跟上；胶囊秒级由系统自己走），
-            // 到测试结束点收尾。App 被划掉后由 LiveTickReceiver 接着干同样的事。
+            // 到测试结束点收尾。常驻前台服务负责后台那一半。
+            setLiveForeground(true)
             scheduleLiveWake(minOf(nowMs + LIVE_STEP_MILLIS, testEndMillis + 1_000L))
             // 和真实路径同款去重：前台 15s 一轮，别每轮都全量重发。
             val testKey = "test/$testEndMillis/${(testEndMillis - nowMs) / 60_000L}"
@@ -972,9 +973,12 @@ class AppRepository(
         val notice = snap.liveNotice(now, nowMs)
         if (notice == null) {
             lastLivePost = ""
+            setLiveForeground(false)
             cancelLiveClass()
             return false
         }
+        // 有课：拉起常驻前台服务按分钟刷新（ColorOS 冻结后台闹钟时的关键通道）。
+        setLiveForeground(true)
         // 小组件上的"上课中/下一节"要跟着走，但没换课就别重画位图。
         val widgetKey = "${now.date}/${notice.slot.courseId}/${notice.slot.period}/${notice.inClass}"
         if (widgetKey != liveWidgetKey) {

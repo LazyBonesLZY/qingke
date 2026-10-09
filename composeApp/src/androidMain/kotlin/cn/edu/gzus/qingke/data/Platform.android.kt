@@ -405,11 +405,12 @@ actual fun notifyLiveClass(
             .setUsesChronometer(true)
             .setChronometerCountDown(true)
             .setSubText(status)
-        // 收起态（状态条状标签/流体云胶囊）显示的是计时器本身：官方规定
-        // 「用计时器时，芯片中的计时器可以显示时间，只要计时器时间为正就会在
-        // 功能块中显示」。以前这里挂了 setShortCriticalText，那是静态文本，
-        // 胶囊只在上岛那一刻取一次，之后永不刷新——所以看起来冻住。
-        // 不挂它，胶囊就会拿 when + Chronometer 自己走字。
+        // 收起态胶囊只有一个文字槽，而且文字优先于计时器：挂了它，胶囊显示
+        // 这段文字；不挂，才轮到 when+Chronometer 自己走字。
+        // 这里放「上课中/下一节」这种状态词——一个状态内它根本不变化，
+        // 所以不存在过期问题（之前放「下课 23′」这种会变的数字，上岛取一次
+        // 就冻住了）。倒计时照样在展开卡片上，由下面的 Chronometer 走。
+        builder.setShortCriticalText(status)
         builder.addExtras(Bundle().apply { putBoolean("android.requestPromotedOngoing", true) })
         nm.notify(LIVE_ID, builder.build())
         return true

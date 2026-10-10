@@ -931,9 +931,9 @@ private fun RemindBlock(
             SwitchPreference(
                 title = "胶囊实时倒计时",
                 summary = if (snapshot.settings.liveCountdownEnabled) {
-                    "胶囊左侧显示上课/下课，右侧倒计时由系统时钟自己走，不依赖后台"
+                    "胶囊显示实时倒计时（系统时钟自己走，不依赖后台）"
                 } else {
-                    "只显示静态状态（即将上课/上课中），没有倒计时"
+                    "胶囊只显示静态状态；通知卡片里仍有倒计时"
                 },
                 checked = snapshot.settings.liveCountdownEnabled,
                 onCheckedChange = onToggleCountdown,

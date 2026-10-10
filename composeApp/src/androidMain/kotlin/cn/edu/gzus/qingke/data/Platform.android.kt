@@ -340,6 +340,16 @@ actual fun refreshHomeWidgets() {
  * 状态栏小图标是白色蒙版渲染，所以画白字透明底。图标槽是正方形，位图也必须
  * 是正方形：长方形会被横向压扁，字就变形。
  */
+/**
+ * 只有 ColorOS 的流体云需要「状态标签挪到图标位」这一招：它收起态芯片只有一个
+ * 内容槽，文字和系统计时器互斥，挂了文字就没倒计时。原生 Android 和别家 OEM
+ * 没有这个限制，图标位该留给应用图标，文字照旧走 shortCriticalText。
+ */
+private val colorOsChip: Boolean by lazy {
+    val brand = "${Build.MANUFACTURER} ${Build.BRAND}".lowercase()
+    brand.contains("oppo") || brand.contains("oneplus") || brand.contains("realme")
+}
+
 private val liveLabelIconCache = java.util.concurrent.ConcurrentHashMap<String, android.graphics.drawable.Icon>()
 
 private fun liveLabelIcon(text: String): android.graphics.drawable.Icon =
@@ -413,11 +423,12 @@ internal fun buildLiveNotification(
         else -> now + 1_000L
     }
     val status = if (inClass) "上课中" else "下一节"
-    // 收起态胶囊只有一个内容槽，文字和系统计时器二选一：
-    //   开：图标槽放「上课/下课」标签，内容槽留给 when + Chronometer 自己走秒。
-    //       锚点发布一次就够，锁屏/后台/进程被杀都照走，不靠保活。
-    //   关：图标槽放通用图标，内容槽放静态状态词（一个状态内不变，无需刷新）。
-    // 静态状态词只在关掉开关时用，写在下面前台服务那支分支里。
+    // 收起态芯片只有一个内容槽，文字和系统计时器互斥：开倒计时就不挂文字，
+    // 内容槽整条让给 when + Chronometer 由系统自己走字——锚点发一次就够，
+    // 锁屏、后台、进程被冻结都照走，不靠保活。ColorOS 额外把状态标签画进图标位
+    // （它的芯片不显示标题，只剩一个计时器会看不懂）；其它系统的图标位留给应用图标。
+    // 关掉开关才挂静态状态词，那时内容槽没有计时器。
+    val chipText = if (inClass) "上课中" else "即将上课"
     val launch = PendingIntent.getActivity(
         ctx,
         0,
@@ -450,7 +461,7 @@ internal fun buildLiveNotification(
             .setProgressEndIcon(android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_live_end))
         val builder = Notification.Builder(ctx, LIVE_CHANNEL)
             .setSmallIcon(
-                if (countdownEnabled) {
+                if (countdownEnabled && colorOsChip) {
                     liveLabelIcon(if (inClass) "下课" else "上课")
                 } else {
                     android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_stat_live)
@@ -467,18 +478,19 @@ internal fun buildLiveNotification(
             .setColor(blue)
             .setColorized(false)
             .setWhen(whenMillis)
-            // 关掉实时倒计时时展开卡片也不走秒，跟开关文案（「没有倒计时」）对齐。
-            .setShowWhen(countdownEnabled)
-            .setUsesChronometer(countdownEnabled)
-            .setChronometerCountDown(countdownEnabled)
+            // 计时器无条件开着：这是通知卡片自己的倒计时，跟胶囊那个开关无关。
+            // 开关只管收起态那一个内容槽显示文字还是计时器。
+            .setShowWhen(true)
+            .setUsesChronometer(true)
+            .setChronometerCountDown(true)
             .setSubText(status)
             // 到点让系统自己收掉。ongoing 通知不会自己消失，而我们的唤醒链只要
             // 漏一次（Doze 延迟、进程被冻结、闹钟没排上）它就永远挂在那儿。
             // setTimeoutAfter 由 NotificationManagerService 自己计时，不依赖我们。
             .setTimeoutAfter((endMillis - now).coerceAtLeast(1_000L))
-        // 只在关掉实时倒计时时才挂静态状态词：挂了它胶囊就没有计时器（文字优先），
-        // 开着的时候内容槽必须空出来给系统计时器。
-        if (!countdownEnabled) builder.setShortCriticalText(if (inClass) "上课中" else "即将上课")
+        // 开倒计时就不挂文字：内容槽要空出来给系统计时器（挂了文字就没计时器）。
+        // 关掉开关才挂静态状态词。
+        if (!countdownEnabled) builder.setShortCriticalText(chipText)
         builder.addExtras(Bundle().apply { putBoolean("android.requestPromotedOngoing", true) })
         return builder.build()
     }
@@ -496,7 +508,7 @@ internal fun buildLiveNotification(
         setTextViewText(R.id.qingke_live_meta, detail.replace("\n", " · "))
         setTextViewText(R.id.qingke_live_eta, etaText)
         setProgressBar(R.id.qingke_live_progress, 100, pct, false)
-        if (countdownEnabled && remainingMs > 0) {
+        if (remainingMs > 0) {
             setChronometerCountDown(R.id.qingke_live_countdown, true)
             setChronometer(
                 R.id.qingke_live_countdown,
@@ -524,9 +536,9 @@ internal fun buildLiveNotification(
         .setCategory(NotificationCompat.CATEGORY_PROGRESS)
         .setSilent(true)
         .setWhen(whenMillis)
-        .setShowWhen(countdownEnabled)
-        .setUsesChronometer(countdownEnabled)
-        .setChronometerCountDown(countdownEnabled)
+        .setShowWhen(true)
+        .setUsesChronometer(true)
+        .setChronometerCountDown(true)
         .setProgress(100, pct, false)
         .setColor(blue)
         .setTimeoutAfter((endMillis - now).coerceAtLeast(1_000L))

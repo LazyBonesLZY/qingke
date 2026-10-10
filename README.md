@@ -16,7 +16,7 @@
 
 ## 更新
 
-当前发布版本 **1.7.34**（versionCode 84）。Android 8.0（API 26）及以上。广软调休默认从 qingke.lazzyy.cn 自动拉取；打开应用会检查更新，有新版本会提示。
+当前发布版本 **1.7.35**（versionCode 85）。Android 8.0（API 26）及以上。广软调休默认从 qingke.lazzyy.cn 自动拉取；打开应用会检查更新，有新版本会提示。
 
 - GitHub Release：应用里检查 `LazyBonesLZY/qingke` 最新版，再跳到 Release / APK
 - 网盘：浏览器打开 [https://storage.lazzyy.cn/@s/KB](https://storage.lazzyy.cn/@s/KB)

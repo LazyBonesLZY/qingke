@@ -931,7 +931,7 @@ private fun RemindBlock(
             SwitchPreference(
                 title = "胶囊实时倒计时",
                 summary = if (snapshot.settings.liveCountdownEnabled) {
-                    "胶囊显示实时倒计时（系统时钟自己走，不依赖后台）"
+                    "胶囊显示倒计时，由系统时钟或前台服务刷新"
                 } else {
                     "胶囊只显示静态状态；通知卡片里仍有倒计时"
                 },

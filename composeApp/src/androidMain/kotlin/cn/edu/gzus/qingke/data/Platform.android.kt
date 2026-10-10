@@ -349,16 +349,12 @@ actual fun refreshHomeWidgets() {
  *
  * 收起态胶囊只有一个内容槽，文字和系统计时器互斥（挂了 setShortCriticalText
  * 就没有计时器）。把状态标签挪到图标槽，内容槽就能留给 when + Chronometer
- * 由系统自己走字——锚点发布一次就够，锁屏、后台、进程被杀都照走，不依赖保活。
+ * 由系统自己走字；前台服务负责通知存活与上下课边沿换锚点。
  *
  * 状态栏小图标是白色蒙版渲染，所以画白字透明底。图标槽是正方形，位图也必须
  * 是正方形：长方形会被横向压扁，字就变形。
  */
-/**
- * 只有 ColorOS 的流体云需要「状态标签挪到图标位」这一招：它收起态芯片只有一个
- * 内容槽，文字和系统计时器互斥，挂了文字就没倒计时。原生 Android 和别家 OEM
- * 没有这个限制，图标位该留给应用图标，文字照旧走 shortCriticalText。
- */
+/** 图标位文字标签仅用于已验证的 ColorOS 路径，其它系统保留应用图标。 */
 private val colorOsChip: Boolean by lazy {
     val brand = "${Build.MANUFACTURER} ${Build.BRAND}".lowercase()
     brand.contains("oppo") || brand.contains("oneplus") || brand.contains("realme")
@@ -441,11 +437,11 @@ internal fun buildLiveNotification(
         else -> now + 1_000L
     }
     val status = if (inClass) "上课中" else "下一节"
-    // 收起态芯片只有一个内容槽，文字和系统计时器互斥：开倒计时就不挂文字，
-    // 内容槽整条让给 when + Chronometer 由系统自己走字——锚点发一次就够，
-    // 锁屏、后台、进程被冻结都照走，不靠保活。ColorOS 额外把状态标签画进图标位
-    // （它的芯片不显示标题，只剩一个计时器会看不懂）；其它系统的图标位留给应用图标。
-    // 关掉开关才挂静态状态词，那时内容槽没有计时器。
+    // ColorOS keeps its validated chronometer path. Native API 37 uses a critical
+    // time-difference metric; API 36 has an explicit minute-text fallback below.
+    val countdownLabel = if (inClass) "距离下课" else "距离上课"
+    val remainingMinutes = ((whenMillis - now + 59_999L) / 60_000L).coerceAtLeast(1L)
+    val nativeCountdownText = "$countdownLabel $remainingMinutes 分钟"
     val chipText = if (inClass) "上课中" else "即将上课"
     val launch = PendingIntent.getActivity(
         ctx,
@@ -486,7 +482,7 @@ internal fun buildLiveNotification(
                 },
             )
             .setContentTitle(title)
-            .setContentText(detail)
+            .setContentText("$nativeCountdownText · $detail")
             .setStyle(style)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -508,19 +504,20 @@ internal fun buildLiveNotification(
             // 课前通知最迟在上课边沿自动收掉，避免后台恢复延迟时继续拿过去的
             // startMillis 做倒计时；上课中则保留到下课点。
             .setTimeoutAfter(((if (inClass) endMillis else startMillis) - now).coerceAtLeast(1_000L))
-        // 开倒计时就不挂文字：内容槽要空出来给系统计时器（挂了文字就没计时器）。
-        // 关掉开关才挂静态状态词。
+        if (!colorOsChip && Build.VERSION.SDK_INT >= 37) {
+            builder.setStyle(NativeLiveMetricsApi37.build(whenMillis, countdownLabel, pct, detail, countdownEnabled))
+        } else if (!colorOsChip && countdownEnabled) {
+            // API 36 has no MetricStyle; the foreground service refreshes this fallback text.
+            builder.setShortCriticalText("${if (inClass) "下课" else "上课"} $remainingMinutes′")
+        }
+        // The chip switch does not disable the countdown in the notification card.
         if (!countdownEnabled) builder.setShortCriticalText(chipText)
         builder.addExtras(Bundle().apply { putBoolean("android.requestPromotedOngoing", true) })
         return builder.build()
     }
     // 低版本没有流体云提升（自定义视图会失去资格），就当普通通知用：
     // 卡片里内嵌 Chronometer 自己走字，静态文案和进度条靠定期重推刷新。
-    val etaText = when {
-        inClass -> "还剩 ${etaMinutes.coerceAtLeast(0)} 分"
-        etaMinutes > 0 -> "${etaMinutes} 分后上课"
-        else -> "即将上课"
-    }
+    val etaText = nativeCountdownText
     val remainingMs = (if (inClass) endMillis else startMillis) - now
     val card = RemoteViews(ctx.packageName, R.layout.qingke_live_notification).apply {
         setTextViewText(R.id.qingke_live_title, title)
@@ -544,7 +541,7 @@ internal fun buildLiveNotification(
     val builder = NotificationCompat.Builder(ctx, LIVE_CHANNEL)
         .setSmallIcon(R.drawable.ic_stat_live)
         .setContentTitle(title)
-        .setContentText(detail)
+        .setContentText("$nativeCountdownText · $detail")
         .setCustomContentView(card)
         .setCustomBigContentView(card)
         .setStyle(NotificationCompat.DecoratedCustomViewStyle())
@@ -563,6 +560,30 @@ internal fun buildLiveNotification(
         .setColor(blue)
         .setTimeoutAfter(((if (inClass) endMillis else startMillis) - now).coerceAtLeast(1_000L))
     return builder.build()
+}
+
+@androidx.annotation.RequiresApi(37)
+private object NativeLiveMetricsApi37 {
+    fun build(
+        whenMillis: Long,
+        label: String,
+        progressPercent: Int,
+        detail: String,
+        countdownEnabled: Boolean,
+    ): Notification.MetricStyle = Notification.MetricStyle()
+        .addMetric(
+            Notification.Metric(
+                Notification.Metric.TimeDifference.forTimer(
+                    java.time.Instant.ofEpochMilli(whenMillis),
+                    Notification.Metric.TimeDifference.FORMAT_CHRONOMETER,
+                ),
+                label,
+            ),
+        )
+        .addMetric(Notification.Metric(Notification.Metric.FixedInt(progressPercent, "%"), "课程进度"))
+        // Metric cards may omit the ordinary contentText; preserve course details explicitly.
+        .addMetric(Notification.Metric(Notification.Metric.FixedText(detail), "课次与教室"))
+        .setCriticalMetric(if (countdownEnabled) 0 else Notification.MetricStyle.METRIC_INDEX_NONE)
 }
 
 /** 发一条 Live 通知（前台服务路径也走 buildLiveNotification）。 */

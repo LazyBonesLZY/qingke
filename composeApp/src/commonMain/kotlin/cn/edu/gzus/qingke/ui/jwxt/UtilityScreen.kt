@@ -78,6 +78,8 @@ fun UtilityScreen(
     var searching by remember { mutableStateOf(false) }
     val bound = snapshot.settings.hasUtilityBind()
     val shown = options.take(100)
+    val waterPrice = waterText.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 }
+    val electricPrice = electricText.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 }
     LaunchedEffect(snapshot.session.loggedIn, bound) {
         if (snapshot.session.loggedIn && snapshot.settings.gzusUsesCas() && !bound) {
             onPeekBind()
@@ -242,14 +244,14 @@ fun UtilityScreen(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             )
             Spacer(Modifier.height(8.dp))
+            if (waterPrice == null || electricPrice == null) {
+                Text("水、电单价都需填写大于 0 的数字", modifier = Modifier.padding(horizontal = 16.dp), color = MiuixTheme.colorScheme.error)
+            }
             Button(
                 onClick = {
-                    onSavePrice(
-                        true,
-                        waterText.toDoubleOrNull() ?: JIANGMEN_WATER_PRICE,
-                        electricText.toDoubleOrNull() ?: JIANGMEN_ELECTRIC_PRICE,
-                    )
+                    if (waterPrice != null && electricPrice != null) onSavePrice(true, waterPrice, electricPrice)
                 },
+                enabled = waterPrice != null && electricPrice != null,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                 minHeight = 44.dp,
                 colors = ButtonDefaults.buttonColorsPrimary(),

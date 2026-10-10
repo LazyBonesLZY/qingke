@@ -41,7 +41,7 @@ private fun commitOrClear(start: String, end: String, onChange: (String?, String
     when {
         // 起止反了（"10:00-09:00"）不当成有效输入，否则会原样上屏、
         // 让进度条和提醒拿到一个负长度区间。
-        s != null && e != null -> if (s <= e) onChange(s, e) else Unit
+        s != null && e != null -> if (s < e) onChange(s, e) else Unit
         start.isBlank() && end.isBlank() -> onChange(null, null)
     }
 }
@@ -124,7 +124,8 @@ fun PeriodTimeScreen(
 }
 
 @Composable
-private fun PeriodTimeRow(    label: String,
+private fun PeriodTimeRow(
+    label: String,
     initialStart: String,
     initialEnd: String,
     onChange: (String?, String?) -> Unit,

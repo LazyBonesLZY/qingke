@@ -1,6 +1,7 @@
 package cn.edu.gzus.qingke.data
 
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -57,6 +58,9 @@ class AppRepository(
         }
     }
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+    private var sessionGeneration = 0L
+    private fun stamp() = _state.value.sessionStamp(sessionGeneration)
+    private fun AppSnapshot.sameSync(expected: SessionStamp) = sessionStamp(sessionGeneration) == expected
     private val _state = MutableStateFlow(load())
     val state: StateFlow<AppSnapshot> = _state
     private val _liveTick = MutableStateFlow(0)
@@ -87,13 +91,13 @@ class AppRepository(
 
     private fun load(): AppSnapshot {
         val raw = readStore(STORE) ?: return AppSnapshot()
-        val parsed = runCatching { json.decodeFromString<AppSnapshot>(raw) }.getOrNull() ?: return AppSnapshot()
+        val parsed = requestResult { json.decodeFromString<AppSnapshot>(raw) }.getOrNull() ?: return AppSnapshot()
         if (parsed.seeded) {
             val empty = AppSnapshot()
-            persist(empty)
+            writeStore(STORE, json.encodeToString(AppSnapshot.serializer(), empty))
             return empty
         }
-        val migrated = parsed.withLiveCountdownMigration()
+        val migrated = parsed.withLiveCountdownMigration().withInterruptedCoursePicks()
         if (migrated !== parsed) {
             // 这里只落盘、不调 persist()：load() 跑在构造期（_state 还没赋值），
             // persist 会同步刷新 4 类小组件位图，拖慢首帧。小组件等后续正常 commit 再刷。
@@ -117,8 +121,10 @@ class AppRepository(
     }
 
     private fun commit(transform: (AppSnapshot) -> AppSnapshot) {
+        val before = _state.value
         _state.update(transform)
-        persist(_state.value)
+        val after = _state.value
+        if (after != before) persist(after)
     }
 
     fun updateSettings(transform: (AppSettings) -> AppSettings) {
@@ -127,6 +133,7 @@ class AppRepository(
 
     fun setSchool(school: School) {
         if (school.id == _state.value.settings.schoolId) return
+        ++sessionGeneration
         clearReloginSecret()
         clearCookieStore()
         _captcha.value = null
@@ -142,19 +149,22 @@ class AppRepository(
     }
 
     suspend fun refreshCaptcha() {
+        val expected = stamp()
         _captchaError.value = null
         if (!_state.value.settings.resolved().showsCaptcha) {
             _captcha.value = null
             return
         }
-        runCatching { portal().fetchCaptcha() }
+        activeRequest { portal().fetchCaptcha() }
             .onSuccess { image ->
+                if (!_state.value.sameSync(expected)) return@onSuccess
                 _captcha.value = image
                 if (image == null && _state.value.settings.resolved().requiresCaptcha) {
                     _captchaError.value = "验证码没加载出来，点右边再试"
                 }
             }
             .onFailure {
+                if (!_state.value.sameSync(expected)) return@onFailure
                 _captcha.value = null
                 _captchaError.value = it.friendlyNetworkMessage()
             }
@@ -182,6 +192,7 @@ class AppRepository(
         val next = if (channel == GZUS_LOGIN_CAS) GZUS_LOGIN_CAS else GZUS_LOGIN_JWXT
         val snap = _state.value
         if (snap.settings.school() == School.Gzus && snap.settings.gzusLoginChannel == next) return
+        ++sessionGeneration
         clearReloginSecret()
         clearCookieStore()
         _captcha.value = null
@@ -209,19 +220,25 @@ class AppRepository(
         if (!snap.settings.autoPullScheduleAdjust || snap.settings.school() != School.Gzus) return
         val next = scheduleAdjustClient.fetch()
         commit {
-            if (it.settings.school() != School.Gzus) it else it.copy(scheduleAdjust = next.copy(fetchedAt = nowMillis()))
+            if (it.settings.school() != School.Gzus || !it.settings.autoPullScheduleAdjust) it
+            else it.copy(scheduleAdjust = next.copy(fetchedAt = nowMillis()))
         }
     }
 
     suspend fun loginAndSync(studentId: String, password: String, captcha: String = "", captchaId: String = "") {
+        ++sessionGeneration
+        val expected = stamp()
+        val source = portal()
         try {
-            portal().login(studentId, password, captcha, captchaId).getOrThrow()
+            source.login(studentId, password, captcha, captchaId).getOrThrow()
         } catch (failed: Throwable) {
-            if (failed !is JwxtNeedFirstLogin) {
-                runCatching { refreshCaptcha() }
+            if (failed is kotlinx.coroutines.CancellationException) throw failed
+            if (failed !is JwxtNeedFirstLogin && _state.value.sameSync(expected)) {
+                activeRequest { refreshCaptcha() }
             }
             throw failed
         }
+        if (!_state.value.sameSync(expected)) throw kotlinx.coroutines.CancellationException("Account changed")
         _captcha.value = null
         markLoggedIn(studentId)
         if (_state.value.settings.school() == School.Gzus && _state.value.settings.gzusUsesCas()) {
@@ -229,17 +246,17 @@ class AppRepository(
         } else {
             clearReloginSecret()
         }
-        runCatching { pullRemote(studentId = studentId, keepGradesIfFail = false) }
+        activeRequest { pullRemote(studentId = studentId, keepGradesIfFail = false) }
             .onFailure { error ->
                 if (error is JwxtNeedFirstLogin) throw error
                 val message = error.message.orEmpty()
                 if (isFirstLoginSignal(message)) throw JwxtNeedFirstLogin()
                 if (isCaptchaTip(message)) {
-                    runCatching { refreshCaptcha() }
+                    activeRequest { refreshCaptcha() }
                 }
                 throw error
             }
-        runCatching { syncHolidays(force = true) }
+        activeRequest { syncHolidays(force = true) }
         resetLiveDismiss()
         refreshLive()
     }
@@ -268,7 +285,7 @@ class AppRepository(
             return
         }
         if (usesZhkuSession()) {
-            runCatching { portal().ensureSession() }.getOrElse { failed ->
+            activeRequest { portal().ensureSession() }.getOrElse { failed ->
                 if (failed is JwxtNeedFirstLogin) throw failed
                 if (isTransientNetwork(failed)) return
                 if (isSessionLost(failed.message.orEmpty())) {
@@ -293,7 +310,7 @@ class AppRepository(
             return
         }
         if (snap.settings.school() == School.Gdsty) {
-            runCatching { portal().keepAlive() }.getOrElse { failed ->
+            activeRequest { portal().keepAlive() }.getOrElse { failed ->
                 if (failed is JwxtNeedFirstLogin) throw failed
                 if (isTransientNetwork(failed)) return
                 if (isSessionLost(failed.message.orEmpty())) {
@@ -309,7 +326,7 @@ class AppRepository(
         if (!_state.value.session.loggedIn) error("还没有登录")
         withLiveSession {
             pullRemote(studentId = _state.value.session.studentId, keepGradesIfFail = true)
-            runCatching { syncHolidays() }
+            activeRequest { syncHolidays() }
             refreshLive()
         }
     }
@@ -325,7 +342,7 @@ class AppRepository(
         val days = mutableListOf<HolidayDay>()
         val got = mutableListOf<Int>()
         for (year in years) {
-            val file = runCatching { holidays.fetchYear(year) }.getOrNull() ?: continue
+            val file = activeRequest { holidays.fetchYear(year) }.getOrNull() ?: continue
             got += file.years
             days += file.days
         }
@@ -351,7 +368,7 @@ class AppRepository(
         if (!syncLock.tryLock()) return
         try {
             withLiveSession(probe = false) {
-                val school = _state.value.settings.schoolId
+                val school = stamp()
                 val calendar = portal().fetchTermCalendar()
                 commit { if (!it.sameSync(school)) it else it.copy(settings = it.settings.mergeCalendar(calendar)) }
                 refreshLive()
@@ -361,27 +378,32 @@ class AppRepository(
         }
     }
 
-    private suspend fun pullRemote(studentId: String, keepGradesIfFail: Boolean) = syncLock.withLock {
-        pullRemoteLocked(studentId, keepGradesIfFail)
+    private suspend fun pullRemote(studentId: String, keepGradesIfFail: Boolean) {
+        val expected = stamp()
+        syncLock.withLock {
+            if (!_state.value.sameSync(expected)) throw kotlinx.coroutines.CancellationException("Account changed")
+            pullRemoteLocked(studentId, keepGradesIfFail)
+        }
     }
 
     private suspend fun pullRemoteLocked(studentId: String, keepGradesIfFail: Boolean) {
         val snap = _state.value
-        val school = snap.settings.schoolId
-        val calendar = runCatching { portal().fetchTermCalendar() }
+        val school = stamp()
+        val source = portal()
+        val calendar = activeRequest { source.fetchTermCalendar() }
             .onFailure { error -> if (isSessionLost(error.message.orEmpty())) throw error }
             .getOrNull()
         val year = calendar?.yearCode?.ifBlank { null } ?: snap.settings.yearCode
         val term = calendar?.termCode?.ifBlank { null } ?: snap.settings.termCode
-        val (profile, slots, practices) = portal().fetchTimetable(year, term)
-        val grades = runCatching { portal().fetchGrades() }.getOrElse {
+        val (profile, slots, practices) = source.fetchTimetable(year, term)
+        val grades = activeRequest { source.fetchGrades() }.getOrElse {
             if (keepGradesIfFail) snap.grades else emptyList()
         }
-        val exams = runCatching { portal().fetchExams(year, term) }.getOrElse {
+        val exams = activeRequest { source.fetchExams(year, term) }.getOrElse {
             if (keepGradesIfFail) snap.exams else emptyList()
         }
         // 拉的这几秒里换了学校或退出了登录，这份结果就不要了。
-        if (!_state.value.sameSync(school)) return
+        if (!_state.value.sameSync(school)) throw kotlinx.coroutines.CancellationException("Account changed")
         commit {
             if (!it.sameSync(school)) return@commit it
             it.copy(
@@ -403,22 +425,23 @@ class AppRepository(
                 seeded = false,
             )
         }
-        val notices = runCatching { mergeNoticeCache(portal().fetchNotices(), snap.notices) }.getOrElse {
+        val notices = activeRequest { mergeNoticeCache(source.fetchNotices(), snap.notices) }.getOrElse {
             if (keepGradesIfFail) snap.notices else emptyList()
         }.mapIndexed { index, item ->
             if (index >= 5 || item.content.isNotBlank() || item.id.startsWith("msg:")) item
             else {
-                val detail = runCatching { portal().fetchNoticeDetail(item.id) }.getOrNull()
+                val detail = activeRequest { source.fetchNoticeDetail(item.id) }.getOrNull()
                 if (detail == null) item else item.mergeDetail(detail)
             }
         }
-        if (!_state.value.sameSync(school)) return
+        if (!_state.value.sameSync(school)) throw kotlinx.coroutines.CancellationException("Account changed")
         commit { if (!it.sameSync(school)) it else it.copy(notices = notices) }
         val hall = pullHall(keepGradesIfFail)
-        if (!_state.value.sameSync(school)) return
+        if (!_state.value.sameSync(school)) throw kotlinx.coroutines.CancellationException("Account changed")
         commit { if (!it.sameSync(school)) it else it.copy(hall = hall) }
+        val utilityBind = _state.value.settings.resolvedUtilityBind()
         val utility = pullUtility(keepGradesIfFail)
-        if (!_state.value.sameSync(school)) return
+        if (!_state.value.sameSync(school) || _state.value.settings.resolvedUtilityBind() != utilityBind) return
         commitUtility(utility)
     }
 
@@ -427,7 +450,7 @@ class AppRepository(
         return when {
             snap.settings.school() != School.Gzus -> HallSnapshot()
             !snap.settings.gzusUsesCas() -> HallSnapshot(error = "要用统一身份认证登录才能看办事大厅")
-            else -> runCatching { portal().fetchHall() ?: HallSnapshot(error = HALL_SESSION_HINT) }
+            else -> activeRequest { portal().fetchHall() ?: HallSnapshot(error = HALL_SESSION_HINT) }
                 .getOrElse { error ->
                     if (error is JwxtNeedFirstLogin || isTransientNetwork(error)) throw error
                     if (keepGradesIfFail && snap.hall.ready) {
@@ -442,7 +465,7 @@ class AppRepository(
     private suspend fun pullUtility(keepGradesIfFail: Boolean): UtilitySnapshot {
         val snap = _state.value
         if (snap.settings.school() != School.Gzus) return UtilitySnapshot()
-        return runCatching { queryUtility(snap) }.getOrElse { error ->
+        return activeRequest { queryUtility(snap) }.getOrElse { error ->
             if (error is JwxtNeedFirstLogin || isTransientNetwork(error)) throw error
             if (keepGradesIfFail && snap.utility.ready) {
                 snap.utility.copy(error = error.message ?: "查询失败")
@@ -460,7 +483,7 @@ class AppRepository(
         val bind = snap.settings.resolvedUtilityBind()
         if (snap.session.loggedIn && snap.settings.gzusUsesCas()) {
             // 门户那条路会顺带认出本人宿舍，拿得到结果就用它的。
-            runCatching {
+            activeRequest {
                 portal().fetchUtility(bind, snap.session.studentId.ifBlank { snap.profile.studentId })
             }.getOrNull()?.let { return it }
         }
@@ -494,9 +517,12 @@ class AppRepository(
         val snap = _state.value
         if (!snap.session.loggedIn) error("登录后才能查空教室")
         if (!portal().supportsFreeRooms) error("${snap.resolved().jwxtName}没有空教室查询")
+        val expected = stamp()
+        val source = portal()
         return withLiveSession {
-            val rooms = portal().fetchFreeRooms(snap.settings.yearCode, snap.settings.termCode, weekday, start, end)
-            commit { it.copy(rooms = rooms) }
+            val rooms = source.fetchFreeRooms(snap.settings.yearCode, snap.settings.termCode, weekday, start, end)
+            if (!_state.value.sameSync(expected)) throw kotlinx.coroutines.CancellationException("Account changed")
+            commit { if (!it.sameSync(expected)) it else it.copy(rooms = rooms) }
             rooms
         }
     }
@@ -506,8 +532,11 @@ class AppRepository(
         if (existing != null && existing.content.isNotBlank()) return
         if (id.startsWith("msg:")) return
         if (!_state.value.session.loggedIn) error("登录后才能看通知正文")
-        val detail = withLiveSession { portal().fetchNoticeDetail(id) }
+        val expected = stamp()
+        val source = portal()
+        val detail = withLiveSession { source.fetchNoticeDetail(id) }
         commit {
+            if (!it.sameSync(expected)) return@commit it
             it.copy(
                 notices = it.notices.map { item ->
                     if (item.id == id) item.mergeDetail(detail) else item
@@ -525,8 +554,10 @@ class AppRepository(
         val snap = _state.value
         if (snap.settings.school() != School.Gzus || !snap.settings.gzusUsesCas()) return false
         val secret = loadReloginSecret() ?: return false
-        return runCatching {
+        val expected = stamp()
+        return activeRequest {
             gzusCas.loginSilent(secret.first, secret.second).getOrThrow()
+            if (!_state.value.sameSync(expected)) throw kotlinx.coroutines.CancellationException("Account changed")
             markLoggedIn(secret.first)
             true
         }.getOrElse { failed ->
@@ -550,9 +581,11 @@ class AppRepository(
     }
 
     private suspend fun shouldExpireWholeSession(): Boolean {
+        val expected = stamp()
         if (gzusCas.hasTgt()) return false
-        if (runCatching { gzusCas.probeEcard() }.getOrDefault(false)) return false
-        if (runCatching { gzusCas.probeJwxt() }.getOrDefault(false)) return false
+        if (activeRequest { gzusCas.probeEcard() }.getOrDefault(false)) return false
+        if (activeRequest { gzusCas.probeJwxt() }.getOrDefault(false)) return false
+        if (!_state.value.sameSync(expected)) throw kotlinx.coroutines.CancellationException("Account changed")
         return true
     }
 
@@ -570,24 +603,40 @@ class AppRepository(
     }
 
     private suspend fun <T> withLiveSession(probe: Boolean = true, block: suspend () -> T): T {
+        val expected = stamp()
+        val requestContext = kotlinx.coroutines.currentCoroutineContext()
+        fun checkCurrent() {
+            requestContext.ensureActive()
+            if (!_state.value.sameSync(expected)) throw kotlinx.coroutines.CancellationException("Account changed")
+        }
         try {
             val snap = _state.value
             if (probe && snap.session.loggedIn && snap.settings.school() == School.Gzus && snap.settings.gzusUsesCas()) {
-                runCatching { ensureCasTickets(force = false) }
+                activeRequest { ensureCasTickets(force = false) }
             }
-            return block()
+            checkCurrent()
+            val result = block()
+            checkCurrent()
+            return result
         } catch (failed: Throwable) {
+            if (failed is kotlinx.coroutines.CancellationException) throw failed
+            checkCurrent()
             if (failed is JwxtNeedFirstLogin) throw failed
             if (isTransientNetwork(failed)) throw failed
             val message = failed.message.orEmpty()
             if (isHallSessionHint(message) || isEcardSessionHint(message)) throw failed
             val cas = _state.value.settings.school() == School.Gzus && _state.value.settings.gzusUsesCas()
             if (cas && isSessionLost(message)) {
-                val revived = runCatching { ensureCasTickets(force = true) }.getOrDefault(false)
+                val revived = activeRequest { ensureCasTickets(force = true) }.getOrDefault(false)
+                checkCurrent()
                 if (revived) {
                     return try {
-                        block()
+                        val result = block()
+                        checkCurrent()
+                        result
                     } catch (again: Throwable) {
+                        if (again is kotlinx.coroutines.CancellationException) throw again
+                        checkCurrent()
                         if (again is JwxtNeedFirstLogin || isTransientNetwork(again)) throw again
                         if (isHallSessionHint(again.message.orEmpty()) || isEcardSessionHint(again.message.orEmpty())) {
                             throw again
@@ -621,6 +670,7 @@ class AppRepository(
     }
 
     private fun markSessionExpired() {
+        ++sessionGeneration
         gzusCas.forgetTickets()
         clearCookieStore()
         cancelLiveClass()
@@ -633,7 +683,9 @@ class AppRepository(
     }
 
     suspend fun logout() {
-        runCatching { portal().logout() }
+        val source = portal()
+        ++sessionGeneration
+        activeRequest { source.logout() }
         clearReloginSecret()
         clearCookieStore()
         commit {
@@ -681,8 +733,8 @@ class AppRepository(
         updateSettings {
             it.copy(
                 utilityUseCustomPrice = useCustom,
-                utilityWaterPrice = if (water > 0) water else JIANGMEN_WATER_PRICE,
-                utilityElectricPrice = if (electric > 0) electric else JIANGMEN_ELECTRIC_PRICE,
+                utilityWaterPrice = if (water.isFinite() && water > 0) water else JIANGMEN_WATER_PRICE,
+                utilityElectricPrice = if (electric.isFinite() && electric > 0) electric else JIANGMEN_ELECTRIC_PRICE,
             )
         }
     }
@@ -692,9 +744,12 @@ class AppRepository(
         if (snap.settings.school() != School.Gzus) error("请假和办事大厅只属于广软")
         if (!snap.session.loggedIn) error("登录后才能同步办事大厅")
         if (!snap.settings.gzusUsesCas()) error("要用统一身份认证登录才能同步办事大厅")
+        val expected = stamp()
+        val source = portal()
         withLiveSession {
-            val hall = portal().fetchHall() ?: HallSnapshot(error = HALL_SESSION_HINT)
-            commit { it.copy(hall = hall) }
+            val hall = source.fetchHall() ?: HallSnapshot(error = HALL_SESSION_HINT)
+            if (!_state.value.sameSync(expected)) throw kotlinx.coroutines.CancellationException("Account changed")
+            commit { if (!it.sameSync(expected)) it else it.copy(hall = hall) }
             if (!hall.ready && hall.error.isNotBlank()) error(hall.error)
         }
     }
@@ -722,7 +777,7 @@ class AppRepository(
         if (!snap.settings.gzusUsesCas()) error("要用统一身份认证登录才能请假")
         return withLiveSession {
             val message = portal().submitLeave(form, values)
-            runCatching { syncHall() }
+            activeRequest { syncHall() }
             message
         }
     }
@@ -742,7 +797,8 @@ class AppRepository(
     }
 
     fun scheduleCoursePick(id: String, fireAt: Long) {
-        if (fireAt <= 0L) error("时间填成 2026-09-01 和 13:00:00")
+        if (fireAt <= nowMillis()) error("请选择未来的日期和时间")
+        if (_state.value.settings.coursePickQueue.none { it.id == id }) error("队列里没有这门课")
         patchCoursePick(id) {
             it.copy(fireAt = fireAt, status = "waiting", message = "到点自动提交")
         }
@@ -761,12 +817,14 @@ class AppRepository(
     }
 
     suspend fun loadCoursePicked(scope: CoursePickScope): List<CoursePickOffer> = withLiveSession {
-        runCatching { requireCoursePick().fetchCoursePicked(scope) }.getOrDefault(emptyList())
+        requireCoursePick().fetchCoursePicked(scope)
     }
 
     suspend fun selectCourseNow(offer: CoursePickOffer, section: CoursePickSection): String = pickMutex.withLock {
+        val expected = stamp()
         withLiveSession {
             val message = selectCourseWithRetry(offer, section, attempts = 3)
+            if (!_state.value.sameSync(expected)) throw kotlinx.coroutines.CancellationException("Account changed")
             markCoursePickResult(offer, section, message, ok = true)
             message
         }
@@ -784,7 +842,7 @@ class AppRepository(
             .filter { it.status == "waiting" && it.fireAt > 0L && it.fireAt <= now }
         val out = mutableListOf<String>()
         for (task in due) {
-            val line = runCatching { runQueuedTask(task, attempts = 5) }
+            val line = activeRequest { runQueuedTask(task, attempts = 5) }
                 .getOrElse { failed ->
                     if (isSessionLost(failed.message.orEmpty())) throw failed
                     "${task.courseName}：${failed.message ?: "选课失败"}"
@@ -805,9 +863,18 @@ class AppRepository(
         patchCoursePick(task.id) {
             it.copy(status = "running", message = "正在提交", lastAttemptAt = nowMillis())
         }
-        val result = runCatching {
-            selectCourseWithRetry(offerFromTask(task), sectionFromTask(task), attempts)
+        val expected = stamp()
+        val result = try {
+            activeRequest { selectCourseWithRetry(offerFromTask(task), sectionFromTask(task), attempts) }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            if (_state.value.sameSync(expected)) {
+                patchCoursePick(task.id) {
+                    it.copy(status = "fail", message = "提交已中断，请先核对教务已选结果", lastAttemptAt = nowMillis())
+                }
+            }
+            throw cancelled
         }
+        if (!_state.value.sameSync(expected)) throw kotlinx.coroutines.CancellationException("Account changed")
         val now = nowMillis()
         result.fold(
             onSuccess = { message ->
@@ -837,7 +904,7 @@ class AppRepository(
         val portal = requireCoursePick()
         val times = attempts.coerceIn(1, 5)
         repeat(times) { index ->
-            val result = runCatching { portal.selectCoursePick(offer, section) }
+            val result = activeRequest { portal.selectCoursePick(offer, section) }
             result.onSuccess { return it }
             last = result.exceptionOrNull()?.message.orEmpty()
             if (isSessionLost(last)) throw result.exceptionOrNull()!!
@@ -878,7 +945,11 @@ class AppRepository(
     suspend fun syncUtility() {
         val snap = _state.value
         if (snap.settings.school() != School.Gzus) error("宿舍水电只属于广软")
+        val expected = stamp()
         val utility = queryUtility(snap)
+        if (!_state.value.sameSync(expected) || _state.value.settings.resolvedUtilityBind() != snap.settings.resolvedUtilityBind()) {
+            throw kotlinx.coroutines.CancellationException("Utility binding changed")
+        }
         commitUtility(utility)
         if (!utility.ready && utility.error.isNotBlank()) error(utility.error)
     }
@@ -1114,6 +1185,3 @@ private fun AppSnapshot.widgetSignature(): Int {
 }
 
 private fun nowMillis(): Long = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
-
-private fun AppSnapshot.sameSync(schoolId: String): Boolean =
-    settings.schoolId == schoolId && session.loggedIn

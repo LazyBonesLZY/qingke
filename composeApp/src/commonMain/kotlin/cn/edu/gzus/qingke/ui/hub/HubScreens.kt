@@ -85,6 +85,8 @@ fun EmptyRoomScreen(
     }
     val period = MajorPeriods[periodIndex]
     var queried by remember(dayIndex, periodIndex) { mutableStateOf(false) }
+    val displayedRooms = if (queried) rooms else emptyList()
+    val queryError = if (queried) error else null
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(contentPadding).padding(bottom = 24.dp),
     ) {
@@ -99,7 +101,7 @@ fun EmptyRoomScreen(
         TabRow(
             tabs = WeekdayNames,
             selectedTabIndex = dayIndex,
-            onTabSelected = { dayIndex = it },
+            onTabSelected = { if (!busy) dayIndex = it },
             modifier = Modifier.padding(horizontal = 16.dp),
         )
         SmallTitle(text = "大节")
@@ -112,7 +114,7 @@ fun EmptyRoomScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { periodIndex = index }
+                        .clickable(enabled = !busy) { periodIndex = index }
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                 ) {
                     Text(
@@ -144,15 +146,15 @@ fun EmptyRoomScreen(
             if (busy) InfiniteProgressIndicator()
             Text(if (!snapshot.session.loggedIn) "登录后查询" else if (busy) "查询中" else "查询空教室")
         }
-        if (!error.isNullOrBlank()) {
-            Text(error, modifier = Modifier.padding(16.dp), color = MiuixTheme.colorScheme.error, style = MiuixTheme.textStyles.footnote1)
+        if (!queryError.isNullOrBlank()) {
+            Text(queryError, modifier = Modifier.padding(16.dp), color = MiuixTheme.colorScheme.error, style = MiuixTheme.textStyles.footnote1)
         }
-        SmallTitle(text = if (rooms.isEmpty()) "结果" else "找到 ${rooms.size} 间")
-        if (rooms.isEmpty()) {
+        SmallTitle(text = if (displayedRooms.isEmpty()) "结果" else "找到 ${displayedRooms.size} 间")
+        if (displayedRooms.isEmpty()) {
             EmptyHint(
                 when {
                     !snapshot.session.loggedIn -> "未登录时不能查${school.jwxtName}空教室。"
-                    queried && !busy && error.isNullOrBlank() -> "这个时段没有空教室。"
+                    queried && !busy && queryError.isNullOrBlank() -> "这个时段没有空教室。"
                     else -> "还没有结果。选好星期和大节后查询。"
                 },
             )
@@ -161,7 +163,7 @@ fun EmptyRoomScreen(
                 modifier = Modifier.padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                rooms.take(80).forEach { room ->
+                displayedRooms.take(80).forEach { room ->
                     InfoCard(
                         title = room.name,
                         summary = listOf(room.building, room.campus, room.type, room.capacity.takeIf { it.isNotBlank() }?.let { "${it}座" })

@@ -41,6 +41,9 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cn.edu.gzus.qingke.data.AppRepository
+import cn.edu.gzus.qingke.data.LatestRequests
+import cn.edu.gzus.qingke.data.requestResult
+import cn.edu.gzus.qingke.data.activeRequest
 import cn.edu.gzus.qingke.data.AppUpdate
 import cn.edu.gzus.qingke.data.CoursePickOffer
 import cn.edu.gzus.qingke.data.CoursePickScope
@@ -109,6 +112,7 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import kotlinx.datetime.Clock
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
@@ -141,6 +145,7 @@ fun App() {
         val nav = remember { QingkeNavigator() }
         val snackbar = remember { SnackbarHostState() }
         val scope = rememberCoroutineScope()
+        val requests = remember(scope) { LatestRequests(scope) }
         val liveTick by repo.liveTick.collectAsState()
         val tabStates = rememberSaveableStateHolder()
         var noticeLoading by remember { mutableStateOf(emptySet<String>()) }
@@ -183,33 +188,59 @@ fun App() {
         var pickSectionsBusy by remember { mutableStateOf(false) }
         var pickError by remember { mutableStateOf<String?>(null) }
 
+        LaunchedEffect(snapshot.settings.schoolId, snapshot.settings.gzusLoginChannel, snapshot.session.studentId, snapshot.session.loggedIn, snapshot.settings.customJwxt) {
+            requests.cancelAll()
+            rooms = emptyList()
+            roomError = null
+            roomBusy = false
+            utilityOptions = emptyList()
+            utilityOptionsError = null
+            utilityOptionsBusy = false
+            leaveForm = null
+            leaveFormError = null
+            leaveFormBusy = false
+            leaveTraces = emptyMap()
+            leaveTraceBusy = ""
+            noticeLoading = emptySet()
+            pickScopes = emptyList()
+            pickOffers = emptyList()
+            pickSections = emptyList()
+            pickChosen = emptyList()
+            pickError = null
+            pickScopesBusy = false
+            pickSearchBusy = false
+            pickSectionsBusy = false
+        }
+
         fun toast(message: String) {
             scope.launch { snackbar.showSnackbar(message) }
         }
 
         fun runJob(login: Boolean = false, job: String = "sync", block: suspend () -> Unit) {
+            if (job in busyJobs) return
+            busyJobs = busyJobs + job
             scope.launch {
-                busyJobs = busyJobs + job
-                runCatching { block() }
-                    .onFailure { failed ->
-                        if (failed is JwxtNeedFirstLogin) {
-                            firstLogin = true
-                            loginError = failed.message
-                            return@onFailure
+                try {
+                    requestResult { block() }
+                        .onFailure { failed ->
+                            if (failed is JwxtNeedFirstLogin) {
+                                firstLogin = true
+                                loginError = failed.message
+                                return@onFailure
+                            }
+                            val message = failed.friendlyNetworkMessage()
+                            if (login || isSessionLost(message)) loginError = message
+                            toast(message)
                         }
-                        val message = failed.friendlyNetworkMessage()
-                        // 登录表单上的红字只留给登录本身和掉线，
-                        // 同步水电失败不该一直挂在那里。
-                        if (login || isSessionLost(message)) loginError = message
-                        toast(message)
-                    }
-                busyJobs = busyJobs - job
+                } finally {
+                    busyJobs = busyJobs - job
+                }
             }
         }
 
         LaunchedEffect(Unit) {
             if (!repo.state.value.settings.autoCheckUpdate) return@LaunchedEffect
-            runCatching { repo.checkGithubUpdate() }
+            activeRequest { repo.checkGithubUpdate() }
                 .onSuccess { found ->
                     update = found
                     if (found.newer) toast("有新版本 ${found.versionName}，需要更新")
@@ -218,12 +249,12 @@ fun App() {
 
         LaunchedEffect(snapshot.settings.autoPullScheduleAdjust, snapshot.settings.schoolId) {
             if (!snapshot.settings.autoPullScheduleAdjust || snapshot.settings.school() != School.Gzus) return@LaunchedEffect
-            runCatching { repo.pullScheduleAdjust() }
+            activeRequest { repo.pullScheduleAdjust() }
         }
 
         LaunchedEffect(snapshot.session.loggedIn) {
             if (snapshot.session.loggedIn) {
-                runCatching { repo.checkSession() }
+                activeRequest { repo.checkSession() }
                     .onFailure { failed ->
                         val message = failed.friendlyNetworkMessage()
                         if (isSessionLost(message)) {
@@ -233,10 +264,10 @@ fun App() {
                     }
                 if (repo.state.value.session.loggedIn) {
                     if (repo.state.value.settings.needsKeepAlive()) {
-                        runCatching { repo.keepAlive() }
+                        activeRequest { repo.keepAlive() }
                     }
                     if (repo.state.value.settings.autoSyncOnStart) {
-                        runCatching { repo.sync() }
+                        activeRequest { repo.sync() }
                             .onFailure { failed ->
                                 val message = failed.friendlyNetworkMessage()
                                 if (isSessionLost(message)) {
@@ -245,10 +276,10 @@ fun App() {
                                 }
                             }
                     } else {
-                        runCatching { repo.syncCalendar() }
+                        activeRequest { repo.syncCalendar() }
                         val now = repo.state.value
                         if (now.settings.gzusUsesCas() && !now.settings.hasUtilityBind()) {
-                            runCatching { repo.syncUtility() }
+                            activeRequest { repo.syncUtility() }
                         }
                     }
                 }
@@ -260,7 +291,7 @@ fun App() {
             while (isActive) {
                 delay(8 * 60_000L)
                 if (!repo.state.value.session.loggedIn || !repo.state.value.settings.needsKeepAlive()) break
-                runCatching { repo.keepAlive() }
+                activeRequest { repo.keepAlive() }
                     .onFailure { failed ->
                         val message = failed.friendlyNetworkMessage()
                         if (isSessionLost(message)) {
@@ -273,36 +304,41 @@ fun App() {
 
         LaunchedEffect(snapshot.settings.schoolId, snapshot.settings.gzusLoginChannel, snapshot.session.loggedIn) {
             if (!snapshot.session.loggedIn) {
-                runCatching { repo.refreshCaptcha() }
+                activeRequest { repo.refreshCaptcha() }
             }
         }
 
         LaunchedEffect(snapshot.settings.termStart, snapshot.settings.weekCount, snapshot.slots.size) {
-            runCatching { repo.syncHolidays() }
+            activeRequest { repo.syncHolidays() }
         }
 
-        val pickSignal = snapshot.settings.coursePickQueue
-            .filter { it.status == "waiting" && it.fireAt > 0L }
-            .joinToString { "${it.id}:${it.fireAt}" }
-        LaunchedEffect(pickSignal, snapshot.session.loggedIn) {
-            if (!snapshot.session.loggedIn || pickSignal.isBlank()) return@LaunchedEffect
+        LaunchedEffect(snapshot.session.loggedIn, snapshot.session.studentId, snapshot.settings.schoolId, snapshot.settings.gzusLoginChannel) {
+            if (!snapshot.session.loggedIn) return@LaunchedEffect
             while (isActive) {
                 val waiting = repo.state.value.settings.coursePickQueue
                     .filter { it.status == "waiting" && it.fireAt > 0L }
-                if (waiting.isEmpty()) break
+                if (waiting.isEmpty()) {
+                    repo.state.first { state -> state.settings.coursePickQueue.any { it.status == "waiting" && it.fireAt > 0L } }
+                    continue
+                }
                 val wait = waiting.minOf { it.fireAt } - Clock.System.now().toEpochMilliseconds()
                 if (wait > 0) {
                     // 离开选还早就慢慢看，快到点了就睡准确的时间，别差十几秒。
-                    delay(
+                    kotlinx.coroutines.withTimeoutOrNull(
                         when {
                             wait > 120_000 -> 60_000
                             wait > 30_000 -> 15_000
                             else -> wait
                         },
-                    )
+                    ) {
+                        // Rescheduling/removing a task wakes the timer without cancelling submission.
+                        repo.state.first { state ->
+                            state.settings.coursePickQueue.filter { it.status == "waiting" && it.fireAt > 0L } != waiting
+                        }
+                    }
                     continue
                 }
-                runCatching { repo.runDueCoursePicks() }
+                activeRequest { repo.runDueCoursePicks() }
                     .onSuccess { lines -> lines.forEach { line -> toast(line) } }
                     .onFailure { failed ->
                         val message = failed.friendlyNetworkMessage()
@@ -313,7 +349,13 @@ fun App() {
             }
         }
 
-        LaunchedEffect(snapshot.settings.remindBeforeClass, snapshot.settings.remindLeadMinutes, snapshot.slots, snapshot.settings.currentWeek, snapshot.settings.termStart, liveTick) {
+        LaunchedEffect(
+            snapshot.settings.remindBeforeClass, snapshot.settings.remindLeadMinutes,
+            snapshot.settings.liveCountdownEnabled, snapshot.slots, snapshot.settings.currentWeek,
+            snapshot.settings.termStart, snapshot.settings.periodTimeOverrides,
+            snapshot.profile.periodTimes, snapshot.settings.scheduleShifts,
+            snapshot.settings.autoPullScheduleAdjust, snapshot.scheduleAdjust, calendarDay, liveTick,
+        ) {
             if (snapshot.settings.remindBeforeClass) requestLiveUpdatePermission()
             while (isActive) {
                 val live = repo.refreshLive()
@@ -447,21 +489,21 @@ fun App() {
                             captcha = captcha,
                             captchaError = captchaError,
                             onRefreshCaptcha = {
-                                scope.launch { repo.refreshCaptcha() }
+                                requests.launch("captcha") { repo.refreshCaptcha() }
                             },
                             onSelectSchool = { school ->
                                 firstLogin = false
                                 loginError = null
                                 repo.setSchool(school)
                                 toast("已切换到${school.label}")
-                                scope.launch { repo.refreshCaptcha() }
+                                requests.launch("captcha") { repo.refreshCaptcha() }
                             },
                             onSelectGzusLogin = { channel ->
                                 firstLogin = false
                                 loginError = null
                                 repo.setGzusLoginChannel(channel)
                                 toast(if (channel == GZUS_LOGIN_CAS) "已改用统一身份认证" else "已改用正方直接登录")
-                                scope.launch { repo.refreshCaptcha() }
+                                requests.launch("captcha") { repo.refreshCaptcha() }
                             },
                             onLogin = { id, pwd, code ->
                                 if (id.length < 6) {
@@ -509,7 +551,7 @@ fun App() {
                                     toast("已关闭自动拉取调休")
                                 } else {
                                     scope.launch {
-                                        runCatching { repo.pullScheduleAdjust() }
+                                        activeRequest { repo.pullScheduleAdjust() }
                                             .onSuccess { toast("已拉取调休") }
                                             .onFailure { toast(it.friendlyNetworkMessage()) }
                                     }
@@ -559,7 +601,7 @@ fun App() {
                                 firstLogin = false
                                 loginError = null
                                 toast(if (apply) "已切到自定义教务" else "已保存自定义配置")
-                                if (apply) scope.launch { repo.refreshCaptcha() }
+                                if (apply) requests.launch("captcha") { repo.refreshCaptcha() }
                             },
                             update = update,
                             updateBusy = updateBusy,
@@ -573,7 +615,7 @@ fun App() {
                                     scope.launch {
                                         updateBusy = true
                                         updateError = null
-                                        runCatching { repo.checkGithubUpdate() }
+                                        activeRequest { repo.checkGithubUpdate() }
                                             .onSuccess { found ->
                                                 update = found
                                                 toast(if (found.newer) "有新版本 ${found.versionName}，需要更新" else "已是最新 ${found.versionName}")
@@ -587,7 +629,7 @@ fun App() {
                                 scope.launch {
                                     updateBusy = true
                                     updateError = null
-                                    runCatching { repo.checkGithubUpdate() }
+                                    activeRequest { repo.checkGithubUpdate() }
                                         .onSuccess {
                                             update = it
                                             toast(if (it.newer) "有新版本 ${it.versionName}" else "已是最新 ${it.versionName}")
@@ -680,10 +722,11 @@ fun App() {
                                 rooms = rooms,
                                 error = roomError,
                                 onQuery = { weekday, start, end ->
-                                    scope.launch {
+                                    requests.launch("rooms") {
                                         roomBusy = true
                                         roomError = null
-                                        runCatching { repo.queryRooms(weekday, start, end) }
+                                        rooms = emptyList()
+                                        activeRequest { repo.queryRooms(weekday, start, end) }
                                             .onSuccess { rooms = it }
                                             .onFailure { roomError = it.friendlyNetworkMessage().ifBlank { "空教室查询失败" } }
                                         roomBusy = false
@@ -705,10 +748,11 @@ fun App() {
                                 formBusy = leaveFormBusy,
                                 formError = leaveFormError,
                                 onLoadForm = { affairId ->
-                                    scope.launch {
+                                    requests.launch("leaveForm") {
+                                        leaveForm = null
                                         leaveFormBusy = true
                                         leaveFormError = null
-                                        runCatching { repo.loadLeaveForm(affairId) }
+                                        activeRequest { repo.loadLeaveForm(affairId) }
                                             .onSuccess { leaveForm = it }
                                             .onFailure { leaveFormError = it.friendlyNetworkMessage().ifBlank { "请假表单加载失败" } }
                                         leaveFormBusy = false
@@ -729,9 +773,9 @@ fun App() {
                                 traces = leaveTraces,
                                 traceBusy = leaveTraceBusy,
                                 onLoadTrace = { id ->
-                                    scope.launch {
+                                    requests.launch("leaveTrace") {
                                         leaveTraceBusy = id
-                                        runCatching { repo.loadLeaveTrace(id) }
+                                        activeRequest { repo.loadLeaveTrace(id) }
                                             .onSuccess { leaveTraces = leaveTraces + (id to it) }
                                             .onFailure { toast(it.friendlyNetworkMessage()) }
                                         leaveTraceBusy = ""
@@ -747,16 +791,17 @@ fun App() {
                                 optionsBusy = utilityOptionsBusy,
                                 optionsError = utilityOptionsError,
                                 onLoadOptions = { level, parentId ->
+                                    requests.cancel("utilitySearch")
                                     if (level == "clear" || parentId.isBlank()) {
                                         utilityOptions = emptyList()
                                         utilityOptionsError = null
                                         utilityOptionsBusy = false
                                     } else {
-                                        scope.launch {
+                                        requests.launch("utilitySearch") {
                                             utilityOptions = emptyList()
                                             utilityOptionsBusy = true
                                             utilityOptionsError = null
-                                            runCatching { repo.listUtilityOptions(level, parentId) }
+                                            activeRequest { repo.listUtilityOptions(level, parentId) }
                                                 .onSuccess { utilityOptions = it }
                                                 .onFailure { utilityOptionsError = it.message }
                                             utilityOptionsBusy = false
@@ -764,6 +809,8 @@ fun App() {
                                     }
                                 },
                                 onSaveBind = { bind ->
+                                    requests.cancel("utilitySearch")
+                                    utilityOptionsBusy = false
                                     repo.saveUtilityBind(bind)
                                     utilityOptions = emptyList()
                                     utilityOptionsError = null
@@ -780,7 +827,7 @@ fun App() {
                                     }
                                 },
                                 onPeekBind = {
-                                    scope.launch { runCatching { repo.syncUtility() } }
+                                    scope.launch { activeRequest { repo.syncUtility() } }
                                 },
                             )
                             is Route.Notices -> NoticesScreen(
@@ -788,11 +835,16 @@ fun App() {
                                 contentPadding = padding,
                                 bodyLoading = noticeLoading,
                                 onOpen = { id ->
-                                    scope.launch {
+                                    if (id !in noticeLoading) {
                                         noticeLoading = noticeLoading + id
-                                        runCatching { repo.loadNoticeBody(id) }
-                                            .onFailure { toast(it.friendlyNetworkMessage().ifBlank { "通知正文加载失败" }) }
-                                        noticeLoading = noticeLoading - id
+                                        requests.launch("notice/$id") {
+                                            try {
+                                                activeRequest { repo.loadNoticeBody(id) }
+                                                    .onFailure { toast(it.friendlyNetworkMessage().ifBlank { "通知正文加载失败" }) }
+                                            } finally {
+                                                noticeLoading = noticeLoading - id
+                                            }
+                                        }
                                     }
                                 },
                             )
@@ -876,41 +928,41 @@ fun App() {
                                 sectionsBusy = pickSectionsBusy,
                                 error = pickError,
                                 onLoadScopes = {
-                                    scope.launch {
+                                    requests.launch("pickScopes") {
                                         pickScopesBusy = true
                                         pickError = null
-                                        runCatching { repo.loadCoursePickScopes() }
+                                        activeRequest { repo.loadCoursePickScopes() }
                                             .onSuccess { list ->
                                                 pickScopes = list
                                                 pickChosen = emptyList()
-                                                list.firstOrNull()?.let { first ->
-                                                    runCatching { repo.loadCoursePicked(first) }
-                                                        .onSuccess { pickChosen = it }
-                                                }
                                             }
                                             .onFailure { pickError = it.friendlyNetworkMessage() }
                                         pickScopesBusy = false
                                     }
                                 },
                                 onSearch = { item, keyword ->
-                                    scope.launch {
+                                    requests.cancel("pickSections")
+                                    pickSectionsBusy = false
+                                    requests.launch("pickSearch") {
                                         pickSearchBusy = true
                                         pickError = null
                                         pickSections = emptyList()
-                                        runCatching { repo.searchCoursePicks(item, keyword) }
+                                        pickOffers = emptyList()
+                                        pickChosen = emptyList()
+                                        activeRequest { repo.searchCoursePicks(item, keyword) }
                                             .onSuccess { pickOffers = it }
-                                            .onFailure { failed ->
-                                                pickOffers = emptyList()
-                                                pickError = failed.friendlyNetworkMessage()
-                                            }
+                                            .onFailure { failed -> pickError = failed.friendlyNetworkMessage() }
+                                        activeRequest { repo.loadCoursePicked(item) }
+                                            .onSuccess { pickChosen = it }
+                                            .onFailure { failed -> pickError = failed.friendlyNetworkMessage() }
                                         pickSearchBusy = false
                                     }
                                 },
                                 onOpenSections = { offer ->
-                                    scope.launch {
+                                    requests.launch("pickSections") {
                                         pickSectionsBusy = true
                                         pickSections = emptyList()
-                                        runCatching { repo.loadCoursePickSections(offer) }
+                                        activeRequest { repo.loadCoursePickSections(offer) }
                                             .onSuccess { pickSections = it }
                                             .onFailure { pickError = it.friendlyNetworkMessage() }
                                         pickSectionsBusy = false
@@ -927,7 +979,7 @@ fun App() {
                                     toast("已加入队列")
                                 },
                                 onSchedule = { id, fireAt ->
-                                    runCatching { repo.scheduleCoursePick(id, fireAt) }
+                                    requestResult { repo.scheduleCoursePick(id, fireAt) }
                                         .onSuccess { toast("已设定到点自动选") }
                                         .onFailure { toast(it.message ?: "时间不对") }
                                 },
@@ -957,7 +1009,7 @@ fun App() {
                                 contentPadding = padding,
                                 busy = "xiaoai" in busyJobs,
                                 onSaveUrl = { url ->
-                                    runCatching { repo.saveXiaoaiEditUrl(url) }
+                                    requestResult { repo.saveXiaoaiEditUrl(url) }
                                         .onSuccess { toast("授权已保存") }
                                         .onFailure { toast(it.message ?: "授权无效") }
                                 },

@@ -32,6 +32,7 @@ import cn.edu.gzus.qingke.data.combineMillis
 import cn.edu.gzus.qingke.data.examSortKey
 import cn.edu.gzus.qingke.data.forDate
 import cn.edu.gzus.qingke.data.formatRemain
+import cn.edu.gzus.qingke.data.liveTiming
 import cn.edu.gzus.qingke.data.greeting
 import cn.edu.gzus.qingke.data.hasTermStart
 import cn.edu.gzus.qingke.data.isLow
@@ -68,9 +69,7 @@ fun TodayScreen(
 ) {
     // 首页显示的是「下一节还有几分钟」「还剩几分」和上课进度，必须自己按时间重算。
     // 以前 now 只在 composition 时取一次，整屏就冻住了（切 tab 或跨天才刷新）。
-    //
-    // 驱动用帧时钟而不是 delay：Compose 只在出帧时推进，所以退到后台会自动挂起、
-    // 不空转耗电；前台则最多每秒推进一次，倒计时和进度条就是实时的。
+    // 秒级 delay 驱动，避免持续申请每个 vsync 帧。
     var tick by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
         while (isActive) {
@@ -110,7 +109,8 @@ fun TodayScreen(
     val startMillis = if (hasClock) hero?.let { combineMillis(now.date, school.periodStartOf(it.period)) } ?: 0L else 0L
     val endMillis = if (hasClock) hero?.let { combineMillis(now.date, school.periodEndOf(it.period)) } ?: 0L else 0L
     val nowMs = remember(tick) { Clock.System.now().toEpochMilliseconds() }
-    val inClass = hasClock && remain != null && remain <= 0 && hero != null
+    val timing = if (hasClock && hero != null) liveTiming(nowMs, startMillis, endMillis) else null
+    val inClass = timing?.inClass == true
     val progress = when {
         !inClass || endMillis <= startMillis -> 0f
         nowMs <= startMillis -> 0f
@@ -153,7 +153,8 @@ fun TodayScreen(
             hero != null -> {
                 val eta = when {
                     remain == null -> if (todaySlots.size > 1) "今天第一节 · 共 ${todaySlots.size} 节" else "今天的课"
-                    remain <= 0 -> "正在上课"
+                    inClass -> "正在上课"
+                    timing != null -> "下一节 · ${formatRemain(timing.remainingMinutes.toInt())}后"
                     else -> "下一节 · ${formatRemain(remain)}后"
                 }
                 HeroCard(
@@ -167,7 +168,7 @@ fun TodayScreen(
                     ),
                     progress = if (inClass) progress else null,
                     progressLabel = if (inClass) {
-                        val left = ((endMillis - nowMs) / 60_000L).toInt().coerceAtLeast(0)
+                        val left = timing.remainingMinutes.toInt()
                         "还剩 ${left} 分"
                     } else {
                         ""

@@ -554,13 +554,13 @@ fun UtilityBind.hasRoom(): Boolean = roomId.isNotBlank() || roomName.isNotBlank(
 
 /** 只有江门校区有公布的默认单价；广州校区没自定义就不折算成钱。 */
 fun AppSettings.resolvedWaterPrice(bind: UtilityBind): Double? = when {
-    utilityUseCustomPrice && utilityWaterPrice > 0 -> utilityWaterPrice
+    utilityUseCustomPrice && utilityWaterPrice.isFinite() && utilityWaterPrice > 0 -> utilityWaterPrice
     bind.isGuangzhou() -> null
     else -> JIANGMEN_WATER_PRICE
 }
 
 fun AppSettings.resolvedElectricPrice(bind: UtilityBind): Double? = when {
-    utilityUseCustomPrice && utilityElectricPrice > 0 -> utilityElectricPrice
+    utilityUseCustomPrice && utilityElectricPrice.isFinite() && utilityElectricPrice > 0 -> utilityElectricPrice
     bind.isGuangzhou() -> null
     else -> JIANGMEN_ELECTRIC_PRICE
 }

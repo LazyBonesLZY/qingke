@@ -263,6 +263,18 @@ fun AppSettings.forSchool(school: School): AppSettings {
     )
 }
 
+internal fun AppSnapshot.withLiveCountdownMigration(): AppSnapshot =
+    if (settings.liveCountdownMigrated) {
+        this
+    } else {
+        copy(
+            settings = settings.copy(
+                liveCountdownEnabled = true,
+                liveCountdownMigrated = true,
+            ),
+        )
+    }
+
 fun AppSettings.resolvedRemindLead(): Int =
     if (remindLeadMinutes in RemindLeadMinutes) remindLeadMinutes else DefaultRemindLeadMinutes
 

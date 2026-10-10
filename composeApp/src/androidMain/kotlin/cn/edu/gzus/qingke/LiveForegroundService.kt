@@ -1,13 +1,17 @@
 package cn.edu.gzus.qingke
 
 import android.app.Notification
+import android.app.NotificationChannel
 import android.app.NotificationManager
+import androidx.core.app.NotificationCompat
 import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.os.IBinder
+import cn.edu.gzus.qingke.data.LIVE_CHANNEL
 import cn.edu.gzus.qingke.data.LIVE_ID
 import cn.edu.gzus.qingke.data.buildLiveNotification
+import cn.edu.gzus.qingke.shared.R
 import cn.edu.gzus.qingke.data.cancelLiveClass
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -15,7 +19,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * 上课期间的常驻前台服务：让 Live 通知一直挂着，并在分钟边界/上下课边沿重推
@@ -32,49 +38,38 @@ import kotlinx.coroutines.launch
  * 通知就是 Live 通知本身（复用同一个 LIVE_ID 与 buildLiveNotification），
  * 不会多出一条常驻条目。
  *
- * 启动方式用 `startService` 而不是 `startForegroundService`：后者要求服务在
- * 5 秒内必须调 `startForeground`，否则抛 `ForegroundServiceDidNotStartInTimeException`
- * 崩进程；而「该不该挂通知」要读盘才知道，冷启动时完全可能判出 null（用户
- * 划掉了通知、权限被撤），就会踩这个契约。`startService` 没有这个约束——
- * 有通知时服务自己 `startForeground` 提升即可。代价是只能在 App 处于前台时
- * 拉起（后台 startService 会被系统拒，runCatching 吞掉，通知照旧由闹钟链维护）。
+ * 统一用 `startForegroundService`，并在 `onStartCommand` 中同步读取本地快照、构建通知、
+ * 调 `startForeground`，满足 Android 的前台服务启动协议。后台入口若被系统拒绝，
+ * 仍保留普通通知与下一次闹钟作为降级通道；前台恢复时会重新拉起服务。
  */
 class LiveForegroundService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private var looping = false
+    private val generation = AtomicLong(0L)
+    private var loopJob: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // 判有没有课要读盘 + 反序列化整份快照，别放主线程。
-        if (!looping) {
-            looping = true
-            scope.launch {
-                try {
-                    runService()
-                } finally {
-                    // 循环退出后必须复位，否则下一次 onStartCommand 会以为
-                    // 循环还在跑而不再启动，通知挂着却不再刷新。
-                    looping = false
-                }
-            }
+        // 前台服务启动协议要求尽快提升；通知参数只读本地快照，不做网络请求。
+        val liveNotification = currentNotification()
+        val notification = liveNotification ?: recoveryNotification()
+        if (runCatching { startForeground(LIVE_ID, notification) }.isFailure) {
+            stopSelfResult(startId)
+            return START_NOT_STICKY
+        }
+        if (liveNotification == null) {
+            // 先用兜底通知完成前台服务契约，再移除它，避免 startForegroundService
+            // 在快照短暂不可读或通知刚被撤销时触发超时异常。
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelfResult(startId)
+            return START_NOT_STICKY
+        }
+        val runGeneration = generation.incrementAndGet()
+        loopJob?.cancel()
+        loopJob = scope.launch {
+            refreshLoop(runGeneration)
         }
         return START_STICKY
-    }
-
-    private suspend fun runService() {
-        val notification = currentNotification()
-        if (notification == null) {
-            // 没有该挂的课（划掉了通知 / 没权限 / 课已结束）：不用提升前台。
-            stopSelf()
-            return
-        }
-        // 提升失败（极少数厂商限制）就安静退场，别崩；通知本身已经发出去了。
-        if (runCatching { startForeground(LIVE_ID, notification) }.isFailure) {
-            stopSelf()
-            return
-        }
-        refreshLoop()
     }
 
     private fun currentNotification(): Notification? {
@@ -90,6 +85,22 @@ class LiveForegroundService : Service() {
         )
     }
 
+    private fun recoveryNotification(): Notification {
+        val manager = getSystemService(NotificationManager::class.java)
+        manager?.createNotificationChannel(
+            NotificationChannel(LIVE_CHANNEL, "上课进度", NotificationManager.IMPORTANCE_DEFAULT),
+        )
+        return NotificationCompat.Builder(this, LIVE_CHANNEL)
+            .setSmallIcon(R.drawable.ic_stat_live)
+            .setContentTitle("青课")
+            .setContentText("正在恢复上课提醒")
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .setSilent(true)
+            .build()
+    }
+
     /**
      * 重推一次，睡到下一次该醒的时刻。
      *
@@ -97,24 +108,31 @@ class LiveForegroundService : Service() {
      * 一刻到下一次分钟边界之间，通知里的 when 还指着已经过去的上课点，系统
      * 计时器会显示成负数。
      */
-    private suspend fun refreshLoop() {
-        val minuteMs = 60_000L
-        while (scope.isActive) {
-            val nowMs = System.currentTimeMillis()
-            val params = currentLiveParams(nowMs) ?: break
-            val edge = if (nowMs < params.startMillis) params.startMillis else params.endMillis
-            val toMinute = minuteMs - (nowMs % minuteMs) + 1_000L
-            val toEdge = edge - nowMs + 1_000L
-            delay(minOf(toMinute, toEdge).coerceAtLeast(1_000L))
-            val notification = currentNotification() ?: break
-            getSystemService(NotificationManager::class.java)?.notify(LIVE_ID, notification)
+    private suspend fun refreshLoop(runGeneration: Long) {
+        try {
+            val minuteMs = 60_000L
+            while (scope.isActive && generation.get() == runGeneration) {
+                val nowMs = System.currentTimeMillis()
+                val params = currentLiveParams(nowMs) ?: return
+                val edge = if (nowMs < params.startMillis) params.startMillis else params.endMillis
+                val toMinute = minuteMs - (nowMs % minuteMs) + 1_000L
+                val toEdge = edge - nowMs + 1_000L
+                delay(minOf(toMinute, toEdge).coerceAtLeast(1_000L))
+                if (generation.get() != runGeneration) return
+                val notification = currentNotification() ?: return
+                getSystemService(NotificationManager::class.java)?.notify(LIVE_ID, notification)
+            }
+        } finally {
+            if (generation.get() == runGeneration) {
+                cancelLiveClass()
+                stopSelf()
+            }
         }
-        // 课上完了（或被划掉/没权限了）：撤通知并退出。
-        cancelLiveClass()
-        stopSelf()
     }
 
     override fun onDestroy() {
+        generation.incrementAndGet()
+        loopJob?.cancel()
         scope.cancel()
         super.onDestroy()
     }
@@ -122,13 +140,17 @@ class LiveForegroundService : Service() {
     companion object {
         /**
          * 有课就拉起常驻刷新，没课就撤掉。
-         * 用 startService：App 在前台时才允许，后台会被系统拒（吞掉即可，
-         * 那条通知仍由闹钟链维护）。
+         * 统一走 startForegroundService；后台若被系统拒绝，保留普通通知与闹钟降级，
+         * 前台恢复时再次启动服务。
          */
         fun sync(context: Context, active: Boolean) {
             val intent = Intent(context, LiveForegroundService::class.java)
             runCatching {
-                if (active) context.startService(intent) else context.stopService(intent)
+                if (active) {
+                    androidx.core.content.ContextCompat.startForegroundService(context, intent)
+                } else {
+                    context.stopService(intent)
+                }
             }
         }
     }

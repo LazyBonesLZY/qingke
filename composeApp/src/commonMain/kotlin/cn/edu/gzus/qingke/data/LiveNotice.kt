@@ -48,7 +48,11 @@ private val snapshotJson = Json { ignoreUnknownKeys = true; encodeDefaults = tru
 /** 应用没开时后台闹钟用：直接读存档，读不到就当没有课表。 */
 internal fun readSnapshotStore(): AppSnapshot? {
     val text = readStore(STORE) ?: return null
-    return runCatching { snapshotJson.decodeFromString(AppSnapshot.serializer(), text) }.getOrNull()
+    val parsed = runCatching { snapshotJson.decodeFromString(AppSnapshot.serializer(), text) }.getOrNull()
+        ?: return null
+    // 后台只规范化内存态，不把旧快照整份写回，避免覆盖前台并发保存的新课表或设置。
+    // 应用前台创建 AppRepository 时会负责一次性落盘迁移结果。
+    return parsed.withLiveCountdownMigration()
 }
 
 /** 现在该挂哪条上课通知；不该挂就返回 null。应用里的循环和后台闹钟共用这一份判断。 */

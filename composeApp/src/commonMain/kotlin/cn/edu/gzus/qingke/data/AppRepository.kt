@@ -94,23 +94,13 @@ class AppRepository(
             persist(empty)
             return empty
         }
-        // 1.7.33 起胶囊倒计时改成「系统计时器自己走字」，不再靠后台每分钟重推的
-        // 分钟文案。但序列化器带 encodeDefaults，老存档里 liveCountdownEnabled 已经
-        // 固化成 false 写盘了，光改 data class 默认值对老用户无效（显式值压过默认值），
-        // 所以这里强制打开一次。落盘后 liveCountdownMigrated 为 true，之后尊重用户选择。
-        if (!parsed.settings.liveCountdownMigrated) {
-            val migrated = parsed.copy(
-                settings = parsed.settings.copy(
-                    liveCountdownEnabled = true,
-                    liveCountdownMigrated = true,
-                ),
-            )
+        val migrated = parsed.withLiveCountdownMigration()
+        if (migrated !== parsed) {
             // 这里只落盘、不调 persist()：load() 跑在构造期（_state 还没赋值），
             // persist 会同步刷新 4 类小组件位图，拖慢首帧。小组件等后续正常 commit 再刷。
             writeStore(STORE, json.encodeToString(AppSnapshot.serializer(), migrated))
-            return migrated
         }
-        return parsed
+        return migrated
     }
 
     private var widgetSignature = 0
@@ -977,7 +967,6 @@ class AppRepository(
         if (testEndMillis > nowMs) {
             // 按固定间隔重推（正文文案/进度条跟上；胶囊秒级由系统自己走），
             // 到测试结束点收尾。常驻前台服务负责后台那一半。
-            scheduleLiveWake(minOf(nowMs + LIVE_STEP_MILLIS, testEndMillis + 1_000L))
             // 和真实路径同款去重：前台轮询别每轮都全量重发。
             // 带上开关状态，拨开关后下一轮就会重推，不用等分钟边界。
             val testKey = "test/$testEndMillis/${(testEndMillis - nowMs) / 60_000L}/${_state.value.settings.liveCountdownEnabled}"
@@ -1002,6 +991,11 @@ class AppRepository(
             )
             if (posted) lastLivePost = testKey else lastLivePost = ""
             setLiveForeground(posted)
+            if (posted) {
+                scheduleLiveWake(minOf(nowMs + LIVE_STEP_MILLIS, testEndMillis + 1_000L))
+            } else {
+                scheduleLiveWake(testEndMillis + 1_000L)
+            }
             return posted
         }
         if (testEndMillis > 0L && nowMs >= testEndMillis) {
@@ -1012,8 +1006,6 @@ class AppRepository(
         }
         val snap = _state.value
         val now = nowDateTime()
-        // 应用被划掉后靠这个闹钟接着更新通知。
-        scheduleLiveWake(snap.nextLiveWake(now, nowMs))
         val notice = snap.liveNotice(now, nowMs)
         if (notice == null) {
             lastLivePost = ""
@@ -1021,8 +1013,6 @@ class AppRepository(
             cancelLiveClass()
             return false
         }
-        // 有课：拉起常驻前台服务按分钟刷新（ColorOS 冻结后台闹钟时的关键通道）。
-        setLiveForeground(true)
         // 小组件上的"上课中/下一节"要跟着走，但没换课就别重画位图。
         val widgetKey = "${now.date}/${notice.slot.courseId}/${notice.slot.period}/${notice.inClass}"
         if (widgetKey != liveWidgetKey) {
@@ -1050,6 +1040,11 @@ class AppRepository(
         // 返回 null，这时起服务只会「冷启动→判 null→自停」空转。
         if (posted) lastLivePost = postKey else lastLivePost = ""
         setLiveForeground(posted)
+        if (posted) {
+            scheduleLiveWake(snap.nextLiveWake(now, nowMs))
+        } else {
+            scheduleLiveWake(notice.endMillis + 1_000L)
+        }
         return posted
     }
 

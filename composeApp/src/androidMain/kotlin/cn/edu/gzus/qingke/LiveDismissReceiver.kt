@@ -12,6 +12,7 @@ import cn.edu.gzus.qingke.data.nowDateTime
 import cn.edu.gzus.qingke.data.readLiveTestWindow
 import cn.edu.gzus.qingke.data.readSnapshotStore
 import cn.edu.gzus.qingke.data.scheduleLiveWake
+import cn.edu.gzus.qingke.data.setLiveForeground
 import cn.edu.gzus.qingke.data.writeLiveTestWindow
 
 internal const val LIVE_PREFS = "qingke_live"
@@ -88,7 +89,7 @@ internal fun runLiveTick() {
     val nowMs = System.currentTimeMillis()
     val params = currentLiveParams(nowMs)
     if (params != null) {
-        notifyLiveClass(
+        val posted = notifyLiveClass(
             title = params.title,
             detail = params.detail,
             progress = params.progress,
@@ -97,7 +98,19 @@ internal fun runLiveTick() {
             endMillis = params.endMillis,
             countdownEnabled = params.countdownEnabled,
         )
-        scheduleLiveWake(minOf(nowMs + LIVE_STEP_MILLIS, params.endMillis + 1_000L))
+        if (posted) {
+            // 冷启动、开机恢复和应用更新广播也要进入同一条前台服务链路。
+            setLiveForeground(true)
+        }
+        if (!posted) {
+            // 通知权限/渠道关闭或用户已划掉当前课程时，不再每分钟空唤醒；
+            // 到本节结束后再恢复下一节的调度。
+            setLiveForeground(false)
+            scheduleLiveWake(params.endMillis + 1_000L)
+        } else {
+            val edge = if (nowMs < params.startMillis) params.startMillis else params.endMillis
+            scheduleLiveWake(minOf(nowMs + LIVE_STEP_MILLIS, edge + 1_000L))
+        }
         return
     }
     cancelLiveClass()

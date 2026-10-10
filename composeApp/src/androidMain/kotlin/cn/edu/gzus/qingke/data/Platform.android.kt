@@ -16,6 +16,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.AtomicFile
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.widget.RemoteViews
@@ -46,8 +47,9 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-private const val LIVE_CHANNEL = "qingke_live_class"
+internal const val LIVE_CHANNEL = "qingke_live_class"
 internal const val LIVE_ID = 1001
+private val storeLock = Any()
 
 actual fun setLiveForeground(active: Boolean) {
     if (!QingkeApp.ready()) return
@@ -180,13 +182,25 @@ actual fun rsaEncrypt(password: String, modulusB64: String, exponentB64: String)
     return Base64.getEncoder().encodeToString(cipher.doFinal(password.toByteArray(Charsets.UTF_8)))
 }
 
-actual fun readStore(name: String): String? {
-    val file = File(QingkeApp.app.filesDir, name)
-    return if (file.exists()) file.readText() else null
+actual fun readStore(name: String): String? = synchronized(storeLock) {
+    runCatching {
+        AtomicFile(File(QingkeApp.app.filesDir, name))
+            .openRead()
+            .bufferedReader(Charsets.UTF_8)
+            .use { it.readText() }
+    }.getOrNull()
 }
 
-actual fun writeStore(name: String, value: String) {
-    File(QingkeApp.app.filesDir, name).writeText(value)
+actual fun writeStore(name: String, value: String) = synchronized(storeLock) {
+    val atomic = AtomicFile(File(QingkeApp.app.filesDir, name))
+    val output = atomic.startWrite()
+    try {
+        output.write(value.toByteArray(Charsets.UTF_8))
+        atomic.finishWrite(output)
+    } catch (error: Throwable) {
+        atomic.failWrite(output)
+        throw error
+    }
 }
 
 actual fun clearCookieStore() {
@@ -406,6 +420,10 @@ internal fun buildLiveNotification(
         enableVibration(false)
     }
     nm.createNotificationChannel(channel)
+    val savedChannel = nm.getNotificationChannel(LIVE_CHANNEL)
+    if (!nm.areNotificationsEnabled() || savedChannel?.importance == NotificationManager.IMPORTANCE_NONE) {
+        return null
+    }
     val now = System.currentTimeMillis()
     val inClass = now >= startMillis && now < endMillis
     val pct = when {
@@ -487,7 +505,9 @@ internal fun buildLiveNotification(
             // 到点让系统自己收掉。ongoing 通知不会自己消失，而我们的唤醒链只要
             // 漏一次（Doze 延迟、进程被冻结、闹钟没排上）它就永远挂在那儿。
             // setTimeoutAfter 由 NotificationManagerService 自己计时，不依赖我们。
-            .setTimeoutAfter((endMillis - now).coerceAtLeast(1_000L))
+            // 课前通知最迟在上课边沿自动收掉，避免后台恢复延迟时继续拿过去的
+            // startMillis 做倒计时；上课中则保留到下课点。
+            .setTimeoutAfter(((if (inClass) endMillis else startMillis) - now).coerceAtLeast(1_000L))
         // 开倒计时就不挂文字：内容槽要空出来给系统计时器（挂了文字就没计时器）。
         // 关掉开关才挂静态状态词。
         if (!countdownEnabled) builder.setShortCriticalText(chipText)
@@ -541,7 +561,7 @@ internal fun buildLiveNotification(
         .setChronometerCountDown(true)
         .setProgress(100, pct, false)
         .setColor(blue)
-        .setTimeoutAfter((endMillis - now).coerceAtLeast(1_000L))
+        .setTimeoutAfter(((if (inClass) endMillis else startMillis) - now).coerceAtLeast(1_000L))
     return builder.build()
 }
 
@@ -564,8 +584,8 @@ actual fun notifyLiveClass(
         endMillis = endMillis,
         countdownEnabled = countdownEnabled,
     ) ?: return false
-    QingkeApp.app.getSystemService(NotificationManager::class.java)
-        ?.notify(LIVE_ID, notification)
+    val manager = QingkeApp.app.getSystemService(NotificationManager::class.java) ?: return false
+    manager.notify(LIVE_ID, notification)
     return true
 }
 

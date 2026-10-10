@@ -22,6 +22,7 @@ import android.util.TypedValue
 import android.widget.RemoteViews
 import cn.edu.gzus.qingke.MainActivity
 import cn.edu.gzus.qingke.data.periodStartOf
+import cn.edu.gzus.qingke.data.readStore
 import cn.edu.gzus.qingke.data.periodEndOf
 import cn.edu.gzus.qingke.data.clockRangeOf
 import cn.edu.gzus.qingke.data.ResolvedSchool
@@ -50,7 +51,6 @@ import kotlinx.datetime.LocalDate
 import kotlinx.datetime.minus
 import kotlinx.datetime.plus
 import kotlinx.serialization.json.Json
-import java.io.File
 
 enum class WidgetRange { Day, Week, Month, Square }
 
@@ -216,9 +216,8 @@ object QingkeWidgets {
     private fun Float.roundToSize(): Int = toInt().coerceIn(160, 1600)
 
     private fun snapshot(context: Context): AppSnapshot {
-        val file = File(context.filesDir, STORE)
-        if (!file.exists()) return AppSnapshot()
-        return runCatching { json.decodeFromString(AppSnapshot.serializer(), file.readText()) }
+        val text = readStore(STORE) ?: return AppSnapshot()
+        return runCatching { json.decodeFromString(AppSnapshot.serializer(), text) }
             .getOrDefault(AppSnapshot())
     }
 

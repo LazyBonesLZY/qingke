@@ -46,6 +46,11 @@ kotlin {
                 implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.2")
             }
         }
+        val commonTest by getting {
+            dependencies {
+                implementation(kotlin("test"))
+            }
+        }
         val androidMain by getting {
             dependencies {
                 implementation(libs.androidx.activity.compose)

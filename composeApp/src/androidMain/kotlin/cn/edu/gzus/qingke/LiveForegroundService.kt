@@ -3,72 +3,66 @@ package cn.edu.gzus.qingke
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import androidx.core.app.NotificationCompat
 import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.os.IBinder
+import android.os.PowerManager
+import android.util.Log
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import cn.edu.gzus.qingke.data.LIVE_CHANNEL
 import cn.edu.gzus.qingke.data.LIVE_ID
 import cn.edu.gzus.qingke.data.buildLiveNotification
+import cn.edu.gzus.qingke.data.liveTiming
+import cn.edu.gzus.qingke.data.nextLiveWake
+import cn.edu.gzus.qingke.data.nowDateTime
+import cn.edu.gzus.qingke.data.readSnapshotStore
+import cn.edu.gzus.qingke.data.scheduleLiveWake
 import cn.edu.gzus.qingke.shared.R
-import cn.edu.gzus.qingke.data.cancelLiveClass
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import java.util.concurrent.atomic.AtomicLong
 
-/**
- * 上课期间的常驻前台服务：让 Live 通知一直挂着，并在分钟边界/上下课边沿重推
- * 一次（换 when 锚点、跟上进度条与正文）。
- *
- * 胶囊上的数字不靠这个服务逐秒刷新——那是系统计时器（when + Chronometer）自己
- * 走的，进程被冻结也不影响；这个服务管的是「通知别消失」和「锚点别过期」。
- *
- * 为什么必须用前台服务：ColorOS 会把后台闹钟整体冻结——实测把 `adjustment`
- * 推迟近 3 天（`setExactAndAllowWhileIdle` + `USE_EXACT_ALARM` 也照冻），
- * 所以用户不开「完全允许后台运行」时闹钟链根本不会醒。前台服务是系统认可
- * 的长驻身份，外卖/导航类 App 同款，不受该冻结策略影响。
- *
- * 通知就是 Live 通知本身（复用同一个 LIVE_ID 与 buildLiveNotification），
- * 不会多出一条常驻条目。
- *
- * 统一用 `startForegroundService`，并在 `onStartCommand` 中同步读取本地快照、构建通知、
- * 调 `startForeground`，满足 Android 的前台服务启动协议。后台入口若被系统拒绝，
- * 仍保留普通通知与下一次闹钟作为降级通道；前台恢复时会重新拉起服务。
- */
+/** One native Live notification doubles as the foreground-service notification on every vendor. */
 class LiveForegroundService : Service() {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val generation = AtomicLong(0L)
+    // Service callbacks and loop cleanup share Main: an old loop cannot remove a newer notification.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var generation = 0L
     private var loopJob: Job? = null
+    private val wakeLock by lazy {
+        getSystemService(PowerManager::class.java)?.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK, "$packageName:live",
+        )?.apply { setReferenceCounted(false) }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // 前台服务启动协议要求尽快提升；通知参数只读本地快照，不做网络请求。
-        val liveNotification = currentNotification()
+        val runGeneration = ++generation
+        loopJob?.cancel()
+        val liveNotification = runCatching { currentNotification() }
+            .onFailure { Log.w(TAG, "Read Live notification failed", it) }
+            .getOrNull()
         val notification = liveNotification ?: recoveryNotification()
-        if (runCatching { startForeground(LIVE_ID, notification) }.isFailure) {
+        if (runCatching { startForeground(LIVE_ID, notification) }
+                .onFailure { Log.w(TAG, "Start foreground failed", it) }.isFailure
+        ) {
             stopSelfResult(startId)
             return START_NOT_STICKY
         }
         if (liveNotification == null) {
-            // 先用兜底通知完成前台服务契约，再移除它，避免 startForegroundService
-            // 在快照短暂不可读或通知刚被撤销时触发超时异常。
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelfResult(startId)
+            // Complete the foreground-start contract even if the course ended during startup.
+            finishLive(startId)
             return START_NOT_STICKY
         }
-        val runGeneration = generation.incrementAndGet()
-        loopJob?.cancel()
-        loopJob = scope.launch {
-            refreshLoop(runGeneration)
-        }
+        loopJob = scope.launch { refreshLoop(runGeneration, startId) }
         return START_STICKY
     }
 
@@ -86,9 +80,12 @@ class LiveForegroundService : Service() {
     }
 
     private fun recoveryNotification(): Notification {
-        val manager = getSystemService(NotificationManager::class.java)
-        manager?.createNotificationChannel(
-            NotificationChannel(LIVE_CHANNEL, "上课进度", NotificationManager.IMPORTANCE_DEFAULT),
+        getSystemService(NotificationManager::class.java)?.createNotificationChannel(
+            NotificationChannel(LIVE_CHANNEL, "上课进度", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                setSound(null, null)
+                enableVibration(false)
+                setShowBadge(false)
+            },
         )
         return NotificationCompat.Builder(this, LIVE_CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_live)
@@ -101,57 +98,72 @@ class LiveForegroundService : Service() {
             .build()
     }
 
-    /**
-     * 重推一次，睡到下一次该醒的时刻。
-     *
-     * 醒的时刻取「分钟边界」和「上下课边沿」的较小值：只对齐分钟的话，上课那
-     * 一刻到下一次分钟边界之间，通知里的 when 还指着已经过去的上课点，系统
-     * 计时器会显示成负数。
-     */
-    private suspend fun refreshLoop(runGeneration: Long) {
+    private suspend fun refreshLoop(runGeneration: Long, startId: Int) {
+        var retry = false
         try {
-            val minuteMs = 60_000L
-            while (scope.isActive && generation.get() == runGeneration) {
+            while (scope.isActive && generation == runGeneration) {
                 val nowMs = System.currentTimeMillis()
                 val params = currentLiveParams(nowMs) ?: return
-                val edge = if (nowMs < params.startMillis) params.startMillis else params.endMillis
-                val toMinute = minuteMs - (nowMs % minuteMs) + 1_000L
-                val toEdge = edge - nowMs + 1_000L
-                delay(minOf(toMinute, toEdge).coerceAtLeast(1_000L))
-                if (generation.get() != runGeneration) return
+                val timing = liveTiming(nowMs, params.startMillis, params.endMillis) ?: return
+                scheduleLiveWake(nowMs + timing.refreshDelayMillis)
+                // Bounded CPU lease: FGS alone does not keep coroutine timers awake on screen-off.
+                wakeLock?.acquire(minOf(params.endMillis - nowMs + 10_000L, 120_000L))
+                delay(timing.refreshDelayMillis)
+                if (generation != runGeneration) return
                 val notification = currentNotification() ?: return
                 getSystemService(NotificationManager::class.java)?.notify(LIVE_ID, notification)
             }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            retry = true
+            Log.w(TAG, "Live refresh failed", error)
         } finally {
-            if (generation.get() == runGeneration) {
-                cancelLiveClass()
-                stopSelf()
-            }
+            if (generation == runGeneration) finishLive(startId, retry)
         }
     }
 
+    private fun finishLive(startId: Int, retry: Boolean = false) {
+        val nowMs = System.currentTimeMillis()
+        val params = runCatching { currentLiveParams(nowMs) }.getOrNull()
+        val nextWake = if (retry) {
+            nowMs + 60_000L
+        } else if (params != null) {
+            // A dismissed/blocked course stays silent until its end; do not spin every minute.
+            params.endMillis + 1_000L
+        } else {
+            runCatching { readSnapshotStore()?.nextLiveWake(nowDateTime(), nowMs) }.getOrNull()
+        }
+        try {
+            scheduleLiveWake(nextWake)
+        } finally {
+            releaseWakeLock()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelfResult(startId)
+        }
+    }
+
+    private fun releaseWakeLock() {
+        wakeLock?.let { if (it.isHeld) it.release() }
+    }
+
     override fun onDestroy() {
-        generation.incrementAndGet()
+        ++generation
         loopJob?.cancel()
         scope.cancel()
+        releaseWakeLock()
         super.onDestroy()
     }
 
     companion object {
-        /**
-         * 有课就拉起常驻刷新，没课就撤掉。
-         * 统一走 startForegroundService；后台若被系统拒绝，保留普通通知与闹钟降级，
-         * 前台恢复时再次启动服务。
-         */
+        private const val TAG = "QingkeLive"
+
         fun sync(context: Context, active: Boolean) {
             val intent = Intent(context, LiveForegroundService::class.java)
             runCatching {
-                if (active) {
-                    androidx.core.content.ContextCompat.startForegroundService(context, intent)
-                } else {
-                    context.stopService(intent)
-                }
-            }
+                if (active) ContextCompat.startForegroundService(context, intent)
+                else context.stopService(intent)
+            }.onFailure { Log.w(TAG, "Sync foreground service failed", it) }
         }
     }
 }

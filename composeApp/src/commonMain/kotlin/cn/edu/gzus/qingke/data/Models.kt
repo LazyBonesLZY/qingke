@@ -150,7 +150,7 @@ fun defaultZfTermCode(today: LocalDate = nowDateTime().date): String =
 @Serializable
 data class AppSettings(
     val remindBeforeClass: Boolean = true,
-    /** 胶囊实时倒计时：开=系统计时器自走秒，关=静态状态文字（即将上课/上课中）。 */
+    /** 胶囊分钟倒计时：开=距上课/下课 XX 分，关=静态上课状态。 */
     val liveCountdownEnabled: Boolean = true,
     /** 一次性迁移标记，见 AppRepository.load()。落盘后就不再强制改用户的手动选择。 */
     val liveCountdownMigrated: Boolean = false,

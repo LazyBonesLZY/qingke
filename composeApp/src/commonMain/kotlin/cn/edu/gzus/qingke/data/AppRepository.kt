@@ -68,7 +68,6 @@ class AppRepository(
     private var testStartMillis = 0L
     private var testEndMillis = 0L
     private var liveWidgetKey = ""
-    private var lastLivePost = ""
     private val pickMutex = Mutex()
 
     init {
@@ -915,8 +914,8 @@ class AppRepository(
     fun startLiveTest(): String {
         resetLiveDismiss()
         val now = nowMillis()
-        testStartMillis = now - 2 * 60_000
-        testEndMillis = now + 8 * 60_000
+        testStartMillis = now + 60_000L
+        testEndMillis = testStartMillis + 2 * 60_000L
         writeLiveTestWindow(testStartMillis, testEndMillis)
         _liveTick.update { it + 1 }
         val posted = refreshLive()
@@ -924,9 +923,8 @@ class AppRepository(
         return when {
             !posted && status.contains("权限") -> "没有通知权限，先到系统设置打开通知"
             !posted -> "没有发出通知：$status"
-            // liveUpdateStatus 实际文案是「状态栏 Live 还没开」，不含「未开启」。
-            status.contains("还没开") -> "通知已发出。倒计时在走，系统还没开 Live Update 的话，去设置打开。"
-            else -> "通知已发出。这是上课中倒计时，大约 8 分钟走完。"
+            status.contains("还没开") -> "测试通知已发出；状态栏 Live 还没开，可到系统设置开启。"
+            else -> "测试已开始：1 分钟后切换上课，再倒数 2 分钟下课。"
         }
     }
 
@@ -939,49 +937,30 @@ class AppRepository(
         refreshLive()
     }
 
-    /**
-     * 下一次该刷新的毫秒数：分钟边界（让「下课 4′」跟上）与上下课边沿取较小值。
-     *
-     * 只对齐分钟不行：通知里的 when 锚点是发出去那一刻定死的（课前指上课点），
-     * 上课铃一响就该改指下课点，但要等下一次重推才更新。上课点多半不在整分上
-     *（比如 10:00:30），那么从上课那一刻到下一次分钟边界之间，通知里的 when
-     * 还指着已经过去的时间，系统计时器会读成负数。所以边沿必须单独叫醒。
-     */
+    /** Sleep until the displayed minute changes or the current stage ends. */
     fun liveRefreshDelayMs(): Long {
         val nowMs = nowMillis()
-        val minuteMs = 60_000L
-        val toMinute = minuteMs - (nowMs % minuteMs) + 1_000L
-        val edge = if (testEndMillis > nowMs) {
-            // 测试窗口起点恒在过去，只需盯结束点。
-            testEndMillis
+        val timing = if (testEndMillis > nowMs) {
+            liveTiming(nowMs, testStartMillis, testEndMillis)
         } else {
-            val snap = _state.value
-            val notice = snap.liveNotice(nowDateTime(), nowMs) ?: return toMinute
-            if (notice.inClass) notice.endMillis else notice.startMillis
+            val notice = _state.value.liveNotice(nowDateTime(), nowMs) ?: return LIVE_STEP_MILLIS
+            liveTiming(nowMs, notice.startMillis, notice.endMillis)
         }
-        return minOf(toMinute, edge - nowMs + 1_000L).coerceAtLeast(1_000L)
+        return timing?.refreshDelayMillis ?: LIVE_STEP_MILLIS
     }
 
     fun refreshLive(): Boolean {
         val nowMs = nowMillis()
         if (testEndMillis > nowMs) {
-            // 按固定间隔重推（正文文案/进度条跟上；胶囊秒级由系统自己走），
-            // 到测试结束点收尾。常驻前台服务负责后台那一半。
-            // 和真实路径同款去重：前台轮询别每轮都全量重发。
-            // 带上开关状态，拨开关后下一轮就会重推，不用等分钟边界。
-            val testKey = "test/$testEndMillis/${(testEndMillis - nowMs) / 60_000L}/${_state.value.settings.liveCountdownEnabled}"
-            if (testKey == lastLivePost) {
-                setLiveForeground(true)
-                return true
-            }
+            val timing = liveTiming(nowMs, testStartMillis, testEndMillis) ?: return false
             val progress = when {
                 nowMs <= testStartMillis -> 0f
                 nowMs >= testEndMillis -> 1f
                 else -> ((nowMs - testStartMillis).toFloat() / (testEndMillis - testStartMillis).toFloat()).coerceIn(0f, 1f)
             }
-            val remainEnd = ((testEndMillis - nowMs) / 60_000L).toInt().coerceAtLeast(0)
+            val remainEnd = timing.remainingMinutes.toInt()
             val posted = notifyLiveClass(
-                title = "正在上课（测试）",
+                title = "课程提醒（测试）",
                 detail = "3-4节 · 测试教室",
                 progress = progress,
                 etaMinutes = remainEnd,
@@ -989,10 +968,9 @@ class AppRepository(
                 endMillis = testEndMillis,
                 countdownEnabled = _state.value.settings.liveCountdownEnabled,
             )
-            if (posted) lastLivePost = testKey else lastLivePost = ""
             setLiveForeground(posted)
             if (posted) {
-                scheduleLiveWake(minOf(nowMs + LIVE_STEP_MILLIS, testEndMillis + 1_000L))
+                scheduleLiveWake(nowMs + timing.refreshDelayMillis)
             } else {
                 scheduleLiveWake(testEndMillis + 1_000L)
             }
@@ -1008,9 +986,12 @@ class AppRepository(
         val now = nowDateTime()
         val notice = snap.liveNotice(now, nowMs)
         if (notice == null) {
-            lastLivePost = ""
-            setLiveForeground(false)
             cancelLiveClass()
+            scheduleLiveWake(snap.nextLiveWake(now, nowMs))
+            if (liveWidgetKey.isNotEmpty()) {
+                liveWidgetKey = ""
+                refreshHomeWidgets()
+            }
             return false
         }
         // 小组件上的"上课中/下一节"要跟着走，但没换课就别重画位图。
@@ -1018,14 +999,6 @@ class AppRepository(
         if (widgetKey != liveWidgetKey) {
             liveWidgetKey = widgetKey
             refreshHomeWidgets()
-        }
-        // 通知正文/进度按分钟刷新：同分钟内的重复调用直接跳过，
-        // 分钟一变、换课、上下课边沿或拨了倒计时开关才重推。
-        val postKey = "${notice.title}/${notice.startMillis}/${notice.inClass}/${notice.etaMinutes}/${snap.settings.liveCountdownEnabled}"
-        if (postKey == lastLivePost) {
-            // 同分钟内不重推，但常驻服务要确保在跑。
-            setLiveForeground(true)
-            return true
         }
         val posted = notifyLiveClass(
             title = notice.title,
@@ -1038,7 +1011,6 @@ class AppRepository(
         )
         // 服务只在通知真的挂出来时跑：被划掉 / 没权限时 buildLiveNotification
         // 返回 null，这时起服务只会「冷启动→判 null→自停」空转。
-        if (posted) lastLivePost = postKey else lastLivePost = ""
         setLiveForeground(posted)
         if (posted) {
             scheduleLiveWake(snap.nextLiveWake(now, nowMs))

@@ -929,11 +929,11 @@ private fun RemindBlock(
         )
         if (school.hasPeriodClock) {
             SwitchPreference(
-                title = "胶囊实时倒计时",
+                title = "胶囊分钟倒计时",
                 summary = if (snapshot.settings.liveCountdownEnabled) {
-                    "胶囊显示倒计时，由系统时钟或前台服务刷新"
+                    "显示距上课／下课 XX 分，由前台服务按分钟刷新"
                 } else {
-                    "胶囊只显示静态状态；通知卡片里仍有倒计时"
+                    "胶囊只显示上课状态；展开卡片仍显示剩余分钟"
                 },
                 checked = snapshot.settings.liveCountdownEnabled,
                 onCheckedChange = onToggleCountdown,
@@ -964,11 +964,11 @@ private fun RemindBlock(
         if (school.hasPeriodClock || liveTesting) {
             ArrowPreference(
                 title = if (liveTesting) "停止 Live 测试" else "测试 Live 通知",
-                summary = if (liveTesting) "进度条约 8 分钟，点这里停" else "发一条上课中的进度通知，看看效果",
+                summary = if (liveTesting) "课前 1 分钟、上课 2 分钟；点此停止" else "检查胶囊、展开卡片和上课／下课切换",
                 onClick = { if (liveTesting) onStopLiveTest() else onLiveTest() },
             )
         }
-        if (school.hasPeriodClock && (liveStatus.contains("权限") || liveStatus.contains("还没开"))) {
+        if (school.hasPeriodClock && (liveStatus.contains("权限") || liveStatus.contains("还没开") || liveStatus.contains("已关闭"))) {
             ArrowPreference(
                 title = "打开系统通知设置",
                 summary = liveStatus,

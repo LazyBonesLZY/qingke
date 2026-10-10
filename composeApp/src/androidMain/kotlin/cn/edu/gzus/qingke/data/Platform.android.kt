@@ -19,7 +19,6 @@ import android.os.Bundle
 import android.util.AtomicFile
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
-import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import cn.edu.gzus.qingke.EXTRA_LIVE_DISMISS
@@ -273,10 +272,9 @@ private fun isBatteryWhitelisted(ctx: android.content.Context): Boolean =
 
 actual fun liveKeepaliveStatus(): String {
     val ctx = QingkeApp.app
-    // 上课期间由前台服务按分钟刷新 Live 通知，不依赖被 ColorOS 冻结的后台闹钟，
-    // 所以白名单/精确闹钟现在是加分项而不是必需项。
+    // Foreground refresh is universal; battery exemptions are an additional fallback.
     return if (isBatteryWhitelisted(ctx)) {
-        "后台保活正常，提醒和倒计时准时"
+        "已开启电池白名单；通知由前台服务刷新"
     } else {
         "上课期间由前台服务刷新倒计时；加电池白名单可以更稳"
     }
@@ -304,6 +302,22 @@ actual fun openKeepaliveSettings() {
 
 actual fun openLiveUpdateSettings() {
     val ctx = QingkeApp.app
+    val nm = ctx.getSystemService(NotificationManager::class.java)
+    if (nm != null && nm.getNotificationChannel(LIVE_CHANNEL)?.importance == NotificationManager.IMPORTANCE_NONE) {
+        val channelSettings = Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).apply {
+            putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, ctx.packageName)
+            putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, LIVE_CHANNEL)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        if (runCatching { ctx.startActivity(channelSettings) }.isSuccess) return
+    }
+    if (nm != null && !nm.areNotificationsEnabled()) {
+        val appSettings = Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+            putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, ctx.packageName)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        if (runCatching { ctx.startActivity(appSettings) }.isSuccess) return
+    }
     val promoted = Intent("android.settings.MANAGE_APP_PROMOTED_NOTIFICATIONS").apply {
         putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, ctx.packageName)
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -333,7 +347,13 @@ actual fun liveUpdateStatus(leadMinutes: Int): String {
         return "需要通知权限"
     }
     val nm = ctx.getSystemService(NotificationManager::class.java)
-    if (Build.VERSION.SDK_INT >= 36 && nm != null && !nm.canPostPromotedNotifications()) {
+    if (nm != null && (!nm.areNotificationsEnabled() ||
+            nm.getNotificationChannel(LIVE_CHANNEL)?.importance == NotificationManager.IMPORTANCE_NONE)
+    ) {
+        return "上课提醒通知已关闭，可到系统设置开启"
+    }
+    if (Build.VERSION.SDK_INT < 36) return "当前系统显示普通上课通知，不支持原生 Live 胶囊"
+    if (nm != null && !nm.canPostPromotedNotifications()) {
         return "通知能发，状态栏 Live 还没开"
     }
     return "下一节课前 ${leadMinutes} 分钟出现，上课中倒数下课"
@@ -343,46 +363,6 @@ actual fun refreshHomeWidgets() {
     if (!QingkeApp.ready()) return
     cn.edu.gzus.qingke.widget.QingkeWidgets.refreshAll(QingkeApp.app)
 }
-
-/**
- * 把「上课/下课」画成一张图标位图，放进胶囊左侧的图标槽。
- *
- * 收起态胶囊只有一个内容槽，文字和系统计时器互斥（挂了 setShortCriticalText
- * 就没有计时器）。把状态标签挪到图标槽，内容槽就能留给 when + Chronometer
- * 由系统自己走字；前台服务负责通知存活与上下课边沿换锚点。
- *
- * 状态栏小图标是白色蒙版渲染，所以画白字透明底。图标槽是正方形，位图也必须
- * 是正方形：长方形会被横向压扁，字就变形。
- */
-/** 图标位文字标签仅用于已验证的 ColorOS 路径，其它系统保留应用图标。 */
-private val colorOsChip: Boolean by lazy {
-    val brand = "${Build.MANUFACTURER} ${Build.BRAND}".lowercase()
-    brand.contains("oppo") || brand.contains("oneplus") || brand.contains("realme")
-}
-
-private val liveLabelIconCache = java.util.concurrent.ConcurrentHashMap<String, android.graphics.drawable.Icon>()
-
-private fun liveLabelIcon(text: String): android.graphics.drawable.Icon =
-    liveLabelIconCache.getOrPut(text) {
-        val size = 96
-        val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
-        // 声明真实密度，否则 96px 会被当成 96dp 再缩一次。
-        bmp.density = QingkeApp.app.resources.displayMetrics.densityDpi
-        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.WHITE
-            textAlign = android.graphics.Paint.Align.CENTER
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-            textSize = size * 0.48f
-        }
-        // 两个全宽汉字按 0.48 字号排下来几乎顶满画布，粗体字形外扩会啃边。
-        // 先量实际宽度，超了就等比缩到留 4% 边距。
-        val maxWidth = size * 0.92f
-        val measured = paint.measureText(text)
-        if (measured > maxWidth) paint.textSize *= maxWidth / measured
-        val baseline = size / 2f - (paint.descent() + paint.ascent()) / 2f
-        android.graphics.Canvas(bmp).drawText(text, size / 2f, baseline, paint)
-        android.graphics.drawable.Icon.createWithBitmap(bmp)
-    }
 
 /**
  * 构建 Live 通知。抽成独立函数是为了让前台服务能用同一个对象
@@ -420,29 +400,9 @@ internal fun buildLiveNotification(
     if (!nm.areNotificationsEnabled() || savedChannel?.importance == NotificationManager.IMPORTANCE_NONE) {
         return null
     }
-    val now = System.currentTimeMillis()
-    val inClass = now >= startMillis && now < endMillis
-    val pct = when {
-        endMillis <= startMillis -> (progress * 100).toInt().coerceIn(0, 100)
-        now <= startMillis -> 0
-        now >= endMillis -> 100
-        else -> (((now - startMillis) * 100L) / (endMillis - startMillis)).toInt().coerceIn(0, 100)
-    }
-    // inClass 为假时锚点指上课点。万一上课点已经过去（边沿重推晚了一拍，
-    // 比如服务刚被杀过），改指下课点，别让系统计时器读成负数。
-    val whenMillis = when {
-        inClass -> endMillis
-        startMillis > now -> startMillis
-        endMillis > now -> endMillis
-        else -> now + 1_000L
-    }
-    val status = if (inClass) "上课中" else "下一节"
-    // ColorOS keeps its validated chronometer path. Native API 37 uses a critical
-    // time-difference metric; API 36 has an explicit minute-text fallback below.
-    val countdownLabel = if (inClass) "距离下课" else "距离上课"
-    val remainingMinutes = ((whenMillis - now + 59_999L) / 60_000L).coerceAtLeast(1L)
-    val nativeCountdownText = "$countdownLabel $remainingMinutes 分钟"
-    val chipText = if (inClass) "上课中" else "即将上课"
+    val timing = liveTiming(System.currentTimeMillis(), startMillis, endMillis) ?: return null
+    val pct = timing.progressPercent
+    val chipText = if (countdownEnabled) timing.countdownText else timing.statusText
     val launch = PendingIntent.getActivity(
         ctx,
         0,
@@ -465,24 +425,18 @@ internal fun buildLiveNotification(
             .setStyledByProgress(true)
             .setProgress(done)
             .setProgressSegments(
-                listOf(
-                    Notification.ProgressStyle.Segment(done).setColor(blue),
-                    Notification.ProgressStyle.Segment(left).setColor(track),
-                ),
+                buildList {
+                    if (done > 0) add(Notification.ProgressStyle.Segment(done).setColor(blue))
+                    if (left > 0) add(Notification.ProgressStyle.Segment(left).setColor(track))
+                },
             )
             .setProgressTrackerIcon(android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_live_now))
             .setProgressStartIcon(android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_live_start))
             .setProgressEndIcon(android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_live_end))
         val builder = Notification.Builder(ctx, LIVE_CHANNEL)
-            .setSmallIcon(
-                if (countdownEnabled && colorOsChip) {
-                    liveLabelIcon(if (inClass) "下课" else "上课")
-                } else {
-                    android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_stat_live)
-                },
-            )
+            .setSmallIcon(R.drawable.ic_stat_live)
             .setContentTitle(title)
-            .setContentText("$nativeCountdownText · $detail")
+            .setContentText(detail)
             .setStyle(style)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -491,99 +445,35 @@ internal fun buildLiveNotification(
             .setCategory(Notification.CATEGORY_PROGRESS)
             .setColor(blue)
             .setColorized(false)
-            .setWhen(whenMillis)
-            // 计时器无条件开着：这是通知卡片自己的倒计时，跟胶囊那个开关无关。
-            // 开关只管收起态那一个内容槽显示文字还是计时器。
-            .setShowWhen(true)
-            .setUsesChronometer(true)
-            .setChronometerCountDown(true)
-            .setSubText(status)
-            // 到点让系统自己收掉。ongoing 通知不会自己消失，而我们的唤醒链只要
-            // 漏一次（Doze 延迟、进程被冻结、闹钟没排上）它就永远挂在那儿。
-            // setTimeoutAfter 由 NotificationManagerService 自己计时，不依赖我们。
-            // 课前通知最迟在上课边沿自动收掉，避免后台恢复延迟时继续拿过去的
-            // startMillis 做倒计时；上课中则保留到下课点。
-            .setTimeoutAfter(((if (inClass) endMillis else startMillis) - now).coerceAtLeast(1_000L))
-        if (!colorOsChip && Build.VERSION.SDK_INT >= 37) {
-            builder.setStyle(NativeLiveMetricsApi37.build(whenMillis, countdownLabel, pct, detail, countdownEnabled))
-        } else if (!colorOsChip && countdownEnabled) {
-            // API 36 has no MetricStyle; the foreground service refreshes this fallback text.
-            builder.setShortCriticalText("${if (inClass) "下课" else "上课"} $remainingMinutes′")
-        }
-        // The chip switch does not disable the countdown in the notification card.
-        if (!countdownEnabled) builder.setShortCriticalText(chipText)
+            .setWhen(timing.deadlineMillis)
+            .setShowWhen(false)
+            .setSubText(timing.countdownText)
+            // All vendors use the same explicit minute text and native progress card.
+            .setShortCriticalText(chipText)
+            // Expire the old stage if both the service and alarm miss its boundary.
+            .setTimeoutAfter(timing.remainingMillis)
         builder.addExtras(Bundle().apply { putBoolean("android.requestPromotedOngoing", true) })
         return builder.build()
     }
-    // 低版本没有流体云提升（自定义视图会失去资格），就当普通通知用：
-    // 卡片里内嵌 Chronometer 自己走字，静态文案和进度条靠定期重推刷新。
-    val etaText = nativeCountdownText
-    val remainingMs = (if (inClass) endMillis else startMillis) - now
-    val card = RemoteViews(ctx.packageName, R.layout.qingke_live_notification).apply {
-        setTextViewText(R.id.qingke_live_title, title)
-        setTextViewText(R.id.qingke_live_badge, status)
-        setTextViewText(R.id.qingke_live_meta, detail.replace("\n", " · "))
-        setTextViewText(R.id.qingke_live_eta, etaText)
-        setProgressBar(R.id.qingke_live_progress, 100, pct, false)
-        if (remainingMs > 0) {
-            setChronometerCountDown(R.id.qingke_live_countdown, true)
-            setChronometer(
-                R.id.qingke_live_countdown,
-                android.os.SystemClock.elapsedRealtime() + remainingMs,
-                null,
-                true,
-            )
-            setViewVisibility(R.id.qingke_live_countdown, android.view.View.VISIBLE)
-        } else {
-            setViewVisibility(R.id.qingke_live_countdown, android.view.View.GONE)
-        }
-    }
+    // Older Android versions have no native Live chip; keep a standard progress card.
     val builder = NotificationCompat.Builder(ctx, LIVE_CHANNEL)
         .setSmallIcon(R.drawable.ic_stat_live)
         .setContentTitle(title)
-        .setContentText("$nativeCountdownText · $detail")
-        .setCustomContentView(card)
-        .setCustomBigContentView(card)
-        .setStyle(NotificationCompat.DecoratedCustomViewStyle())
-        .setSubText(status)
+        .setContentText(detail)
+        .setStyle(NotificationCompat.BigTextStyle().bigText(detail))
+        .setSubText(timing.countdownText)
         .setOngoing(true)
         .setOnlyAlertOnce(true)
         .setContentIntent(launch)
         .setDeleteIntent(dismiss)
         .setCategory(NotificationCompat.CATEGORY_PROGRESS)
         .setSilent(true)
-        .setWhen(whenMillis)
-        .setShowWhen(true)
-        .setUsesChronometer(true)
-        .setChronometerCountDown(true)
+        .setWhen(timing.deadlineMillis)
+        .setShowWhen(false)
         .setProgress(100, pct, false)
         .setColor(blue)
-        .setTimeoutAfter(((if (inClass) endMillis else startMillis) - now).coerceAtLeast(1_000L))
+        .setTimeoutAfter(timing.remainingMillis)
     return builder.build()
-}
-
-@androidx.annotation.RequiresApi(37)
-private object NativeLiveMetricsApi37 {
-    fun build(
-        whenMillis: Long,
-        label: String,
-        progressPercent: Int,
-        detail: String,
-        countdownEnabled: Boolean,
-    ): Notification.MetricStyle = Notification.MetricStyle()
-        .addMetric(
-            Notification.Metric(
-                Notification.Metric.TimeDifference.forTimer(
-                    java.time.Instant.ofEpochMilli(whenMillis),
-                    Notification.Metric.TimeDifference.FORMAT_CHRONOMETER,
-                ),
-                label,
-            ),
-        )
-        .addMetric(Notification.Metric(Notification.Metric.FixedInt(progressPercent, "%"), "课程进度"))
-        // Metric cards may omit the ordinary contentText; preserve course details explicitly.
-        .addMetric(Notification.Metric(Notification.Metric.FixedText(detail), "课次与教室"))
-        .setCriticalMetric(if (countdownEnabled) 0 else Notification.MetricStyle.METRIC_INDEX_NONE)
 }
 
 /** 发一条 Live 通知（前台服务路径也走 buildLiveNotification）。 */
@@ -617,7 +507,7 @@ actual fun cancelLiveClass() {
     QingkeApp.app.getSystemService(NotificationManager::class.java)?.cancel(LIVE_ID)
 }
 
-// 有精确闹钟权限就精确推边沿；没给退回非精确（Doze 可能晚几分钟，倒计时照样走）。
+// 精确闹钟兜底分钟和阶段切换；非精确降级可能延迟，前台服务是主刷新通道。
 // 电池白名单另算：进设置页「后台保活」里点。
 actual fun scheduleLiveWake(atMillis: Long?) {
     if (!QingkeApp.ready()) return

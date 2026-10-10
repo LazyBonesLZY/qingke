@@ -4,7 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import cn.edu.gzus.qingke.data.cancelLiveClass
-import cn.edu.gzus.qingke.data.LIVE_STEP_MILLIS
+import cn.edu.gzus.qingke.data.liveTiming
 import cn.edu.gzus.qingke.data.liveNotice
 import cn.edu.gzus.qingke.data.nextLiveWake
 import cn.edu.gzus.qingke.data.notifyLiveClass
@@ -27,6 +27,7 @@ class LiveDismissReceiver : BroadcastReceiver() {
             .edit()
             .putString(LIVE_DISMISSED_KEY, key)
             .apply()
+        runLiveTick()
     }
 }
 
@@ -57,11 +58,12 @@ internal fun currentLiveParams(nowMs: Long): LiveParams? {
     val test = readLiveTestWindow()
     if (test != null && test.second > nowMs) {
         val (start, end) = test
+        val timing = liveTiming(nowMs, start, end) ?: return null
         return LiveParams(
-            title = "正在上课（测试）",
+            title = "课程提醒（测试）",
             detail = "3-4节 · 测试教室",
             progress = ((nowMs - start).toFloat() / (end - start).toFloat()).coerceIn(0f, 1f),
-            etaMinutes = ((end - nowMs) / 60_000L).toInt().coerceAtLeast(0),
+            etaMinutes = timing.remainingMinutes.toInt(),
             startMillis = start,
             endMillis = end,
             // 读不到存档时按默认值 true 处理，和 AppSettings 的默认值保持一致。
@@ -108,8 +110,8 @@ internal fun runLiveTick() {
             setLiveForeground(false)
             scheduleLiveWake(params.endMillis + 1_000L)
         } else {
-            val edge = if (nowMs < params.startMillis) params.startMillis else params.endMillis
-            scheduleLiveWake(minOf(nowMs + LIVE_STEP_MILLIS, edge + 1_000L))
+            val timing = liveTiming(nowMs, params.startMillis, params.endMillis)
+            scheduleLiveWake(timing?.let { nowMs + it.refreshDelayMillis })
         }
         return
     }

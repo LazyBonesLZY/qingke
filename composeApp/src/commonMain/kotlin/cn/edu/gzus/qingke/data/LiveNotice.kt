@@ -17,11 +17,7 @@ data class LiveNotice(
     val endMillis: Long,
 )
 
-/**
- * 后台两次推送的间隔。胶囊上的倒计时由系统计时器（when + Chronometer）自己走，
- * 不吃这个间隔；它管的是进度条插值、正文文案和 when 锚点的兜底刷新——真正
- * 要紧的是上下课边沿那一次（见 AppRepository.liveRefreshDelayMs）。
- */
+/** Minute countdown updates share one timing rule across the app, service and alarm. */
 internal const val LIVE_STEP_MILLIS = 60_000L
 
 /** 测试用的假课次窗口落盘用的键。 */
@@ -64,25 +60,22 @@ fun AppSnapshot.liveNotice(now: LocalDateTime, nowMs: Long): LiveNotice? {
     if (!settings.remindBeforeClass || slots.isEmpty()) return null
     val next = nextLiveLesson(slots, now.date, settings, now.date, now.time, scheduleAdjust, school.periodBlocks)
         ?: return null
-    if (!next.inClass && next.minutesToStart > settings.resolvedRemindLead()) return null
     val slot = next.slot
     // 这一节的作息未知时直接不弹：宁可没有提醒，也不能拿别的学校的作息在错的时间弹。
     if (!school.clockKnown(slot.period)) return null
     val startMillis = combineMillis(now.date, school.periodStartOf(slot.period))
     val endMillis = combineMillis(now.date, school.periodEndOf(slot.period))
-    if (startMillis <= 0L || endMillis <= startMillis) return null
-    val progress = when {
-        nowMs <= startMillis -> 0f
-        nowMs >= endMillis -> 1f
-        else -> ((nowMs - startMillis).toFloat() / (endMillis - startMillis).toFloat()).coerceIn(0f, 1f)
-    }
+    if (startMillis <= 0L) return null
+    val timing = liveTiming(nowMs, startMillis, endMillis) ?: return null
+    if (!timing.inClass && timing.remainingMillis > settings.resolvedRemindLead() * LIVE_STEP_MILLIS) return null
+    val progress = ((nowMs - startMillis).toFloat() / (endMillis - startMillis).toFloat()).coerceIn(0f, 1f)
     val period = periodText(slot.period, slot.periodLabel)
     val clock = school.clockRangeOf(slot.period).replace("-", "–")
     val room = slot.room.ifBlank { "教室待定" }
-    val eta = if (next.inClass) next.minutesToEnd else next.minutesToStart
+    val eta = timing.remainingMinutes.toInt()
     return LiveNotice(
         slot = slot,
-        inClass = next.inClass,
+        inClass = timing.inClass,
         title = slot.courseName,
         detail = listOf(period, clock, room).filter { it.isNotBlank() }.joinToString(" · "),
         progress = progress,
@@ -103,8 +96,8 @@ fun AppSnapshot.nextLiveWake(now: LocalDateTime, nowMs: Long): Long? {
     if (!settings.remindBeforeClass || slots.isEmpty()) return null
     val notice = liveNotice(now, nowMs)
     if (notice != null) {
-        val edge = if (notice.inClass) notice.endMillis else notice.startMillis
-        return minOf(nowMs + LIVE_STEP_MILLIS, edge + 1_000L).coerceAtLeast(nowMs + 1_000L)
+        val timing = liveTiming(nowMs, notice.startMillis, notice.endMillis) ?: return fallbackWake(now, nowMs, school)
+        return nowMs + timing.refreshDelayMillis
     }
     return fallbackWake(now, nowMs, school)
 }

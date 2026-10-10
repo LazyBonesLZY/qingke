@@ -39,6 +39,9 @@ jobs:
           keyPassword=${KEY_PASSWORD}
           EOF
 
+      - name: 回归测试
+        run: ./gradlew :composeApp:desktopTest --max-workers=2 -Dorg.gradle.java.home="$JAVA_HOME"
+
       - name: 打包
         run: |
           chmod +x ./gradlew

@@ -323,8 +323,7 @@ fun App() {
                     break
                 }
                 if (live || testing) {
-                    // 分钟边界与上下课边沿取较小值：只对齐分钟的话，上课那一刻
-                    // 到下一次分钟边界之间倒计时锚点还指着已过去的点，会显示负数。
+                    // 和后台服务共用剩余分钟边界，上课/下课时立即换状态。
                     delay(repo.liveRefreshDelayMs())
                 } else {
                     delay(60_000)

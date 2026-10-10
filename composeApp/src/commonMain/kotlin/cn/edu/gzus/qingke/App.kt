@@ -89,6 +89,8 @@ import cn.edu.gzus.qingke.ui.components.QingkePullRefresh
 import cn.edu.gzus.qingke.ui.components.QingkeSideRail
 import cn.edu.gzus.qingke.ui.components.QingkeWideFrame
 import cn.edu.gzus.qingke.ui.components.rememberQingkeBackdrop
+import cn.edu.gzus.qingke.ui.components.qingkeLayer
+import cn.edu.gzus.qingke.ui.blur.rememberCombinedBackdrop
 import cn.edu.gzus.qingke.ui.detail.CourseDetailScreen
 import cn.edu.gzus.qingke.ui.grades.GradesScreen
 import cn.edu.gzus.qingke.ui.hub.EmptyRoomScreen
@@ -137,6 +139,8 @@ fun App() {
     val backgroundImage = rememberQingkeBackgroundImage(bgSource)
     // 模糊底栏的采样图层，必须在 QingkeTheme 之前建好：主题会把背景画进这个图层。
     val backdrop = rememberQingkeBackdrop()
+    val pageBackdrop = rememberQingkeBackdrop()
+    val barBackdrop = rememberCombinedBackdrop(backdrop, pageBackdrop)
     QingkeTheme(
         settings = snapshot.settings,
         backgroundImage = backgroundImage,
@@ -399,7 +403,10 @@ fun App() {
             val logicalHeight = maxHeight * uiScale
             val wide = logicalWidth >= 840.dp ||
                 (logicalWidth >= 720.dp && logicalWidth > logicalHeight)
-            CompositionLocalProvider(LocalQingkeWide provides wide) {
+            CompositionLocalProvider(
+                LocalQingkeWide provides wide,
+                LocalQingkeFloatingBar provides snapshot.settings.floatingBottomBar,
+            ) {
             Row(Modifier.fillMaxSize()) {
             if (wide) {
                 QingkeSideRail(selected = nav.tab, onSelect = { nav.goTab(it) })
@@ -410,8 +417,7 @@ fun App() {
                     .fillMaxHeight()
                     .onSizeChanged { pageWidthPx = it.width.toFloat().coerceAtLeast(1f) },
             ) {
-        // 背景（壁纸 + scrim + 可读性底色）由 QingkeTheme 整屏画好，并同时作为模糊底栏的
-        // 采样图层——底栏要透出的是背景，不是一块纯色。
+        // The bar samples the root background plus page content, never the Scaffold/bar itself.
         Scaffold(
             modifier = Modifier
                 .fillMaxSize()
@@ -426,7 +432,7 @@ fun App() {
                     CompositionLocalProvider(LocalQingkeFloatingBar provides snapshot.settings.floatingBottomBar) {
                         QingkeBottomBar(
                             selected = nav.tab,
-                            backdrop = backdrop,
+                            backdrop = barBackdrop,
                             floating = snapshot.settings.floatingBottomBar,
                             blurEnabled = snapshot.settings.blurEnabled,
                             onSelect = { nav.goTab(it) },
@@ -436,7 +442,13 @@ fun App() {
             },
             snackbarHost = { SnackbarHost(state = snackbar) },
         ) { padding ->
-            Box(Modifier.fillMaxSize()) {
+            Box(
+                Modifier.fillMaxSize().then(
+                    if (snapshot.settings.blurEnabled && snapshot.settings.floatingBottomBar && !wide) {
+                        Modifier.qingkeLayer(pageBackdrop)
+                    } else Modifier,
+                ),
+            ) {
                 val pullSync: () -> Unit = {
                     if (!busy) {
                         runJob {

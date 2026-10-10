@@ -106,13 +106,13 @@ fun ThemeSettingsScreen(
             ) {
                 SwitchPreference(
                     title = "底栏模糊",
-                    summary = if (settings.blurEnabled) "悬浮底栏实时模糊后面的卡片和列表" else "关闭后使用清晰的纯色底栏",
+                    summary = if (settings.blurEnabled) "底栏对下层内容做实时模糊" else "关闭后底栏用半透明纯色",
                     checked = settings.blurEnabled,
                     onCheckedChange = { v -> onUpdate { it.copy(blurEnabled = v) } },
                 )
                 SwitchPreference(
                     title = "悬浮底栏",
-                    summary = if (settings.floatingBottomBar) "圆角胶囊悬浮在内容上方" else "贴底常驻，页面自动留出底栏空间",
+                    summary = if (settings.floatingBottomBar) "圆角胶囊悬浮在内容上方" else "贴底常驻，不占内容区",
                     checked = settings.floatingBottomBar,
                     onCheckedChange = { v -> onUpdate { it.copy(floatingBottomBar = v) } },
                 )

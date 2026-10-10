@@ -447,10 +447,11 @@ internal fun buildLiveNotification(
             .setColorized(false)
             .setWhen(timing.deadlineMillis)
             // 卡片自带秒级倒数计时器：SystemUI 渲染，进程冻结也照走，不耗电。
-            .setShowWhen(true)
-            .setUsesChronometer(true)
-            .setChronometerCountDown(true)
-            .setSubText(timing.countdownText)
+            // 倒计时开关关闭时不显示计时器，只显示状态文字。
+            .setShowWhen(countdownEnabled)
+            .setUsesChronometer(countdownEnabled)
+            .setChronometerCountDown(countdownEnabled)
+            .setSubText(if (countdownEnabled) timing.countdownText else timing.statusText)
             // All vendors use the same explicit minute text and native progress card.
             .setShortCriticalText(chipText)
             // Expire the old stage if both the service and alarm miss its boundary.
@@ -464,7 +465,7 @@ internal fun buildLiveNotification(
         .setContentTitle(title)
         .setContentText(detail)
         .setStyle(NotificationCompat.BigTextStyle().bigText(detail))
-        .setSubText(timing.countdownText)
+        .setSubText(if (countdownEnabled) timing.countdownText else timing.statusText)
         .setOngoing(true)
         .setOnlyAlertOnce(true)
         .setContentIntent(launch)
@@ -472,9 +473,9 @@ internal fun buildLiveNotification(
         .setCategory(NotificationCompat.CATEGORY_PROGRESS)
         .setSilent(true)
         .setWhen(timing.deadlineMillis)
-        .setShowWhen(true)
-        .setUsesChronometer(true)
-        .setChronometerCountDown(true)
+        .setShowWhen(countdownEnabled)
+        .setUsesChronometer(countdownEnabled)
+        .setChronometerCountDown(countdownEnabled)
         .setProgress(100, pct, false)
         .setColor(blue)
         .setTimeoutAfter(timing.remainingMillis)
@@ -535,15 +536,16 @@ actual fun scheduleLiveWake(atMillis: Long?) {
         alarms.cancel(pending)
         return
     }
-    // 精确闹钟是唯一可靠通道：ColorOS 对非精确闹钟施加 adjustment 策略，
-    // 实测能把投递推迟近 3 天。USE_EXACT_ALARM（manifest 声明、33+ 安装即
-    // 授予）让 setExactAndAllowWhileIdle 不看 canScheduleExactAlarms()——
-    // 后者查的是 SCHEDULE_EXACT_ALARM 那个 appop 位，部分 OEM 上谎报。
-    // 先无条件试精确（有 USE_EXACT_ALARM 时必成），抛异常才降级非精确。
-    val exactOk = runCatching {
-        alarms.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, atMillis, pending)
-    }.isSuccess
-    if (!exactOk) {
+    // 全部唤醒统一走 setAlarmClock：系统把每次触发都当闹钟事件处理——
+    // 即使 app 进缓存/被冻结也必达，并自动获得 Doze 豁免。课表类应用
+    // 每分钟一次的开销可接受，可靠性优先。
+    val scheduled = runCatching {
+        alarms.setAlarmClock(
+            android.app.AlarmManager.AlarmClockInfo(atMillis, pending),
+            pending,
+        )
+    }
+    if (scheduled.isFailure) {
         runCatching { alarms.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, atMillis, pending) }
     }
 }

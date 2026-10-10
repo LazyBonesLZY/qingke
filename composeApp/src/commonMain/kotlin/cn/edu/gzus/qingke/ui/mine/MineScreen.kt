@@ -929,11 +929,11 @@ private fun RemindBlock(
         )
         if (school.hasPeriodClock) {
             SwitchPreference(
-                title = "胶囊分钟倒计时",
+                title = "上下课倒计时",
                 summary = if (snapshot.settings.liveCountdownEnabled) {
-                    "显示距上课／下课 XX 分，由前台服务按分钟刷新"
+                    "胶囊显示剩余分钟，展开卡片秒级倒数"
                 } else {
-                    "胶囊只显示上课状态；展开卡片仍显示剩余分钟"
+                    "关闭全部倒计时，只显示上课状态"
                 },
                 checked = snapshot.settings.liveCountdownEnabled,
                 onCheckedChange = onToggleCountdown,

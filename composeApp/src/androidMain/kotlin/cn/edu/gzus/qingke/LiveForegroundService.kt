@@ -106,8 +106,9 @@ class LiveForegroundService : Service() {
                 val params = currentLiveParams(nowMs) ?: return
                 val timing = liveTiming(nowMs, params.startMillis, params.endMillis) ?: return
                 scheduleLiveWake(nowMs + timing.refreshDelayMillis)
-                // Bounded CPU lease: FGS alone does not keep coroutine timers awake on screen-off.
-                wakeLock?.acquire(minOf(params.endMillis - nowMs + 10_000L, 120_000L))
+                // 常驻保活：课程期间持续持有 CPU，delay() 不会被系统冻结。
+                // 上限=本节剩余时间（用户已确认接受常驻通知保活，导航类同款）。
+                wakeLock?.acquire(params.endMillis - nowMs + 10_000L)
                 delay(timing.refreshDelayMillis)
                 if (generation != runGeneration) return
                 val notification = currentNotification() ?: return

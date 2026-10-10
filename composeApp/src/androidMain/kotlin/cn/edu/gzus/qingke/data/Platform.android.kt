@@ -446,7 +446,10 @@ internal fun buildLiveNotification(
             .setColor(blue)
             .setColorized(false)
             .setWhen(timing.deadlineMillis)
-            .setShowWhen(false)
+            // 卡片自带秒级倒数计时器：SystemUI 渲染，进程冻结也照走，不耗电。
+            .setShowWhen(true)
+            .setUsesChronometer(true)
+            .setChronometerCountDown(true)
             .setSubText(timing.countdownText)
             // All vendors use the same explicit minute text and native progress card.
             .setShortCriticalText(chipText)
@@ -469,7 +472,9 @@ internal fun buildLiveNotification(
         .setCategory(NotificationCompat.CATEGORY_PROGRESS)
         .setSilent(true)
         .setWhen(timing.deadlineMillis)
-        .setShowWhen(false)
+        .setShowWhen(true)
+        .setUsesChronometer(true)
+        .setChronometerCountDown(true)
         .setProgress(100, pct, false)
         .setColor(blue)
         .setTimeoutAfter(timing.remainingMillis)

@@ -59,11 +59,11 @@ class GzusEcardClient(
         if (rows.isEmpty()) error("宿舍列表加载失败")
         val needle = foldRoomKey(q)
         return rows.asSequence()
-            .filter { it.matches(q) }
+            .filter { it.matches(q, needle) }
             .sortedWith(
                 compareBy(
-                    { foldRoomKey(it.roomName) != needle },
-                    { !foldRoomKey(it.roomName).startsWith(needle) },
+                    { it.foldedRoomName != needle },
+                    { !it.foldedRoomName.startsWith(needle) },
                     { it.display.length },
                 ),
             )
@@ -310,16 +310,26 @@ internal data class EcardRoomRow(
     val coldWater: String = "",
     val hotWater: String = "",
 ) {
+    // 宿舍表八千多行，每敲一个字都要整表过一遍。字段和折叠后的键每行只算一次。
+    private val searchFields: List<String> by lazy {
+        listOf(display, areaName, areaId, buildingName, buildingId, roomName, roomId)
+    }
+    private val foldedFields: List<String> by lazy {
+        searchFields.map(::foldRoomKey) + foldRoomKey(buildingName + roomName)
+    }
+    val foldedRoomName: String by lazy { foldRoomKey(roomName) }
+
     fun matches(query: String): Boolean {
         val q = query.trim()
+        return matches(q, foldRoomKey(q))
+    }
+
+    /** [needle] 是 foldRoomKey(q)，由调用方算一次传进来。 */
+    fun matches(q: String, needle: String): Boolean {
         if (q.isBlank()) return false
-        val fields = listOf(display, areaName, areaId, buildingName, buildingId, roomName, roomId)
-        if (fields.any { it.contains(q, ignoreCase = true) }) return true
-        val needle = foldRoomKey(q)
+        if (searchFields.any { it.contains(q, ignoreCase = true) }) return true
         if (needle.isBlank()) return false
-        return fields.any { foldRoomKey(it).contains(needle) } ||
-            foldRoomKey(buildingName + roomName).contains(needle) ||
-            foldRoomKey(display).contains(needle)
+        return foldedFields.any { it.contains(needle) }
     }
 
     fun matchesBind(bind: UtilityBind): Boolean = matchesRoomBind(

@@ -21,6 +21,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import cn.edu.gzus.qingke.EXTRA_LIVE_DEADLINE
 import cn.edu.gzus.qingke.EXTRA_LIVE_DISMISS
 import cn.edu.gzus.qingke.JwxtWebActivity
 import cn.edu.gzus.qingke.LIVE_DISMISSED_KEY
@@ -412,7 +413,9 @@ internal fun buildLiveNotification(
     val dismiss = PendingIntent.getBroadcast(
         ctx,
         LIVE_ID,
-        Intent(ctx, LiveDismissReceiver::class.java).putExtra(EXTRA_LIVE_DISMISS, key),
+        Intent(ctx, LiveDismissReceiver::class.java)
+            .putExtra(EXTRA_LIVE_DISMISS, key)
+            .putExtra(EXTRA_LIVE_DEADLINE, timing.deadlineMillis),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
     val blue = 0xFF3482FF.toInt()

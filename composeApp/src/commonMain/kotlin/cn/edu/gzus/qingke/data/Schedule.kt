@@ -734,6 +734,14 @@ private val CourseShortNames = listOf(
     "数字逻辑" to "数逻",
 )
 
+// 课名、教室缩写在课表每一格、每个小组件格子里都会调，正则只编译一次。
+private val FullWidthParens = Regex("（[^）]*）")
+private val HalfWidthParens = Regex("\\([^)]*\\)")
+private val TrailingOrdinal = Regex("[\\sIVXⅠ-Ⅻ一二三四五1-9]+$")
+private val AnyParens = Regex("[（(][^）)]*[）)]")
+private val RoomNumber = Regex("""\d+(?:-\d+)?""")
+private val ExamDate = Regex("""(\d{4})[-年./](\d{1,2})[-月./](\d{1,2})""")
+
 fun compactCourseName(
     name: String,
     aliases: Map<String, String> = emptyMap(),
@@ -745,11 +753,11 @@ fun compactCourseName(
     if (raw.isBlank()) return raw
     CourseShortNames.firstOrNull { raw.contains(it.first) }?.let { return it.second }
     var core = raw
-        .replace(Regex("（[^）]*）"), "")
-        .replace(Regex("\\([^)]*\\)"), "")
-        .replace(Regex("[\\sIVXⅠ-Ⅻ一二三四五1-9]+$"), "")
+        .replace(FullWidthParens, "")
+        .replace(HalfWidthParens, "")
+        .replace(TrailingOrdinal, "")
         .trim()
-    if (core.isBlank()) core = raw.replace(Regex("[（(][^）)]*[）)]"), "").trim()
+    if (core.isBlank()) core = raw.replace(AnyParens, "").trim()
     if (core.length <= 4) return core
     val parts = core.split("与", "及").map { it.trim() }.filter { it.isNotEmpty() }
     if (parts.size >= 2) {
@@ -778,9 +786,9 @@ fun compactRoomName(room: String, aliases: Map<String, String> = emptyMap()): St
     val raw = room.trim()
     if (raw.isBlank()) return raw
     aliases[raw]?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
-    val core = raw.replace(Regex("[（(][^）)]*[）)]"), "").trim()
+    val core = raw.replace(AnyParens, "").trim()
     if (core.length <= 8) return core
-    val house = Regex("""\d+(?:-\d+)?""").findAll(core).lastOrNull()
+    val house = RoomNumber.findAll(core).lastOrNull()
     if (house != null) {
         val cut = core.substring(0, house.range.last + 1).trim()
         if (cut.isNotBlank()) return cut
@@ -799,7 +807,7 @@ fun shortCourseName(
 }
 
 fun examSortKey(time: String): Long {
-    val match = Regex("""(\d{4})[-年./](\d{1,2})[-月./](\d{1,2})""").find(time) ?: return Long.MAX_VALUE
+    val match = ExamDate.find(time) ?: return Long.MAX_VALUE
     val year = match.groupValues[1].toIntOrNull() ?: return Long.MAX_VALUE
     val month = match.groupValues[2].toIntOrNull() ?: return Long.MAX_VALUE
     val day = match.groupValues[3].toIntOrNull() ?: return Long.MAX_VALUE

@@ -22,7 +22,7 @@ import android.util.TypedValue
 import android.widget.RemoteViews
 import cn.edu.gzus.qingke.MainActivity
 import cn.edu.gzus.qingke.data.periodStartOf
-import cn.edu.gzus.qingke.data.readStore
+import cn.edu.gzus.qingke.data.readSnapshotStore
 import cn.edu.gzus.qingke.data.periodEndOf
 import cn.edu.gzus.qingke.data.clockRangeOf
 import cn.edu.gzus.qingke.data.ResolvedSchool
@@ -50,7 +50,6 @@ import kotlinx.datetime.DatePeriod
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.minus
 import kotlinx.datetime.plus
-import kotlinx.serialization.json.Json
 
 enum class WidgetRange { Day, Week, Month, Square }
 
@@ -58,10 +57,8 @@ enum class WidgetStyle { Solid, Blur, Glass }
 
 object QingkeWidgets {
     private const val PREFS = "qingke_widgets"
-    private const val STORE = "qingke-snapshot.json"
     private val ACCENT = 0xFF3482FF.toInt()
     private const val MAX_WIDGET_PIXELS = 1_600_000L
-    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     fun styleOf(context: Context, id: Int): WidgetStyle {
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("style_$id", "solid")
@@ -102,29 +99,30 @@ object QingkeWidgets {
 
     fun refreshAll(context: Context) {
         val manager = AppWidgetManager.getInstance(context)
-        var any = false
-        listOf(
+        val targets = listOf(
             DayWidgetReceiver::class.java to WidgetRange.Day,
             WeekWidgetReceiver::class.java to WidgetRange.Week,
             MonthWidgetReceiver::class.java to WidgetRange.Month,
             SquareWidgetReceiver::class.java to WidgetRange.Square,
-        ).forEach { (cls, range) ->
-            manager.getAppWidgetIds(ComponentName(context, cls)).forEach { id ->
-                any = true
-                update(context, manager, id, range)
-            }
+        ).flatMap { (cls, range) ->
+            manager.getAppWidgetIds(ComponentName(context, cls)).map { id -> id to range }
         }
-        if (any) scheduleNextTick(context)
+        if (targets.isEmpty()) return
+        // 几个小组件读的是同一份存档，解析一次就够。以前每个小组件各解析一遍，
+        // 排闹钟再解析一遍，而这条路每次 onResume、每次课表变动都在主线程走。
+        val snap = snapshot(context)
+        targets.forEach { (id, range) -> update(context, manager, id, range, snap) }
+        scheduleNextTick(context, snap)
     }
 
     /**
      * 系统给小组件的自动刷新最快也就半小时一次，"上课中 / 下一节"会一直挂着过期的状态。
      * 所以自己在下一个上下课点再叫醒一次。用非精确闹钟，不要额外权限。
      */
-    fun scheduleNextTick(context: Context) {
+    fun scheduleNextTick(context: Context, snap: AppSnapshot = snapshot(context)) {
         runCatching {
             val alarms = context.getSystemService(AlarmManager::class.java) ?: return
-            val at = nextBoundaryMillis(snapshot(context).resolved()) ?: return
+            val at = nextBoundaryMillis(snap.resolved()) ?: return
             val intent = Intent(context, WidgetTickReceiver::class.java)
                 .setAction(ACTION_TICK)
             val pending = PendingIntent.getBroadcast(
@@ -158,10 +156,16 @@ object QingkeWidgets {
             .takeIf { it > nowMs }
     }
 
-    fun update(context: Context, manager: AppWidgetManager, id: Int, range: WidgetRange) {
+    fun update(
+        context: Context,
+        manager: AppWidgetManager,
+        id: Int,
+        range: WidgetRange,
+        snap: AppSnapshot = snapshot(context),
+    ) {
         val options = manager.getAppWidgetOptions(id)
         val (width, height) = widgetBitmapSize(context, options)
-        val bitmap = render(context, range, styleOf(context, id), width, height)
+        val bitmap = render(context, range, styleOf(context, id), width, height, snap)
         val views = RemoteViews(context.packageName, R.layout.qingke_widget)
         views.setInt(R.id.qingke_widget_root, "setBackgroundColor", Color.TRANSPARENT)
         views.setInt(R.id.qingke_widget_image, "setBackgroundColor", Color.TRANSPARENT)
@@ -215,11 +219,7 @@ object QingkeWidgets {
 
     private fun Float.roundToSize(): Int = toInt().coerceIn(160, 1600)
 
-    private fun snapshot(context: Context): AppSnapshot {
-        val text = readStore(STORE) ?: return AppSnapshot()
-        return runCatching { json.decodeFromString(AppSnapshot.serializer(), text) }
-            .getOrDefault(AppSnapshot())
-    }
+    internal fun snapshot(context: Context): AppSnapshot = readSnapshotStore() ?: AppSnapshot()
 
     private fun render(
         context: Context,
@@ -227,10 +227,10 @@ object QingkeWidgets {
         style: WidgetStyle,
         width: Int,
         height: Int,
+        snap: AppSnapshot,
     ): Bitmap {
         val dark = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
             Configuration.UI_MODE_NIGHT_YES
-        val snap = snapshot(context)
         val today = nowDateTime().date
         val week = resolvedCurrentWeek(snap.settings, today)
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
@@ -785,8 +785,9 @@ abstract class QingkeWidgetReceiver : AppWidgetProvider() {
     abstract val range: WidgetRange
 
     override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) {
-        ids.forEach { QingkeWidgets.update(context, manager, it, range) }
-        QingkeWidgets.scheduleNextTick(context)
+        val snap = QingkeWidgets.snapshot(context)
+        ids.forEach { QingkeWidgets.update(context, manager, it, range, snap) }
+        QingkeWidgets.scheduleNextTick(context, snap)
     }
 
     override fun onAppWidgetOptionsChanged(

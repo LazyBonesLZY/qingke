@@ -129,7 +129,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 @Composable
 fun App() {
-    val repo = remember { AppRepository() }
+    val repo = remember { AppRepository.shared }
     val snapshot by repo.state.collectAsState()
     val bgSource = when (snapshot.settings.backgroundMode) {
         BACKGROUND_WALLPAPER -> BACKGROUND_WALLPAPER

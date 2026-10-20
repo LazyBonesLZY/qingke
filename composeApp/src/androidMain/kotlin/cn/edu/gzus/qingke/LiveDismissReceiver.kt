@@ -18,15 +18,25 @@ import cn.edu.gzus.qingke.data.writeLiveTestWindow
 internal const val LIVE_PREFS = "qingke_live"
 internal const val LIVE_DISMISSED_KEY = "dismissed"
 internal const val EXTRA_LIVE_DISMISS = "dismiss_key"
+internal const val EXTRA_LIVE_DEADLINE = "dismiss_deadline"
+
+/** 离阶段截止这么近收到的 deleteIntent，当成系统超时撤下，不当成用户划掉。 */
+private const val LIVE_TIMEOUT_SLACK_MILLIS = 1_000L
 internal const val ACTION_LIVE_TICK = "cn.edu.gzus.qingke.LIVE_TICK"
 
 class LiveDismissReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val key = intent.getStringExtra(EXTRA_LIVE_DISMISS) ?: return
-        context.getSharedPreferences(LIVE_PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putString(LIVE_DISMISSED_KEY, key)
-            .apply()
+        // setTimeoutAfter 到点撤通知时系统也会发 deleteIntent。那是上课/下课的阶段切换，
+        // 不是用户划掉；当成划掉记下来，会把同一节课的「上课中」整节吞掉。
+        val deadline = intent.getLongExtra(EXTRA_LIVE_DEADLINE, 0L)
+        val timedOut = deadline > 0L && System.currentTimeMillis() >= deadline - LIVE_TIMEOUT_SLACK_MILLIS
+        if (!timedOut) {
+            context.getSharedPreferences(LIVE_PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putString(LIVE_DISMISSED_KEY, key)
+                .apply()
+        }
         runLiveTick()
     }
 }

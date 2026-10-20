@@ -19,7 +19,6 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -79,31 +78,68 @@ actual fun QingkeBackgroundPickerButton(
 @Composable
 actual fun rememberQingkeBackgroundImage(source: String): ImageBitmap? {
     val context = LocalContext.current
-    // source 变了要重读，壁纸类还得定时刷新（换壁纸/深潜/live wallpaper 都可能滞后）。
-    // tick 每 20s 触发一次 recomposition，配合 remember(source, tick) 让 bitmap 失效重载。
+    // source 变了要重读；壁纸还得盯着换没换（换壁纸/深潜/live wallpaper 都可能滞后）。
+    // 静态壁纸只在 id 变了时重读，以前每 20s 在主线程把整张壁纸重画一遍。
+    // 动态壁纸 id 不变但画面会变，拿不到 id 的机型也一样，这两种仍按 20s 重读。
     var tick by androidx.compose.runtime.remember { androidx.compose.runtime.mutableIntStateOf(0) }
     androidx.compose.runtime.LaunchedEffect(source) {
         if (source != BACKGROUND_WALLPAPER) return@LaunchedEffect
+        var lastId = wallpaperId(context)
         while (true) {
             kotlinx.coroutines.delay(20_000)
-            tick++
+            val id = wallpaperId(context)
+            if (id < 0 || id != lastId || isLiveWallpaper(context)) {
+                lastId = id
+                tick++
+            }
         }
     }
-    return remember(source, tick) {
-        runCatching {
-            val bitmap = when (source) {
-                BACKGROUND_WALLPAPER -> wallpaperBitmap(context)
-                else -> {
-                    val uri = Uri.parse(source)
-                    context.contentResolver.openInputStream(uri)?.use { input ->
-                        BitmapFactory.decodeStream(input)
-                    }
-                }
-            } ?: return@runCatching null
-            bitmap.asImageBitmap()
-        }.getOrNull()
+    // 解码放到 IO 线程：相册原图、整屏壁纸在主线程解要卡好几帧。重读期间先留着旧图。
+    val image by androidx.compose.runtime.produceState<ImageBitmap?>(null, source, tick) {
+        value = if (source.isBlank()) {
+            null
+        } else {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { loadBackground(context, source) }
+        }
     }
+    return image
 }
+
+private fun loadBackground(context: android.content.Context, source: String): ImageBitmap? =
+    runCatching {
+        val bitmap = when (source) {
+            BACKGROUND_WALLPAPER -> wallpaperBitmap(context)
+            else -> decodeSampled(context, Uri.parse(source))
+        } ?: return@runCatching null
+        bitmap.asImageBitmap()
+    }.getOrNull()
+
+/**
+ * 相册原图常有一两千万像素，原样解出来是几十 MB 的位图，老机器直接 OOM。
+ * 按屏幕降采样（2 的幂），解出来仍然盖得满整屏，横竖屏都够。
+ */
+private fun decodeSampled(context: android.content.Context, uri: Uri): Bitmap? {
+    val resolver = context.contentResolver
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+    val metrics = context.resources.displayMetrics
+    val needShort = minOf(metrics.widthPixels, metrics.heightPixels).coerceAtLeast(1)
+    val needLong = maxOf(metrics.widthPixels, metrics.heightPixels).coerceAtLeast(1)
+    val haveShort = minOf(bounds.outWidth, bounds.outHeight)
+    val haveLong = maxOf(bounds.outWidth, bounds.outHeight)
+    var sample = 1
+    while (haveShort / (sample * 2) >= needShort && haveLong / (sample * 2) >= needLong) sample *= 2
+    val options = BitmapFactory.Options().apply { inSampleSize = sample }
+    return resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+}
+
+private fun wallpaperId(context: android.content.Context): Int =
+    runCatching {
+        WallpaperManager.getInstance(context).getWallpaperId(WallpaperManager.FLAG_SYSTEM)
+    }.getOrDefault(-1)
+
+private fun isLiveWallpaper(context: android.content.Context): Boolean =
+    runCatching { WallpaperManager.getInstance(context).wallpaperInfo != null }.getOrDefault(false)
 
 private fun wallpaperBitmap(context: android.content.Context): Bitmap? {
     val manager = WallpaperManager.getInstance(context)

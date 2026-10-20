@@ -17,6 +17,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -69,17 +70,7 @@ fun TodayScreen(
 ) {
     // 首页显示的是「下一节还有几分钟」「还剩几分」和上课进度，必须自己按时间重算。
     // 以前 now 只在 composition 时取一次，整屏就冻住了（切 tab 或跨天才刷新）。
-    // 秒级 delay 驱动，避免持续申请每个 vsync 帧。
     var tick by remember { mutableIntStateOf(0) }
-    LaunchedEffect(Unit) {
-        while (isActive) {
-            // 按整秒对齐的 delay，而不是 withFrameNanos：帧时钟循环会让
-            // BroadcastFrameClock.hasAwaiters 恒真，前台每个 vsync 都产一帧，
-            // App 永不 idle（实测 hasInvalidations 恒 true）。delay 只唤醒一次。
-            delay(1_000L - Clock.System.now().toEpochMilliseconds() % 1_000L)
-            tick++
-        }
-    }
     // 从后台切回来立刻推一次：帧时钟在后台是停的，回来虽然也会自己推进，
     // 但显式再推一次能保证第一帧就是当前时间，不会闪一下旧数据。
     QingkeOnResume { tick++ }
@@ -111,6 +102,18 @@ fun TodayScreen(
     val nowMs = remember(tick) { Clock.System.now().toEpochMilliseconds() }
     val timing = if (hasClock && hero != null) liveTiming(nowMs, startMillis, endMillis) else null
     val inClass = timing?.inClass == true
+    // 页面上没有秒：分钟文案、问候语、日期都只在整分钟变（作息都是整分钟），
+    // 只有上课进度条要更细，上课时每 10 秒推一次就够看。以前每秒整页重组。
+    // 用对齐的 delay 而不是 withFrameNanos：帧时钟循环会让前台每个 vsync 都产一帧。
+    val inClassNow by rememberUpdatedState(inClass)
+    LaunchedEffect(Unit) {
+        while (isActive) {
+            val ms = Clock.System.now().toEpochMilliseconds()
+            val step = if (inClassNow) 10_000L else 60_000L
+            delay(step - ms % step)
+            tick++
+        }
+    }
     val progress = when {
         !inClass || endMillis <= startMillis -> 0f
         nowMs <= startMillis -> 0f

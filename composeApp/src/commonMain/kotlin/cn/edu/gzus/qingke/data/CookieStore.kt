@@ -5,6 +5,7 @@ import io.ktor.http.Cookie
 import io.ktor.http.Url
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.datetime.Clock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -59,9 +60,14 @@ class PersistCookieStorage : CookiesStorage {
         mutex.withLock {
             val domain = cookie.domain ?: requestUrl.host
             val path = cookie.path ?: "/"
-            val next = cookies.filterNot {
+            val rest = cookies.filterNot {
                 it.name == cookie.name && it.domain == domain && it.path == path
-            } + CookieRow(cookie.name, cookie.value, domain, path)
+            }
+            // Max-Age=0 或过期时间已过，是服务端在删 cookie（退出、换会话）。
+            // 照浏览器的规矩删掉，不要存成空值再带回去。
+            val next = if (cookie.isDeletion()) rest else rest + CookieRow(cookie.name, cookie.value, domain, path)
+            // 跳转链里同一个 cookie 常被原样重发；结果没变就别整份重写文件。
+            if (next == cookies) return@withLock
             cookies = next
             persist(next)
         }
@@ -102,6 +108,13 @@ class PersistCookieStorage : CookiesStorage {
     companion object {
         val shared = PersistCookieStorage()
     }
+}
+
+private fun Cookie.isDeletion(): Boolean {
+    val age = maxAge
+    if (age != null && age <= 0) return true
+    val at = expires ?: return false
+    return at.timestamp <= Clock.System.now().toEpochMilliseconds()
 }
 
 private fun matches(host: String, domain: String): Boolean {

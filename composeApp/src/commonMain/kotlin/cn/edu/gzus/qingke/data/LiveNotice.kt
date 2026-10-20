@@ -41,14 +41,30 @@ internal fun writeLiveTestWindow(start: Long, end: Long) {
 
 private val snapshotJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
-/** 应用没开时后台闹钟用：直接读存档，读不到就当没有课表。 */
+/**
+ * 前台最近一次 commit 的快照。前台服务、闹钟、小组件和 AppRepository 在同一个进程，
+ * 直接读这份：既不用等后台写盘，也不用每分钟把整份存档再解析一遍。
+ * 进程是被闹钟冷启动的（没建 AppRepository）时为 null，退回读盘。
+ */
+@Volatile
+internal var committedSnapshot: AppSnapshot? = null
+
+/** 上次读盘解析的结果和原文：文件没变就不再解析。 */
+@Volatile
+private var parsedStore: Pair<String, AppSnapshot>? = null
+
+/** 后台闹钟、前台服务、小组件用：优先读内存里的最新快照，没有再读存档，读不到就当没有课表。 */
 internal fun readSnapshotStore(): AppSnapshot? {
+    committedSnapshot?.let { return it }
     val text = readStore(STORE) ?: return null
+    parsedStore?.let { (raw, snapshot) -> if (raw == text) return snapshot }
     val parsed = runCatching { snapshotJson.decodeFromString(AppSnapshot.serializer(), text) }.getOrNull()
         ?: return null
     // 后台只规范化内存态，不把旧快照整份写回，避免覆盖前台并发保存的新课表或设置。
     // 应用前台创建 AppRepository 时会负责一次性落盘迁移结果。
-    return parsed.withLiveCountdownMigration()
+    val migrated = parsed.withLiveCountdownMigration()
+    parsedStore = text to migrated
+    return migrated
 }
 
 /** 现在该挂哪条上课通知；不该挂就返回 null。应用里的循环和后台闹钟共用这一份判断。 */

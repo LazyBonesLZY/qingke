@@ -4,8 +4,10 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
@@ -13,6 +15,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import cn.edu.gzus.qingke.data.LIVE_CHANNEL
 import cn.edu.gzus.qingke.data.LIVE_ID
+import cn.edu.gzus.qingke.data.LIVE_STEP_MILLIS
 import cn.edu.gzus.qingke.data.buildLiveNotification
 import cn.edu.gzus.qingke.data.liveTiming
 import cn.edu.gzus.qingke.data.nextLiveWake
@@ -40,6 +43,26 @@ class LiveForegroundService : Service() {
         getSystemService(PowerManager::class.java)?.newWakeLock(
             PowerManager.PARTIAL_WAKE_LOCK, "$packageName:live",
         )?.apply { setReferenceCounted(false) }
+    }
+
+    // 灭屏后 CPU 会睡，主线程 delay 按 uptime 计也跟着停。亮屏立刻重推一次，
+    // 胶囊和卡片上的分钟数不会在用户看的时候慢一拍。
+    private val screenOn = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            sync(context, true)
+        }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        runCatching {
+            ContextCompat.registerReceiver(
+                this,
+                screenOn,
+                IntentFilter(Intent.ACTION_SCREEN_ON),
+                ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
+        }.onFailure { Log.w(TAG, "Register screen-on receiver failed", it) }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -105,10 +128,16 @@ class LiveForegroundService : Service() {
                 val nowMs = System.currentTimeMillis()
                 val params = currentLiveParams(nowMs) ?: return
                 val timing = liveTiming(nowMs, params.startMillis, params.endMillis) ?: return
-                scheduleLiveWake(nowMs + timing.refreshDelayMillis)
-                // 常驻保活：课程期间持续持有 CPU，delay() 不会被系统冻结。
-                // 上限=本节剩余时间（用户已确认接受常驻通知保活，导航类同款）。
-                wakeLock?.acquire(params.endMillis - nowMs + 10_000L)
+                // 系统闹钟只在上课/下课那一刻叫醒（灭屏睡着、服务被杀时的兜底）。
+                // 平时的分钟文案由这个循环推，秒级倒数是系统计时器自己走，都不用一直占着 CPU；
+                // 以前整节课持锁加每分钟一次闹钟，是上课期间最耗电的地方。
+                scheduleLiveWake(timing.deadlineMillis)
+                // 只在离上下课不到两分钟时拿 CPU：保证正好在边沿换阶段，倒数不会走成负数。
+                if (timing.remainingMillis <= EDGE_HOLD_MILLIS) {
+                    wakeLock?.acquire(timing.remainingMillis + 10_000L)
+                } else {
+                    releaseWakeLock()
+                }
                 delay(timing.refreshDelayMillis)
                 if (generation != runGeneration) return
                 val notification = currentNotification() ?: return
@@ -149,6 +178,7 @@ class LiveForegroundService : Service() {
     }
 
     override fun onDestroy() {
+        runCatching { unregisterReceiver(screenOn) }
         ++generation
         loopJob?.cancel()
         scope.cancel()
@@ -158,6 +188,7 @@ class LiveForegroundService : Service() {
 
     companion object {
         private const val TAG = "QingkeLive"
+        private const val EDGE_HOLD_MILLIS = 2 * LIVE_STEP_MILLIS
 
         fun sync(context: Context, active: Boolean) {
             val intent = Intent(context, LiveForegroundService::class.java)

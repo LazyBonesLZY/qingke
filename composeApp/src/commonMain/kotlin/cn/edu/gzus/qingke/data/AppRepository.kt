@@ -1,6 +1,11 @@
 package cn.edu.gzus.qingke.data
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -109,15 +114,30 @@ class AppRepository(
     private var widgetSignature = 0
     private val syncLock = Mutex()
 
-    private fun persist(snapshot: AppSnapshot) {
-        writeStore(STORE, json.encodeToString(AppSnapshot.serializer(), snapshot))
-        // 一次同步会 commit 四五回，但小组件只看课表那几样。
-        // 没变就别重画，不然每次都是几张整屏位图。
-        val signature = snapshot.widgetSignature()
-        if (signature != widgetSignature) {
-            widgetSignature = signature
-            refreshHomeWidgets()
+    // 落盘放到后台：编码整份快照再加 AtomicFile 的 fsync，以前每次 commit 都在主线程做，
+    // 一次同步四五回。CONFLATED：连着几次 commit 只写最后一份。
+    private val pendingWrites = Channel<AppSnapshot>(Channel.CONFLATED)
+
+    init {
+        committedSnapshot = _state.value
+        CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
+            for (snapshot in pendingWrites) {
+                runCatching { writeStore(STORE, json.encodeToString(AppSnapshot.serializer(), snapshot)) }
+                // 一次同步会 commit 四五回，但小组件只看课表那几样。
+                // 没变就别重画，不然每次都是几张整屏位图。
+                val signature = snapshot.widgetSignature()
+                if (signature != widgetSignature) {
+                    widgetSignature = signature
+                    runCatching { refreshHomeWidgets() }
+                }
+            }
         }
+    }
+
+    private fun persist(snapshot: AppSnapshot) {
+        // 先放进内存：同进程里的前台服务、闹钟和小组件直接读这一份，不用等文件写完。
+        committedSnapshot = snapshot
+        pendingWrites.trySend(snapshot)
     }
 
     private fun commit(transform: (AppSnapshot) -> AppSnapshot) {
@@ -1089,6 +1109,15 @@ class AppRepository(
             scheduleLiveWake(notice.endMillis + 1_000L)
         }
         return posted
+    }
+
+    companion object {
+        /**
+         * 整个进程共用一份。Activity 随旋转、深色模式切换重建时，不该在主线程
+         * 重读整份存档，也不该再建一套 HTTP 客户端（旧的那套没人关），
+         * 门户票据的内存缓存和保活时间戳也不该跟着丢。
+         */
+        val shared: AppRepository by lazy { AppRepository() }
     }
 
     private fun coursePickTaskOf(offer: CoursePickOffer, section: CoursePickSection): CoursePickTask {

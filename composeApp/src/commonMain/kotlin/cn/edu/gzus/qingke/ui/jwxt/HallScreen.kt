@@ -10,7 +10,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import cn.edu.gzus.qingke.data.AppSnapshot
 import cn.edu.gzus.qingke.data.GZUS_EHALL_HOME
 import cn.edu.gzus.qingke.data.GZUS_EHALL_MESSAGE
@@ -22,9 +21,12 @@ import cn.edu.gzus.qingke.nav.QingkeNavigator
 import cn.edu.gzus.qingke.nav.Route
 import cn.edu.gzus.qingke.nav.TabDest
 import cn.edu.gzus.qingke.ui.components.BadgeTone
-import cn.edu.gzus.qingke.ui.components.InfoCard
+import cn.edu.gzus.qingke.ui.components.EmptyState
+import cn.edu.gzus.qingke.ui.components.Inset
 import cn.edu.gzus.qingke.ui.components.ListGroup
 import cn.edu.gzus.qingke.ui.components.ListRow
+import cn.edu.gzus.qingke.ui.components.Space
+import cn.edu.gzus.qingke.ui.components.Tone
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -42,16 +44,16 @@ fun HallScreen(
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(contentPadding)
-            .padding(bottom = 24.dp),
+            .padding(bottom = Space.xl),
     ) {
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(Space.s))
         Text(
             "广软事务中心的待办、消息和办事。",
-            modifier = Modifier.padding(horizontal = 16.dp),
-            color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+            modifier = Modifier.padding(horizontal = Inset.page),
+            color = Tone.muted(),
             style = MiuixTheme.textStyles.body2,
         )
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(Space.m))
         // 请假入口和最近几条申请放一组，不再每条一张大卡
         ListGroup(
             buildList {
@@ -69,36 +71,34 @@ fun HallScreen(
                 }
             },
         )
+        // 不能同步时统一用空状态：一句结论 + 原因 + 去处理的按钮
         when {
             !cas -> {
-                Spacer(Modifier.height(12.dp))
-                InfoCard(
+                Spacer(Modifier.height(Space.m))
+                EmptyState(
                     title = "还不能同步大厅",
-                    summary = "「我的」里把广软登录渠道换成统一身份认证，再登录一次。",
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    height = null,
-                    onClick = { nav.goTab(TabDest.Mine) },
+                    detail = "「我的」里把广软登录渠道换成统一身份认证，再登录一次。",
+                    actionText = "去切换",
+                    onAction = { nav.goTab(TabDest.Mine) },
                 )
             }
             !snapshot.session.loggedIn -> {
-                Spacer(Modifier.height(12.dp))
-                InfoCard(
+                Spacer(Modifier.height(Space.m))
+                EmptyState(
                     title = "还没有大厅数据",
-                    summary = "用统一身份认证登录后，待办、消息和办事会同步到这里。",
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    height = null,
-                    onClick = { nav.goTab(TabDest.Mine) },
+                    detail = "用统一身份认证登录后，待办、消息和办事会同步到这里。",
+                    actionText = "去登录",
+                    onAction = { nav.goTab(TabDest.Mine) },
                 )
             }
             hall.error.isNotBlank() && !hall.ready -> {
-                Spacer(Modifier.height(12.dp))
-                // 错误原文可能很长，固定高度的卡会把它压成跑马灯；改成自适应高度
-                InfoCard(
+                Spacer(Modifier.height(Space.m))
+                // 错误原文可能很长：空状态卡按内容自适应高度，再截一下，免得一屏都是报错
+                EmptyState(
                     title = "大厅这次没同步上",
-                    summary = hall.error + "\n去「我的」重新登录后再同步",
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    height = null,
-                    onClick = { nav.goTab(TabDest.Mine) },
+                    detail = hall.error.trim().take(120),
+                    actionText = "重新登录",
+                    onAction = { nav.goTab(TabDest.Mine) },
                 )
             }
         }
@@ -171,13 +171,13 @@ fun HallScreen(
     }
 }
 
-/** 空分组只占一行小字，不再用 88dp 的空卡把真正有内容的分组挤到屏幕外。 */
+/** 空分组只占一行小字，不再用 88dp 的空卡把真正有内容的分组挤到屏幕外；左边和卡片里的文字对齐。 */
 @Composable
 private fun EmptyLine(text: String) {
     Text(
         text,
-        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
-        color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+        modifier = Modifier.padding(horizontal = Inset.page + Space.l, vertical = Space.xs),
+        color = Tone.muted(),
         style = MiuixTheme.textStyles.footnote1,
     )
 }

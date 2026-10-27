@@ -1,38 +1,35 @@
 package cn.edu.gzus.qingke.ui.grades
 
-import top.yukonga.miuix.kmp.utils.PressFeedbackType
-import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.Card
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.draw.clip
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cn.edu.gzus.qingke.data.AppSnapshot
 import cn.edu.gzus.qingke.data.GradeItem
-import cn.edu.gzus.qingke.data.gradeTermKey
-import cn.edu.gzus.qingke.data.numericScore
 import cn.edu.gzus.qingke.data.currentTermKey
 import cn.edu.gzus.qingke.data.formatGpa
-import cn.edu.gzus.qingke.data.inTerm
-import cn.edu.gzus.qingke.data.resolved
 import cn.edu.gzus.qingke.data.formatScore
+import cn.edu.gzus.qingke.data.gradeTermKey
+import cn.edu.gzus.qingke.data.inTerm
+import cn.edu.gzus.qingke.data.numericScore
+import cn.edu.gzus.qingke.data.resolved
 import cn.edu.gzus.qingke.data.resolvedGpa
 import cn.edu.gzus.qingke.data.summarizeGpa
 import cn.edu.gzus.qingke.data.uniqueCourses
@@ -40,13 +37,23 @@ import cn.edu.gzus.qingke.nav.QingkeNavigator
 import cn.edu.gzus.qingke.nav.Route
 import cn.edu.gzus.qingke.nav.TabDest
 import cn.edu.gzus.qingke.ui.components.BadgeTone
-import cn.edu.gzus.qingke.ui.components.InfoCard
+import cn.edu.gzus.qingke.ui.components.EmptyState
+import cn.edu.gzus.qingke.ui.components.Inset
 import cn.edu.gzus.qingke.ui.components.ListGroup
 import cn.edu.gzus.qingke.ui.components.ListRow
+import cn.edu.gzus.qingke.ui.components.Radius
 import cn.edu.gzus.qingke.ui.components.ScreenHeader
+import cn.edu.gzus.qingke.ui.components.Space
 import cn.edu.gzus.qingke.ui.components.StatRow
+import cn.edu.gzus.qingke.ui.components.StatusTag
+import cn.edu.gzus.qingke.ui.components.Tone
+import cn.edu.gzus.qingke.ui.components.Type
 import cn.edu.gzus.qingke.ui.components.tabPagePadding
+import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.SmallTitle
+import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.utils.PressFeedbackType
 
 @Composable
 fun GradesScreen(
@@ -69,6 +76,8 @@ fun GradesScreen(
     val termGpa = remember(termGrades) { summarizeGpa(termGrades) }
     val progress = if (planned <= 0.0) null else (termGpa.credits / planned).toFloat().coerceIn(0f, 1f)
     val jwxt = snapshot.resolved().jwxtName
+    val loggedIn = snapshot.session.loggedIn
+    val goLogin: () -> Unit = { nav.goTab(TabDest.Mine) }
 
     Column(
         modifier = Modifier
@@ -76,24 +85,24 @@ fun GradesScreen(
             .verticalScroll(rememberScrollState())
             .padding(tabPagePadding(contentPadding)),
     ) {
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(Space.l))
         ScreenHeader(
             "",
             "成绩",
             when {
                 snapshot.grades.isNotEmpty() -> "绩点按学分加权"
-                snapshot.session.loggedIn -> "出分后自动同步"
+                loggedIn -> "出分后自动同步"
                 else -> "登录后同步"
             },
         )
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(Space.m))
         GpaHero(
-            value = gpa.weighted?.let { formatGpa(it) } ?: "—",
+            value = gpa.weighted?.let { formatGpa(it) },
             summary = when {
                 gpa.counted > 0 -> "已计 ${gpa.counted} 门 · ${formatScore(gpa.credits)} 学分"
                 planned > 0.0 -> "本学期 ${formatScore(planned)} 学分，出分后统计"
-                snapshot.session.loggedIn -> "${jwxt}还没有成绩"
-                else -> "去「我的」登录${jwxt}"
+                loggedIn -> "${jwxt}还没有成绩"
+                else -> "登录${jwxt}后同步成绩"
             },
             progress = progress,
             progressLabel = if (planned > 0.0) {
@@ -101,13 +110,10 @@ fun GradesScreen(
             } else {
                 ""
             },
-            onClick = if (!snapshot.session.loggedIn) {
-                { nav.goTab(TabDest.Mine) }
-            } else {
-                null
-            },
+            actionText = if (!loggedIn) "去登录" else "",
+            onClick = if (!loggedIn) goLogin else null,
         )
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(Space.s))
         StatRow(
             items = listOf(
                 (termGpa.weighted?.let { formatGpa(it) } ?: "—") to "本学期绩点",
@@ -117,12 +123,17 @@ fun GradesScreen(
             ),
             onClicks = emptyList(),
         )
-        SmallTitle(text = "本学期")
         if (courses.isEmpty()) {
-            InfoCard(
-                title = "还没有课程",
-                summary = "同步课表后会列在这里",
-                modifier = Modifier.padding(horizontal = 16.dp),
+            SmallTitle(text = "本学期")
+            EmptyState(
+                title = "本学期还没有课程",
+                detail = if (loggedIn) "同步课表后，这学期的课和出分进度会列在这里" else "登录${jwxt}后同步课表和成绩",
+                actionText = if (loggedIn) "去课表" else "去登录",
+                onAction = if (loggedIn) {
+                    { nav.goTab(TabDest.Timetable) }
+                } else {
+                    goLogin
+                },
             )
         } else {
             // 重修 / 补考会有多条：显示最好的那次，和绩点统计的取法一致。
@@ -133,6 +144,8 @@ fun GradesScreen(
                         .maxByOrNull { it.resolvedGpa() ?: -1.0 }
                 }
                 .sortedBy { (_, grade) -> if (grade?.score?.isNotBlank() == true) 0 else 1 }
+            val out = termRows.count { (_, grade) -> grade?.score?.isNotBlank() == true }
+            SmallTitle(text = "本学期 · 已出分 $out/${termRows.size} 门")
             ListGroup(
                 rows = termRows.map { (course, grade) ->
                     val shown = grade?.takeIf { it.score.isNotBlank() }
@@ -153,10 +166,13 @@ fun GradesScreen(
         }
         if (scored.isEmpty()) {
             SmallTitle(text = "全部成绩")
-            InfoCard(
-                title = "还没有绩点",
-                summary = "同步成绩后按学期列出分数和绩点",
-                modifier = Modifier.padding(horizontal = 16.dp),
+            // 没登录且上面已经有「去登录」时，这里不再重复放同一个按钮。
+            val showLogin = !loggedIn && courses.isNotEmpty()
+            EmptyState(
+                title = "还没有成绩",
+                detail = if (loggedIn) "${jwxt}出分后按学期列出分数和绩点" else "登录后按学期列出分数和绩点",
+                actionText = if (showLogin) "去登录" else "",
+                onAction = if (showLogin) goLogin else null,
             )
         } else {
             // 按学期分组，新学期在前；学期认不出来的归到最后一组，组内保持教务原顺序。
@@ -180,7 +196,7 @@ fun GradesScreen(
                 ListGroup(
                     rows = items.map { item ->
                         ListRow(
-                            title = item.courseName.ifBlank { item.courseId },
+                            title = item.courseName.ifBlank { item.courseId.ifBlank { "未命名课程" } },
                             summary = listOfNotNull(
                                 item.resolvedGpa()?.let { "绩点 ${formatGpa(it)}" },
                                 item.credit.takeIf { it.isNotBlank() }?.let { "$it 学分" },
@@ -199,13 +215,13 @@ fun GradesScreen(
             ListGroup(
                 rows = snapshot.practices.map { item ->
                     ListRow(
-                        title = item.name,
+                        title = item.name.ifBlank { "未命名实践" },
                         summary = listOf(item.weeks, item.teacher, item.note).filter { it.isNotBlank() }.joinToString(" · "),
                     )
                 },
             )
         }
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(Space.xl))
     }
 }
 
@@ -223,50 +239,69 @@ private fun scoreTone(item: GradeItem): BadgeTone {
     }
 }
 
-/** 成绩页头卡：绩点放大到一眼能看到，下面是统计口径和本学期学分进度。 */
+/** 绩点进度条的粗细：比列表分割线醒目，又不抢大数字。 */
+private val ProgressHeight = 6.dp
+
+/** 成绩页头卡：绩点放大到一眼能看到，下面是统计口径和本学期学分进度。没登录时右上角给「去登录」。 */
 @Composable
 private fun GpaHero(
-    value: String,
+    value: String?,
     summary: String,
     progress: Float?,
     progressLabel: String,
+    actionText: String,
     onClick: (() -> Unit)?,
 ) {
+    val muted = Tone.muted()
+    val primary = MiuixTheme.colorScheme.primary
     Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        insideMargin = PaddingValues(horizontal = 18.dp, vertical = 16.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = Inset.page),
+        insideMargin = Inset.card,
         pressFeedbackType = if (onClick != null) PressFeedbackType.Sink else PressFeedbackType.None,
         onClick = onClick,
     ) {
-        Text("学分绩点", style = MiuixTheme.textStyles.footnote1, color = MiuixTheme.colorScheme.onSurfaceContainerVariant)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("学分绩点", modifier = Modifier.weight(1f), style = MiuixTheme.textStyles.footnote1, color = muted)
+            if (actionText.isNotBlank()) StatusTag(actionText)
+        }
+        Spacer(Modifier.height(Space.xs))
+        // 还没有绩点时用弱色破折号，别拿主题色去强调一个空值。
         Text(
-            value,
-            fontSize = 40.sp,
-            lineHeight = 46.sp,
-            fontWeight = FontWeight.Bold,
-            color = MiuixTheme.colorScheme.primary,
+            value ?: "—",
+            fontSize = Type.display,
+            lineHeight = Type.displayLine,
+            fontWeight = FontWeight.SemiBold,
+            color = if (value != null) primary else muted,
+            maxLines = 1,
         )
-        Text(summary, style = MiuixTheme.textStyles.body2, color = MiuixTheme.colorScheme.onSurfaceContainerVariant)
+        Spacer(Modifier.height(Space.xs))
+        Text(summary, style = MiuixTheme.textStyles.body2, color = muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
         if (progress != null) {
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(Space.m))
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .height(6.dp)
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(MiuixTheme.colorScheme.primary.copy(alpha = 0.16f)),
+                    .height(ProgressHeight)
+                    .clip(Radius.pill)
+                    .background(primary.copy(alpha = 0.16f)),
             ) {
                 Box(
                     Modifier
                         .fillMaxHeight()
                         .fillMaxWidth(progress)
-                        .clip(RoundedCornerShape(3.dp))
-                        .background(MiuixTheme.colorScheme.primary),
+                        .clip(Radius.pill)
+                        .background(primary),
                 )
             }
             if (progressLabel.isNotBlank()) {
-                Spacer(Modifier.height(6.dp))
-                Text(progressLabel, style = MiuixTheme.textStyles.footnote1, color = MiuixTheme.colorScheme.onSurfaceContainerVariant)
+                Spacer(Modifier.height(Space.s))
+                Text(
+                    progressLabel,
+                    style = MiuixTheme.textStyles.footnote1,
+                    color = muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }

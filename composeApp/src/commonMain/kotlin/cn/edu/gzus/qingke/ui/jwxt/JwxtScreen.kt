@@ -12,9 +12,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.text.style.TextOverflow
 import cn.edu.gzus.qingke.data.AppSnapshot
 import cn.edu.gzus.qingke.data.coursePickBrief
 import cn.edu.gzus.qingke.data.isLow
@@ -28,14 +28,17 @@ import cn.edu.gzus.qingke.nav.QingkeNavigator
 import cn.edu.gzus.qingke.nav.Route
 import cn.edu.gzus.qingke.nav.TabDest
 import cn.edu.gzus.qingke.ui.components.BadgeTone
-import cn.edu.gzus.qingke.ui.components.InfoCard
+import cn.edu.gzus.qingke.ui.components.ConfirmDialog
+import cn.edu.gzus.qingke.ui.components.EmptyState
+import cn.edu.gzus.qingke.ui.components.Inset
 import cn.edu.gzus.qingke.ui.components.ListGroup
 import cn.edu.gzus.qingke.ui.components.ListRow
 import cn.edu.gzus.qingke.ui.components.ScreenHeader
+import cn.edu.gzus.qingke.ui.components.Space
+import cn.edu.gzus.qingke.ui.components.Tone
 import cn.edu.gzus.qingke.ui.components.tabPagePadding
-import top.yukonga.miuix.kmp.basic.Button
-import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
+import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -55,19 +58,19 @@ fun JwxtScreen(
             .verticalScroll(rememberScrollState())
             .padding(tabPagePadding(contentPadding)),
     ) {
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(Space.l))
         ScreenHeader(
             "",
             "服务",
             if (snapshot.session.loggedIn) "" else "多数功能要先登录",
         )
         if (!snapshot.session.loggedIn && !snapshot.hasTimetable) {
-            Spacer(Modifier.height(12.dp))
-            InfoCard(
+            Spacer(Modifier.height(Space.m))
+            EmptyState(
                 title = "还没有服务数据",
-                summary = "去「我的」登录$jwxt。",
-                modifier = Modifier.padding(horizontal = 16.dp),
-                onClick = { nav.goTab(TabDest.Mine) },
+                detail = "登录${jwxt}后，考试、通知和选课会同步到这里。",
+                actionText = "去登录",
+                onAction = { nav.goTab(TabDest.Mine) },
             )
         }
         if (snapshot.showsGzusHall()) {
@@ -86,7 +89,7 @@ fun JwxtScreen(
                         title = "宿舍水电",
                         summary = snapshot.utilityBrief(),
                         badge = if (snapshot.utility.isLow()) "该充值了" else "",
-                        tone = BadgeTone.Warn,
+                        tone = if (snapshot.utility.isLow()) BadgeTone.Warn else BadgeTone.Neutral,
                         onClick = { nav.open(Route.Utility) },
                     ),
                     ListRow(
@@ -177,13 +180,14 @@ fun JwxtScreen(
                 },
             )
         }
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(Space.l))
     }
 }
 
 /**
  * 服务二级页共用的确认框：提交选课、提交请假、覆盖小爱课表这类发出去就收不回的操作，
  * 先让人看一眼要提交什么再点。文案放 [message]，多行用换行分开。
+ * 样式统一走 [ConfirmDialog]，这里只保留旧名字给各二级页调用。
  */
 @Composable
 internal fun JwxtConfirmDialog(
@@ -193,37 +197,35 @@ internal fun JwxtConfirmDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    Dialog(onDismissRequest = onDismiss) {
-        Card(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-            insideMargin = PaddingValues(horizontal = 20.dp, vertical = 18.dp),
+    ConfirmDialog(
+        title = title,
+        message = message,
+        confirmText = confirmText,
+        onConfirm = onConfirm,
+        onDismiss = onDismiss,
+    )
+}
+
+/**
+ * 服务二级页的「正在加载」卡：转圈 + 一句在等什么。
+ * 以前用一张固定高度的空提示卡，看不出是在加载还是没数据。
+ */
+@Composable
+internal fun JwxtLoadingCard(text: String, modifier: Modifier = Modifier.padding(horizontal = Inset.page)) {
+    Card(modifier = modifier.fillMaxWidth(), insideMargin = Inset.card) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Space.m),
         ) {
-            Text(title, style = MiuixTheme.textStyles.title3, color = MiuixTheme.colorScheme.onBackground)
-            if (message.isNotBlank()) {
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    message,
-                    style = MiuixTheme.textStyles.body2,
-                    color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
-                )
-            }
-            Spacer(Modifier.height(18.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(
-                    onClick = onDismiss,
-                    modifier = Modifier.weight(1f),
-                    minHeight = 44.dp,
-                ) { Text("取消") }
-                Button(
-                    onClick = {
-                        onDismiss()
-                        onConfirm()
-                    },
-                    modifier = Modifier.weight(1f),
-                    minHeight = 44.dp,
-                    colors = ButtonDefaults.buttonColorsPrimary(),
-                ) { Text(confirmText) }
-            }
+            InfiniteProgressIndicator()
+            Text(
+                text,
+                style = MiuixTheme.textStyles.body2,
+                color = Tone.muted(),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }

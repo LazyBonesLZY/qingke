@@ -12,9 +12,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -24,13 +25,29 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import cn.edu.gzus.qingke.ui.components.Inset
+import cn.edu.gzus.qingke.ui.components.Radius
+import cn.edu.gzus.qingke.ui.components.Space
+import cn.edu.gzus.qingke.ui.components.StatusTag
+import cn.edu.gzus.qingke.ui.components.Tone
+import cn.edu.gzus.qingke.ui.components.Type
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.PressFeedbackType
+
+// 本文件里仅有的几个「非刻度」尺寸：都是图形元素（细线、色条、圆点），不是间距。
+/** 分割线粗细，与 ListGroup 一致。 */
+private val Hairline = 0.5.dp
+/** 时间线课程色条宽度。 */
+private val AccentBar = 4.dp
+/** 上课进度条高度。 */
+private val ProgressBar = 6.dp
+/** 「上课中」「待办」前的小圆点。 */
+private val Dot = 6.dp
 
 /** 首页大卡片要显示的东西；时间相关的都在调用方按同一时刻算好。 */
 internal data class HeroModel(
@@ -62,8 +79,8 @@ internal fun NextLessonHero(model: HeroModel, onClick: () -> Unit) {
     val primary = MiuixTheme.colorScheme.primary
     val onPrimary = MiuixTheme.colorScheme.onPrimary
     Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        insideMargin = PaddingValues(0.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = Inset.page),
+        insideMargin = PaddingValues(),
         colors = CardDefaults.defaultColors(color = primary),
         pressFeedbackType = PressFeedbackType.Sink,
         onClick = onClick,
@@ -74,100 +91,103 @@ internal fun NextLessonHero(model: HeroModel, onClick: () -> Unit) {
                 // 左上角压一层浅高光（linearGradient 默认左上→右下），纯色大卡不至于发闷。
                 .background(
                     Brush.linearGradient(
-                        listOf(Color.White.copy(alpha = 0.16f), Color.Transparent),
+                        listOf(Color.White.copy(alpha = 0.14f), Color.Transparent),
                     ),
                 )
-                .padding(horizontal = 18.dp, vertical = 16.dp),
+                .padding(Inset.card),
         ) {
             Column(Modifier.fillMaxWidth()) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    StatusPill(
-                        text = model.status,
-                        live = model.inClass,
-                        background = onPrimary.copy(alpha = 0.18f),
-                        color = onPrimary,
-                    )
+                    StatusPill(text = model.status, live = model.inClass, color = onPrimary)
                     Spacer(Modifier.weight(1f))
                     if (model.periodLine.isNotBlank()) {
                         Text(
                             model.periodLine,
+                            modifier = Modifier.padding(start = Space.s),
                             style = MiuixTheme.textStyles.footnote1,
-                            color = onPrimary.copy(alpha = 0.82f),
+                            color = onPrimary.copy(alpha = 0.8f),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
                 }
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(Space.m))
                 Text(
                     model.title,
                     style = MiuixTheme.textStyles.title2,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.SemiBold,
                     color = onPrimary,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
                 val facts = model.facts.filter { it.second.isNotBlank() }
                 if (facts.isNotEmpty()) {
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(Space.xs))
                     Text(
-                        facts.joinToString("  ·  ") { it.second },
+                        facts.joinToString(" · ") { it.second },
                         style = MiuixTheme.textStyles.body2,
-                        color = onPrimary.copy(alpha = 0.86f),
-                        maxLines = 2,
+                        color = onPrimary.copy(alpha = 0.85f),
+                        maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
                 if (model.countdown.isNotEmpty()) {
-                    Spacer(Modifier.height(14.dp))
-                    Row(verticalAlignment = Alignment.Bottom) {
-                        model.countdown.forEach { (value, unit) ->
+                    Spacer(Modifier.height(Space.m))
+                    // 大数字和单位按基线对齐，不再靠 padding(bottom) 硬凑。
+                    Row(Modifier.fillMaxWidth()) {
+                        model.countdown.forEachIndexed { index, (value, unit) ->
+                            if (index > 0) Spacer(Modifier.width(Space.s))
                             Text(
                                 value,
-                                fontSize = 40.sp,
-                                lineHeight = 42.sp,
-                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.alignByBaseline(),
+                                fontSize = Type.display,
+                                lineHeight = Type.displayLine,
+                                fontWeight = FontWeight.SemiBold,
                                 color = onPrimary,
+                                maxLines = 1,
                             )
-                            Spacer(Modifier.width(3.dp))
+                            Spacer(Modifier.width(Space.xs))
                             Text(
                                 unit,
+                                modifier = Modifier.alignByBaseline(),
                                 style = MiuixTheme.textStyles.body2,
                                 color = onPrimary,
-                                modifier = Modifier.padding(bottom = 6.dp, end = 6.dp),
+                                maxLines = 1,
                             )
                         }
+                        Spacer(Modifier.width(Space.s))
                         Text(
                             model.countdownSuffix,
+                            modifier = Modifier.alignByBaseline(),
                             style = MiuixTheme.textStyles.body2,
-                            color = onPrimary.copy(alpha = 0.78f),
-                            modifier = Modifier.padding(bottom = 6.dp),
+                            color = onPrimary.copy(alpha = 0.8f),
+                            maxLines = 1,
                         )
                     }
                 }
                 if (model.progress != null) {
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(Space.m))
                     Box(
                         Modifier
                             .fillMaxWidth()
-                            .height(6.dp)
-                            .clip(RoundedCornerShape(3.dp))
+                            .height(ProgressBar)
+                            .clip(Radius.pill)
                             .background(onPrimary.copy(alpha = 0.24f)),
                     ) {
                         Box(
                             Modifier
                                 .fillMaxHeight()
                                 .fillMaxWidth(model.progress.coerceIn(0f, 1f))
-                                .clip(RoundedCornerShape(3.dp))
+                                .clip(Radius.pill)
                                 .background(onPrimary),
                         )
                     }
                     if (model.startClock.isNotBlank() || model.endClock.isNotBlank()) {
-                        Spacer(Modifier.height(6.dp))
+                        Spacer(Modifier.height(Space.xs))
                         Row(Modifier.fillMaxWidth()) {
-                            Text(model.startClock, style = MiuixTheme.textStyles.footnote1, fontSize = 11.sp, color = onPrimary.copy(alpha = 0.72f))
+                            Text(model.startClock, style = MiuixTheme.textStyles.footnote1, fontSize = Type.tiny, color = onPrimary.copy(alpha = 0.72f))
                             Spacer(Modifier.weight(1f))
-                            Text(model.endClock, style = MiuixTheme.textStyles.footnote1, fontSize = 11.sp, color = onPrimary.copy(alpha = 0.72f))
+                            Text(model.endClock, style = MiuixTheme.textStyles.footnote1, fontSize = Type.tiny, color = onPrimary.copy(alpha = 0.72f))
                         }
                     }
                 }
@@ -176,20 +196,61 @@ internal fun NextLessonHero(model: HeroModel, onClick: () -> Unit) {
     }
 }
 
+/** 大卡左上角的状态胶囊：尺寸与 StatusTag 一致，多一个「上课中」的实心圆点；底色跟随卡片前景色。 */
 @Composable
-private fun StatusPill(text: String, live: Boolean, background: Color, color: Color) {
+private fun StatusPill(text: String, live: Boolean, color: Color) {
     Row(
         Modifier
-            .clip(RoundedCornerShape(50))
-            .background(background)
-            .padding(horizontal = 10.dp, vertical = 4.dp),
+            .clip(Radius.pill)
+            .background(color.copy(alpha = 0.18f))
+            .padding(horizontal = Space.s, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (live) {
-            Box(Modifier.width(6.dp).height(6.dp).clip(RoundedCornerShape(50)).background(color))
-            Spacer(Modifier.width(6.dp))
+            Box(Modifier.size(Dot).clip(Radius.pill).background(color))
+            Spacer(Modifier.width(Space.xs))
         }
-        Text(text, style = MiuixTheme.textStyles.footnote1, fontWeight = FontWeight.Medium, color = color)
+        Text(
+            text,
+            style = MiuixTheme.textStyles.footnote1,
+            fontWeight = FontWeight.Medium,
+            color = color,
+            maxLines = 1,
+        )
+    }
+}
+
+/** 空状态之外的提醒卡：左侧警示点 + 一句结论 + 一句怎么办，右侧是动作。整卡可点。 */
+@Composable
+internal fun NoticeCard(title: String, detail: String, actionText: String, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = Inset.page),
+        insideMargin = Inset.card,
+        pressFeedbackType = PressFeedbackType.Sink,
+        onClick = onClick,
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(Dot).clip(Radius.pill).background(Tone.warning()))
+            Spacer(Modifier.width(Space.m))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    title,
+                    style = MiuixTheme.textStyles.main,
+                    fontWeight = FontWeight.Medium,
+                    color = MiuixTheme.colorScheme.onBackground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (detail.isNotBlank()) {
+                    Spacer(Modifier.height(Space.xs))
+                    Text(detail, style = MiuixTheme.textStyles.footnote1, color = Tone.muted(), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            if (actionText.isNotBlank()) {
+                Spacer(Modifier.width(Space.m))
+                StatusTag(actionText)
+            }
+        }
     }
 }
 
@@ -219,21 +280,10 @@ internal data class TimelineRow(
 @Composable
 internal fun TodayTimeline(rows: List<TimelineRow>) {
     val dark = MiuixTheme.colorScheme.background.luminanceIsDark()
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        insideMargin = PaddingValues(vertical = 6.dp),
-    ) {
+    GroupCard {
         rows.forEachIndexed { index, row ->
-            if (index > 0) {
-                // 分隔线从课名那一列起：行内边距 16 + 时间列 + 色条左右 10×2 + 色条 4。
-                Box(
-                    Modifier
-                        .padding(start = 16.dp + TimeCol + 24.dp, end = 16.dp)
-                        .fillMaxWidth()
-                        .height(0.5.dp)
-                        .background(MiuixTheme.colorScheme.outline.copy(alpha = 0.35f)),
-                )
-            }
+            // 分隔线从课名那一列起：行内边距 + 时间列 + 色条两侧间距 + 色条。
+            if (index > 0) RowDivider(start = Inset.page + TimeCol + Space.m * 2 + AccentBar)
             TimelineItem(row, accent = lessonAccent(row.accentKey, dark))
         }
     }
@@ -241,13 +291,14 @@ internal fun TodayTimeline(rows: List<TimelineRow>) {
 
 @Composable
 private fun TimelineItem(row: TimelineRow, accent: Color) {
-    val muted = MiuixTheme.colorScheme.onSurfaceContainerVariant
+    val muted = Tone.muted()
     val highlight = row.state == LessonState.Now || row.state == LessonState.Next
     Row(
         Modifier
             .fillMaxWidth()
             .clickable(onClick = row.onClick)
-            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .heightIn(min = Inset.rowMin)
+            .padding(horizontal = Inset.page, vertical = RowPadV)
             .height(IntrinsicSize.Min)
             .alpha(if (row.state == LessonState.Past) 0.45f else 1f),
         verticalAlignment = Alignment.CenterVertically,
@@ -262,15 +313,15 @@ private fun TimelineItem(row: TimelineRow, accent: Color) {
                 overflow = TextOverflow.Ellipsis,
             )
             if (row.endClock.isNotBlank()) {
-                Text(row.endClock, style = MiuixTheme.textStyles.footnote1, fontSize = 11.sp, color = muted, maxLines = 1)
+                Text(row.endClock, style = MiuixTheme.textStyles.footnote1, fontSize = Type.tiny, color = muted, maxLines = 1)
             }
         }
         Box(
             Modifier
-                .padding(horizontal = 10.dp)
-                .width(4.dp)
+                .padding(horizontal = Space.m)
+                .width(AccentBar)
                 .fillMaxHeight()
-                .clip(RoundedCornerShape(2.dp))
+                .clip(Radius.pill)
                 .background(accent),
         )
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
@@ -283,100 +334,147 @@ private fun TimelineItem(row: TimelineRow, accent: Color) {
                 overflow = TextOverflow.Ellipsis,
             )
             if (row.detail.isNotBlank()) {
-                Spacer(Modifier.height(2.dp))
+                Spacer(Modifier.height(Space.xs / 2))
                 Text(row.detail, style = MiuixTheme.textStyles.footnote1, color = muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
+        val tagModifier = Modifier.padding(start = Space.s)
         when (row.state) {
-            LessonState.Now -> SmallTag("上课中", MiuixTheme.colorScheme.primary, MiuixTheme.colorScheme.onPrimary)
-            LessonState.Next -> SmallTag("下一节", MiuixTheme.colorScheme.primary.copy(alpha = 0.14f), MiuixTheme.colorScheme.primary)
-            LessonState.Past -> SmallTag("已结束", Color.Transparent, muted)
+            LessonState.Now -> StatusTag("上课中", filled = true, modifier = tagModifier)
+            LessonState.Next -> StatusTag("下一节", modifier = tagModifier)
+            LessonState.Past -> StatusTag("已结束", color = muted, modifier = tagModifier)
             LessonState.Later -> Unit
         }
     }
 }
 
+/** 行内标签的语气，颜色统一从 [Tone] / 主题取，页面里不写色值。 */
+internal enum class TagTone { Accent, Warning, Danger, Muted }
+
 @Composable
-private fun SmallTag(text: String, background: Color, color: Color) {
-    Text(
-        text,
-        modifier = Modifier
-            .padding(start = 8.dp)
-            .clip(RoundedCornerShape(50))
-            .background(background)
-            .padding(horizontal = 8.dp, vertical = 3.dp),
-        style = MiuixTheme.textStyles.footnote1, fontSize = 11.sp,
-        fontWeight = FontWeight.Medium,
-        color = color,
-        maxLines = 1,
-    )
+private fun TagTone.color(): Color = when (this) {
+    TagTone.Accent -> MiuixTheme.colorScheme.primary
+    TagTone.Warning -> Tone.warning()
+    TagTone.Danger -> Tone.danger()
+    TagTone.Muted -> Tone.muted()
 }
 
-internal data class ExamRow(
+/** 首页分组卡里的一行：标题 + 若干行说明 + 右侧标签。尺寸与 ListGroup 的行一致。 */
+internal data class BriefRow(
     val title: String,
-    val detail: String,
-    /** 右侧徽标：今天 / N 天 / 已考；空就不画。 */
-    val badge: String,
-    val urgent: Boolean,
-    val past: Boolean,
+    val lines: List<String> = emptyList(),
+    val tag: String = "",
+    val tagTone: TagTone = TagTone.Accent,
+    /** 已经过去的条目（已考）整体淡化。 */
+    val dimmed: Boolean = false,
+    val onClick: (() -> Unit)? = null,
 )
 
-/** 考试列表并进一张卡，右侧标出还有几天，三天内的标红。 */
+/**
+ * 同类条目放进一张卡，行间细分割线；可选的底部「查看全部」行。
+ * 和 ListGroup 的区别：右侧是 StatusTag 而不是大号徽标，说明可以多行（宿舍水电要分行列电/水）。
+ */
 @Composable
-internal fun ExamList(rows: List<ExamRow>, more: Int, onClick: () -> Unit) {
-    val muted = MiuixTheme.colorScheme.onSurfaceContainerVariant
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        insideMargin = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
-        pressFeedbackType = PressFeedbackType.Sink,
-        onClick = onClick,
-    ) {
+internal fun BriefGroup(rows: List<BriefRow>, footer: String = "", onFooter: (() -> Unit)? = null) {
+    if (rows.isEmpty()) return
+    GroupCard {
         rows.forEachIndexed { index, row ->
-            if (index > 0) {
-                Box(Modifier.fillMaxWidth().height(0.5.dp).background(MiuixTheme.colorScheme.outline.copy(alpha = 0.35f)))
-            }
+            if (index > 0) RowDivider(start = Inset.page)
+            BriefItem(row)
+        }
+        if (footer.isNotBlank() && onFooter != null) {
+            RowDivider(start = Inset.page)
             Row(
-                Modifier.fillMaxWidth().padding(vertical = 10.dp).alpha(if (row.past) 0.45f else 1f),
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onFooter)
+                    .heightIn(min = Inset.rowMin - Space.s)
+                    .padding(horizontal = Inset.page, vertical = RowPadV),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        row.title,
-                        style = MiuixTheme.textStyles.main,
-                        fontWeight = FontWeight.Medium,
-                        color = MiuixTheme.colorScheme.onBackground,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    if (row.detail.isNotBlank()) {
-                        Spacer(Modifier.height(2.dp))
-                        Text(row.detail, style = MiuixTheme.textStyles.footnote1, color = muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    }
-                }
-                if (row.badge.isNotBlank()) {
-                    val warn = Color(0xFFFF5C5C)
-                    SmallTag(
-                        row.badge,
-                        if (row.urgent) warn.copy(alpha = 0.14f) else MiuixTheme.colorScheme.primary.copy(alpha = 0.12f),
-                        if (row.urgent) warn else MiuixTheme.colorScheme.primary,
-                    )
-                }
+                Text(
+                    footer,
+                    modifier = Modifier.weight(1f),
+                    style = MiuixTheme.textStyles.body2,
+                    color = MiuixTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Chevron()
             }
-        }
-        if (more > 0) {
-            Box(Modifier.fillMaxWidth().height(0.5.dp).background(MiuixTheme.colorScheme.outline.copy(alpha = 0.35f)))
-            Text(
-                "查看全部 · 还有 $more 场",
-                modifier = Modifier.padding(vertical = 10.dp),
-                style = MiuixTheme.textStyles.body2,
-                color = MiuixTheme.colorScheme.primary,
-            )
         }
     }
 }
 
+@Composable
+private fun BriefItem(row: BriefRow) {
+    val muted = Tone.muted()
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .then(if (row.onClick != null) Modifier.clickable(onClick = row.onClick) else Modifier)
+            .heightIn(min = Inset.rowMin)
+            .padding(horizontal = Inset.page, vertical = RowPadV)
+            .alpha(if (row.dimmed) 0.45f else 1f),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                row.title,
+                style = MiuixTheme.textStyles.main,
+                fontWeight = FontWeight.Medium,
+                color = MiuixTheme.colorScheme.onBackground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            row.lines.filter { it.isNotBlank() }.forEach { line ->
+                Spacer(Modifier.height(Space.xs / 2))
+                Text(line, style = MiuixTheme.textStyles.footnote1, color = muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        if (row.tag.isNotBlank()) {
+            Spacer(Modifier.width(Space.m))
+            StatusTag(row.tag, color = row.tagTone.color())
+        } else if (row.onClick != null) {
+            Spacer(Modifier.width(Space.s))
+            Chevron()
+        }
+    }
+}
+
+/** 行的上下内边距：配合 [Inset.rowMin]，与 ListGroup 的行同高。 */
+private val RowPadV = 10.dp
+
+/** 分组卡：上下留 [Space.xs]，左右不留，行自己带 [Inset.page]，点按反馈才能铺满整行。 */
+@Composable
+private fun GroupCard(content: @Composable () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = Inset.page),
+        insideMargin = PaddingValues(vertical = Space.xs),
+    ) {
+        content()
+    }
+}
+
+@Composable
+private fun RowDivider(start: Dp) {
+    Box(
+        Modifier
+            .padding(start = start, end = Inset.page)
+            .fillMaxWidth()
+            .height(Hairline)
+            .background(MiuixTheme.colorScheme.outline.copy(alpha = 0.35f)),
+    )
+}
+
+@Composable
+private fun Chevron() {
+    Text("›", style = MiuixTheme.textStyles.title3, color = Tone.muted().copy(alpha = 0.6f))
+}
+
 // 顺序和课表的浅色块调色板一致（蓝、绿、橙、紫、红、青、靛、黄、粉、草绿），
 // 同一门课在课表和首页是同一个色相，只是这里饱和度高、能当细色条用。
+// 这是课程识别色，不是语义色，所以不走 Tone。
 private val AccentsLight = listOf(
     Color(0xFF3482FF), Color(0xFF22A86B), Color(0xFFFF8A1F), Color(0xFF8A5CF6), Color(0xFFF2544B),
     Color(0xFF1FA9C2), Color(0xFF5568F0), Color(0xFFE0A800), Color(0xFFF0568F), Color(0xFF4FA83E),

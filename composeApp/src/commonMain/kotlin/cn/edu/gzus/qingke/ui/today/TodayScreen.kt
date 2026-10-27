@@ -1,6 +1,5 @@
 package cn.edu.gzus.qingke.ui.today
 
-import androidx.compose.foundation.layout.Arrangement
 import kotlinx.coroutines.delay
 import cn.edu.gzus.qingke.data.periodText
 import androidx.compose.foundation.layout.Column
@@ -20,7 +19,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import cn.edu.gzus.qingke.data.periodStartOf
 import cn.edu.gzus.qingke.data.periodEndOf
 import cn.edu.gzus.qingke.data.clockKnown
@@ -36,6 +34,8 @@ import cn.edu.gzus.qingke.data.liveTiming
 import cn.edu.gzus.qingke.data.greeting
 import cn.edu.gzus.qingke.data.hasTermStart
 import cn.edu.gzus.qingke.data.isLow
+import cn.edu.gzus.qingke.data.lowPower
+import cn.edu.gzus.qingke.data.termStartMonday
 import cn.edu.gzus.qingke.data.nextExam
 import cn.edu.gzus.qingke.data.nextLesson
 import cn.edu.gzus.qingke.data.nowDateTime
@@ -51,9 +51,11 @@ import cn.edu.gzus.qingke.data.weekdayIndex
 import cn.edu.gzus.qingke.nav.QingkeNavigator
 import cn.edu.gzus.qingke.nav.Route
 import cn.edu.gzus.qingke.nav.TabDest
-import cn.edu.gzus.qingke.ui.components.CanvasHeroHeight
-import cn.edu.gzus.qingke.ui.components.InfoCard
+import cn.edu.gzus.qingke.ui.components.EmptyState
+import cn.edu.gzus.qingke.ui.components.ListGroup
+import cn.edu.gzus.qingke.ui.components.ListRow
 import cn.edu.gzus.qingke.ui.components.ScreenHeader
+import cn.edu.gzus.qingke.ui.components.Space
 import cn.edu.gzus.qingke.ui.components.StatRow
 import cn.edu.gzus.qingke.ui.components.tabPagePadding
 import kotlinx.datetime.Clock
@@ -136,19 +138,16 @@ fun TodayScreen(
         val (past, coming) = snapshot.exams.partition { examSortKey(it.time) < todayKey }
         coming.sortedBy { examSortKey(it.time) } + past.sortedByDescending { examSortKey(it.time) }
     }
-    val source = when {
-        snapshot.session.loggedIn -> "已同步"
-        snapshot.hasTimetable -> "本地课表"
-        else -> "未登录"
-    }
+    // 来源只在「有课表但没登录」时值得说：已登录同步是常态，再挂「已同步」只是噪音。
+    val source = if (!snapshot.session.loggedIn && snapshot.hasTimetable) "本地课表" else ""
     val subtitle = buildList {
         val term = listOf(snapshot.profile.yearName, snapshot.profile.termLabel).filter { it.isNotBlank() }.joinToString(" ")
         if (term.isNotBlank()) add(term)
         if (snapshot.hasTimetable && week >= 1) add("第${week}周")
         if (snapshot.profile.campus.isNotBlank()) add(snapshot.profile.campus)
-    }.joinToString(" · ").ifBlank {
-        if (snapshot.session.loggedIn) "已登录，还没有课表" else "登录后同步${school.jwxtName}课表"
-    }
+    }.joinToString(" · ")
+    // 「第N周周X」：没开学/没选开学日时 week 可能是 0，别显示「第0周」。
+    val dayLabel = "${if (week >= 1) "第${week}周" else ""}$weekdayLabel"
 
     Column(
         modifier = Modifier
@@ -156,26 +155,25 @@ fun TodayScreen(
             .verticalScroll(rememberScrollState())
             .padding(tabPagePadding(contentPadding)),
     ) {
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(Space.l))
         ScreenHeader(
             eyebrow = "",
             title = "${now.date.monthNumber}月${now.date.dayOfMonth}日 $weekdayLabel",
-            // 没课表时副标题已经写了「登录后同步…/已登录，还没有课表」，再挂来源就重复甚至矛盾（已同步 · 还没有课表）。
-            subtitle = listOf(greeting(now.hour), if (snapshot.hasTimetable) source else "", subtitle)
+            // 没课表时下面的空状态会说清楚怎么办，副标题只放问候和学期信息，不重复。
+            subtitle = listOf(greeting(now.hour), source, subtitle)
                 .filter { it.isNotBlank() }
                 .joinToString(" · "),
         )
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(Space.m))
         // 没选第1周周一时下面的「今天的课」可能整个对错了天，这张提示要放在最前面。
         if (snapshot.hasTimetable && !snapshot.settings.hasTermStart()) {
-            InfoCard(
-                title = "先选第1周周一",
-                summary = "点这里选开学那周的周一，日期才对得上。",
-                modifier = Modifier.padding(horizontal = 16.dp),
-                tintTitle = true,
+            NoticeCard(
+                title = "还没设置开学日期",
+                detail = "选好第1周的周一，今天的课和周次才对得上。",
+                actionText = "去设置",
                 onClick = { nav.openTermStart() },
             )
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(Space.s))
         }
         when {
             hero != null -> {
@@ -203,48 +201,57 @@ fun TodayScreen(
                     onClick = { nav.open(Route.Course(hero.courseId)) },
                 )
             }
-            todaySlots.isNotEmpty() -> InfoCard(
-                title = "今天的课上完了",
-                // 没开学/没选开学日时 week 可能是 0，别显示「第0周」。
-                summary = "${if (week >= 1) "第${week}周" else ""}$weekdayLabel 共 ${todaySlots.size} 节。",
-                modifier = Modifier.padding(horizontal = 16.dp),
-                height = CanvasHeroHeight,
-                onClick = { nav.goTab(TabDest.Timetable) },
+            todaySlots.isNotEmpty() -> EmptyState(
+                title = "今天的课都上完了",
+                detail = "$dayLabel 共 ${todaySlots.size} 节，已全部结束。",
+                actionText = "查看课表",
+                onAction = { nav.goTab(TabDest.Timetable) },
             )
-            snapshot.hasTimetable && week < 1 -> InfoCard(
-                title = "学期还没开始",
-                summary = "第1周还没到。到「课表」看后面的周。",
-                modifier = Modifier.padding(horizontal = 16.dp),
-                height = CanvasHeroHeight,
-                onClick = { nav.goTab(TabDest.Timetable) },
-            )
-            snapshot.hasTimetable && weekCount > 0 && week > weekCount -> InfoCard(
+            snapshot.hasTimetable && week < 1 -> {
+                val daysToStart = snapshot.settings.termStartMonday()
+                    ?.let { (it.toEpochDays() - now.date.toEpochDays()).toInt() }
+                    ?.takeIf { it > 0 }
+                EmptyState(
+                    title = "学期还没开始",
+                    detail = if (daysToStart != null) {
+                        "还有 $daysToStart 天开学，可以先在课表里看第1周的安排。"
+                    } else {
+                        "还没到第1周，可以先在课表里看后面几周的安排。"
+                    },
+                    actionText = "查看课表",
+                    onAction = { nav.goTab(TabDest.Timetable) },
+                )
+            }
+            snapshot.hasTimetable && weekCount > 0 && week > weekCount -> EmptyState(
                 title = "这学期的课已结束",
-                summary = "${school.jwxtName}这学期共 ${weekCount} 周。",
-                modifier = Modifier.padding(horizontal = 16.dp),
-                height = CanvasHeroHeight,
-                onClick = { nav.goTab(TabDest.Timetable) },
+                detail = "${school.jwxtName}这学期共 $weekCount 周，新学期课表出来后同步一下即可。",
+                actionText = "查看课表",
+                onAction = { nav.goTab(TabDest.Timetable) },
             )
-            snapshot.hasTimetable -> InfoCard(
-                title = "今天没有理论课",
-                summary = buildString {
-                    append("第${week}周$weekdayLabel 课表是空的。")
-                    if (weekPractices.isNotEmpty()) append(" 本周有实践课。")
+            snapshot.hasTimetable -> EmptyState(
+                title = "今天没有课",
+                detail = buildString {
+                    append("$dayLabel 没有安排理论课")
+                    append(if (weekPractices.isNotEmpty()) "，本周有 ${weekPractices.size} 项实践。" else "。")
                 },
-                modifier = Modifier.padding(horizontal = 16.dp),
-                height = CanvasHeroHeight,
-                onClick = { nav.goTab(TabDest.Timetable) },
+                actionText = "查看本周课表",
+                onAction = { nav.goTab(TabDest.Timetable) },
             )
-            else -> InfoCard(
+            // 已登录却没课：多半是教务还没排课，给「重新同步」；没登录就直接带去登录。
+            snapshot.session.loggedIn -> EmptyState(
                 title = "还没有课表",
-                // 已登录时点卡片就是重新同步，文案要说出来，不然像是一张点了没反应的说明。
-                summary = if (snapshot.session.loggedIn) "这学期还没拿到课，点这里重新同步。" else "去「我的」登录${school.jwxtName}。",
-                modifier = Modifier.padding(horizontal = 16.dp),
-                height = CanvasHeroHeight,
-                onClick = { if (snapshot.session.loggedIn) onSync() else nav.goTab(TabDest.Mine) },
+                detail = "这学期暂时没拿到课程，可能是${school.jwxtName}还没排课。",
+                actionText = "重新同步",
+                onAction = onSync,
+            )
+            else -> EmptyState(
+                title = "还没有课表",
+                detail = "登录${school.jwxtName}后自动同步课表、考试和成绩。",
+                actionText = "去登录",
+                onAction = { nav.goTab(TabDest.Mine) },
             )
         }
-        // 今天没课时上面的大卡片已经说清楚了，这里不再重复一张空卡。
+        // 今天没课时上面的空状态已经说清楚了，这里不再重复一张空卡。
         if (todaySlots.isNotEmpty()) {
             SmallTitle(text = "今天的课 · ${todaySlots.size} 节")
             val nowMinutes = now.hour * 60 + now.minute
@@ -275,32 +282,44 @@ fun TodayScreen(
             )
         }
         if (snapshot.showsGzusHall()) {
-            Spacer(Modifier.height(12.dp))
-            InfoCard(
-                title = if (snapshot.utility.isLow()) "宿舍水电 · 该充值了" else "宿舍水电",
-                height = null,
-                center = true,
-                tintTitle = snapshot.utility.isLow(),
-                summary = snapshot.utilityBrief(),
-                modifier = Modifier.padding(horizontal = 16.dp),
-                onClick = { nav.open(Route.Utility) },
-            )
             val hallTodo = snapshot.hall.todos.firstOrNull()
-            if (hallTodo != null) {
-                Spacer(Modifier.height(8.dp))
-                InfoCard(
-                    title = hallTodo.title,
-                    summary = listOf(
-                        hallTodo.status.ifBlank { "办事大厅" },
-                        hallTodo.time,
-                        if (snapshot.hall.todos.size > 1) "共 ${snapshot.hall.todos.size} 条待办" else null,
-                    ).filter { !it.isNullOrBlank() }.joinToString(" · "),
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    onClick = { if (hallTodo.isLeave()) nav.open(Route.Leave) else nav.open(Route.Hall) },
-                )
-            }
+            SmallTitle(text = if (hallTodo != null) "宿舍与待办" else "宿舍")
+            val utility = snapshot.utility
+            BriefGroup(
+                rows = buildList {
+                    add(
+                        BriefRow(
+                            title = "宿舍水电",
+                            // 「记得充值」那句由右侧标签表达，正文只列余量，避免一行说两遍。
+                            lines = snapshot.utilityBrief().split('\n')
+                                .filter { it.isNotBlank() && !(utility.isLow() && it.endsWith("记得充值")) },
+                            tag = when {
+                                !utility.isLow() -> ""
+                                utility.lowPower() -> "电量不足"
+                                else -> "水量不足"
+                            },
+                            tagTone = TagTone.Warning,
+                            onClick = { nav.open(Route.Utility) },
+                        ),
+                    )
+                    if (hallTodo != null) {
+                        add(
+                            BriefRow(
+                                title = hallTodo.title,
+                                lines = listOf(
+                                    listOf(hallTodo.status.ifBlank { "办事大厅" }, hallTodo.time)
+                                        .filter { it.isNotBlank() }
+                                        .joinToString(" · "),
+                                ),
+                                tag = if (snapshot.hall.todos.size > 1) "${snapshot.hall.todos.size} 条待办" else "",
+                                onClick = { if (hallTodo.isLeave()) nav.open(Route.Leave) else nav.open(Route.Hall) },
+                            ),
+                        )
+                    }
+                },
+            )
         }
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(Space.m))
         val stats = buildList {
             add(todaySlots.size.toString() to "今天课程")
             add(courseCount.toString() to "学期课程")
@@ -328,47 +347,56 @@ fun TodayScreen(
         if (snapshot.exams.isNotEmpty()) {
             SmallTitle(text = "考试 · ${snapshot.exams.size} 场")
             val todayKey = now.date.toEpochDays().toLong()
-            ExamList(
+            val more = (sortedExams.size - 5).coerceAtLeast(0)
+            BriefGroup(
                 rows = sortedExams.take(5).map { exam ->
                     val key = examSortKey(exam.time)
                     val days = if (key == Long.MAX_VALUE) null else (key - todayKey).toInt()
-                    ExamRow(
+                    BriefRow(
                         title = exam.courseName,
-                        detail = listOf(exam.time, exam.room, exam.seat)
-                            .filter { it.isNotBlank() }
-                            .joinToString(" · ")
-                            .ifBlank { exam.status },
-                        badge = when {
+                        lines = listOf(
+                            listOf(exam.time, exam.room, exam.seat)
+                                .filter { it.isNotBlank() }
+                                .joinToString(" · ")
+                                .ifBlank { exam.status },
+                        ),
+                        tag = when {
                             days == null -> exam.status.takeIf { it != "未安排" }.orEmpty()
                             days < 0 -> "已考"
                             days == 0 -> "今天"
+                            days == 1 -> "明天"
                             else -> "$days 天"
                         },
-                        urgent = days != null && days in 0..3,
-                        past = days != null && days < 0,
+                        // 当天标红，三天内标橙，已考和待定的退成灰色，其余用主色。
+                        tagTone = when {
+                            days == null || days < 0 -> TagTone.Muted
+                            days == 0 -> TagTone.Danger
+                            days <= 3 -> TagTone.Warning
+                            else -> TagTone.Accent
+                        },
+                        dimmed = days != null && days < 0,
+                        onClick = { nav.open(Route.Exams) },
                     )
                 },
-                more = (sortedExams.size - 5).coerceAtLeast(0),
-                onClick = { nav.open(Route.Exams) },
+                footer = if (more > 0) "查看全部考试 · 还有 $more 场" else "",
+                onFooter = { nav.open(Route.Exams) },
             )
         }
         if (weekPractices.isNotEmpty()) {
-            SmallTitle(text = "本周实践")
-            Column(
-                modifier = Modifier.padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                weekPractices.forEach { item ->
-                    InfoCard(
+            SmallTitle(text = "本周实践 · ${weekPractices.size} 项")
+            ListGroup(
+                rows = weekPractices.map { item ->
+                    ListRow(
                         title = item.name,
-                        summary = listOf(item.weeks.takeIf { it.isNotBlank() }?.let { if (it.endsWith("周")) it else "${it}周" }, item.teacher, item.note)
-                            .filter { !it.isNullOrBlank() }
-                            .joinToString("\n"),
-                        height = null,
+                        summary = listOf(
+                            item.weeks.takeIf { it.isNotBlank() }?.let { if (it.endsWith("周")) it else "${it}周" },
+                            item.teacher,
+                            item.note,
+                        ).filter { !it.isNullOrBlank() }.joinToString(" · "),
                     )
-                }
-            }
+                },
+            )
         }
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(Space.l))
     }
 }

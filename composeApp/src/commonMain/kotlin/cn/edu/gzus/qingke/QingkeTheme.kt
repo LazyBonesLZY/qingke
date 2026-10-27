@@ -65,6 +65,9 @@ fun QingkeTheme(
             background = Color(0xFFF7F7F7).copy(alpha = backgroundAlpha),
             secondaryVariant = Color(0xFFF0F0F0).copy(alpha = containerAlpha),
             onSecondaryVariant = Color(0xFF303030),
+            // 次要文字（Tone.muted）。miuix 默认 0xFF959595 在白卡上只有约 3:1，
+            // 13sp 的说明字读起来发虚；压到 0xFF737373，白底约 4.7:1、F7 底约 4.4:1。
+            onSurfaceContainerVariant = Color(0xFF737373),
             outline = Color(0xFFD9D9D9),
         )
     }
@@ -83,6 +86,9 @@ fun QingkeTheme(
             background = Color(0xFF121212).copy(alpha = backgroundAlpha),
             secondaryVariant = Color(0xFF2A2A2A).copy(alpha = containerAlpha),
             onSecondaryVariant = Color(0xFFE0E0E0),
+            // miuix 默认 0xFF737373 在 0xFF1E1E1E 卡片上只有约 3.5:1，深色下次要文字几乎看不清；
+            // 提到 0xFF8C8C8C：卡片上约 5:1、背景上约 5.6:1，仍明显弱于正文 0xFFF2F2F2。
+            onSurfaceContainerVariant = Color(0xFF8C8C8C),
             outline = Color(0xFF3A3A3A),
         )
     }

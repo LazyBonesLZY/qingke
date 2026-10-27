@@ -1,51 +1,82 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 本周课表预览：标题 + 日期范围，下面几列课程格，色板与实际渲染的课程色一致。 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@drawable/widget_preview_bg"
     android:orientation="vertical"
-    android:padding="12dp">
+    android:padding="16dp">
+
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <ImageView
+            android:layout_width="7dp"
+            android:layout_height="7dp"
+            android:background="@drawable/widget_preview_dot"
+            android:importantForAccessibility="no" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="7dp"
+            android:fontFamily="sans-serif-medium"
+            android:text="本周课表"
+            android:textColor="#1A1A1A"
+            android:textSize="16sp" />
+    </LinearLayout>
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="本周课表"
-        android:textColor="#1A1A1A"
-        android:textSize="13sp"
-        android:textStyle="bold" />
+        android:layout_marginTop="2dp"
+        android:text="10/26 – 11/1"
+        android:textColor="#99303030"
+        android:textSize="11sp" />
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_marginTop="8dp"
+        android:layout_marginTop="10dp"
         android:layout_weight="1"
         android:orientation="horizontal">
 
-        <View
+        <ImageView
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_marginEnd="4dp"
             android:layout_weight="1"
-            android:background="@drawable/qingke_live_badge" />
+            android:background="@drawable/widget_preview_row"
+            android:backgroundTint="#D7E6FF"
+            android:importantForAccessibility="no" />
 
-        <View
+        <ImageView
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_marginEnd="4dp"
             android:layout_weight="1"
-            android:background="#D7E6FF" />
+            android:background="@drawable/widget_preview_row"
+            android:backgroundTint="#D4F3E3"
+            android:importantForAccessibility="no" />
 
-        <View
+        <ImageView
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_marginEnd="4dp"
             android:layout_weight="1"
-            android:background="#D4F3E3" />
+            android:background="@drawable/widget_preview_row"
+            android:backgroundTint="#FFE4C4"
+            android:importantForAccessibility="no" />
 
-        <View
+        <ImageView
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"
-            android:background="#FFE4C4" />
+            android:background="@drawable/widget_preview_row"
+            android:backgroundTint="#E8DCFF"
+            android:importantForAccessibility="no" />
     </LinearLayout>
 </LinearLayout>

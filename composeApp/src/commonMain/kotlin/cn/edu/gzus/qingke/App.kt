@@ -3,6 +3,7 @@ package cn.edu.gzus.qingke
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -38,6 +39,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cn.edu.gzus.qingke.data.AppRepository
@@ -217,14 +219,32 @@ fun App() {
             pickSectionsBusy = false
         }
 
+        // 同一句提示短时间内只弹一次：会话失效会被 checkSession / sync / keepAlive 各报一遍，
+        // miuix 的 Snackbar 会叠起来，一屏三条一样的字很不像样。
+        val recentToasts = remember { mutableMapOf<String, Long>() }
         fun toast(message: String) {
-            scope.launch { snackbar.showSnackbar(message) }
+            val text = message.trim()
+            if (text.isBlank()) return
+            val now = Clock.System.now().toEpochMilliseconds()
+            if (now - (recentToasts[text] ?: 0L) < 2_500L) return
+            recentToasts[text] = now
+            scope.launch { snackbar.showSnackbar(text) }
         }
 
-        fun runJob(login: Boolean = false, job: String = "sync", block: suspend () -> Unit) {
+        /** 失败提示统一成「动作失败：原因」，原因里的句号去掉，免得一条提示两种标点。 */
+        fun failText(action: String, message: String): String {
+            val reason = message.trim().trimEnd('。', '.', '！', '!')
+            return if (reason.isBlank() || reason == "请求失败" || reason.startsWith(action)) {
+                "${action}失败"
+            } else {
+                "${action}失败：$reason"
+            }
+        }
+
+        fun runJob(login: Boolean = false, job: String = "sync", action: String = "同步", block: suspend () -> Unit) {
             if (job in busyJobs) {
                 // 以前静默返回：同步没结束时点「退出登录」，确认框关了却什么都没发生。
-                toast("上一个操作还在进行，稍等一下")
+                toast("正在处理，请稍候")
                 return
             }
             busyJobs = busyJobs + job
@@ -239,7 +259,7 @@ fun App() {
                             }
                             val message = failed.friendlyNetworkMessage()
                             if (login || isSessionLost(message)) loginError = message
-                            toast(message)
+                            toast(failText(action, message))
                         }
                 } finally {
                     busyJobs = busyJobs - job
@@ -252,7 +272,7 @@ fun App() {
             activeRequest { repo.checkGithubUpdate() }
                 .onSuccess { found ->
                     update = found
-                    if (found.newer) toast("有新版本 ${found.versionName}，需要更新")
+                    if (found.newer) toast("发现新版本 ${found.versionName}")
                 }
         }
 
@@ -352,7 +372,7 @@ fun App() {
                     .onFailure { failed ->
                         val message = failed.friendlyNetworkMessage()
                         if (isSessionLost(message)) loginError = message
-                        toast(message)
+                        toast(failText("自动选课", message))
                         break
                     }
             }
@@ -457,31 +477,39 @@ fun App() {
                     } else Modifier,
                 ),
             ) {
-                val pullSync: () -> Unit = {
-                    if (!busy) {
-                        runJob {
-                            repo.sync()
-                            toast("已同步")
-                        }
+                // 按钮触发的同步：所有页面同一句结果提示；同步中各 tab 顶部的下拉指示器会自动撑开，
+                // 不用每页再自己画转圈。
+                val syncNow: () -> Unit = {
+                    runJob {
+                        repo.sync()
+                        toast("已同步")
                     }
                 }
-                tabStates.SaveableStateProvider(nav.tab.name) {
-                    when (nav.tab) {
+                // 下拉触发的同步：正在同步时不重复排队，也不弹「请稍候」——指示器本身就在转。
+                val pullSync: () -> Unit = {
+                    if (!busy) syncNow()
+                }
+                // tab 之间做一次很短的淡入淡出：旧页先退，新页稍晚进来，避免两页文字叠在一起。
+                AnimatedContent(
+                    targetState = nav.tab,
+                    transitionSpec = {
+                        fadeIn(tween(durationMillis = 200, delayMillis = 60)) togetherWith
+                            fadeOut(tween(durationMillis = 100))
+                    },
+                    label = "qingke-tab",
+                ) { tab ->
+                tabStates.SaveableStateProvider(tab.name) {
+                    when (tab) {
                         TabDest.Today -> QingkeWideFrame {
                         SyncPull(snapshot.session.loggedIn, busy, padding, onRefresh = pullSync) {
                             key(calendarDay) {
-                                TodayScreen(snapshot, nav, padding, onSync = {
-                                    runJob {
-                                        repo.sync()
-                                        toast("课表已刷新")
-                                    }
-                                })
+                                TodayScreen(snapshot, nav, padding, onSync = syncNow)
                             }
                         }
                         }
                         TabDest.Timetable -> QingkeWideFrame(fill = true) {
                         SyncPull(snapshot.session.loggedIn, busy, padding, onRefresh = pullSync) {
-                            key(calendarDay) { TimetableScreen(snapshot, nav, padding, onSync = pullSync) }
+                            key(calendarDay) { TimetableScreen(snapshot, nav, padding, onSync = syncNow) }
                         }
                         }
                         TabDest.Grades -> QingkeWideFrame {
@@ -504,11 +532,11 @@ fun App() {
                             firstLogin = firstLogin,
                             onOpenOfficialLogin = {
                                 val url = snapshot.resolved().loginUrl
-                                if (url.isBlank()) toast("先在开发者选项里填登录地址") else openUrl(url)
+                                if (url.isBlank()) toast("请先在开发者选项中填写登录地址") else openUrl(url)
                             },
                             onOpenChangePassword = {
                                 val url = snapshot.resolved().changePasswordUrl
-                                if (url.isBlank()) toast("先在开发者选项里填改密地址") else openUrl(url)
+                                if (url.isBlank()) toast("请先在开发者选项中填写改密地址") else openUrl(url)
                             },
                             captcha = captcha,
                             captchaError = captchaError,
@@ -546,25 +574,20 @@ fun App() {
                                     return@MineScreen
                                 }
                                 loginError = null
-                                runJob(login = true) {
+                                runJob(login = true, action = "登录") {
                                     repo.loginAndSync(id, pwd, code, captcha?.id.orEmpty())
                                     firstLogin = false
                                     val after = repo.state.value
                                     toast(
                                         when {
-                                            after.slots.isEmpty() -> "已登录，这一学期还没有课表"
+                                            after.slots.isEmpty() -> "已登录，本学期暂无课表"
                                             after.profile.yearName.isNotBlank() -> "已同步 ${after.profile.yearName}"
-                                            else -> "已同步课表"
+                                            else -> "已登录并同步"
                                         },
                                     )
                                 }
                             },
-                            onSync = {
-                                runJob {
-                                    repo.sync()
-                                    toast("已同步")
-                                }
-                            },
+                            onSync = syncNow,
                             onToggleAutoSync = { on ->
                                 repo.updateSettings { it.copy(autoSyncOnStart = on) }
                                 toast(if (on) "已打开启动自动同步" else "已关闭启动自动同步")
@@ -576,8 +599,8 @@ fun App() {
                                 } else {
                                     scope.launch {
                                         activeRequest { repo.pullScheduleAdjust() }
-                                            .onSuccess { toast("已拉取调休") }
-                                            .onFailure { toast(it.friendlyNetworkMessage()) }
+                                            .onSuccess { toast("已更新调休安排") }
+                                            .onFailure { toast(failText("拉取调休", it.friendlyNetworkMessage())) }
                                     }
                                 }
                             },
@@ -615,16 +638,16 @@ fun App() {
                                 repo.refreshLive()
                             },
                             onLogout = {
-                                runJob {
+                                runJob(action = "退出登录") {
                                     repo.logout()
-                                    toast("已退出")
+                                    toast("已退出登录")
                                 }
                             },
                             onSaveCustom = { cfg, apply ->
                                 repo.saveCustomJwxt(cfg, apply)
                                 firstLogin = false
                                 loginError = null
-                                toast(if (apply) "已切到自定义教务" else "已保存自定义配置")
+                                toast(if (apply) "已切换到自定义教务" else "已保存自定义配置")
                                 if (apply) requests.launch("captcha") { repo.refreshCaptcha() }
                             },
                             update = update,
@@ -642,7 +665,7 @@ fun App() {
                                         activeRequest { repo.checkGithubUpdate() }
                                             .onSuccess { found ->
                                                 update = found
-                                                toast(if (found.newer) "有新版本 ${found.versionName}，需要更新" else "已是最新 ${found.versionName}")
+                                                toast(if (found.newer) "发现新版本 ${found.versionName}" else "已是最新版本 ${found.versionName}")
                                             }
                                             .onFailure { updateError = it.friendlyNetworkMessage() }
                                         updateBusy = false
@@ -656,7 +679,7 @@ fun App() {
                                     activeRequest { repo.checkGithubUpdate() }
                                         .onSuccess {
                                             update = it
-                                            toast(if (it.newer) "有新版本 ${it.versionName}" else "已是最新 ${it.versionName}")
+                                            toast(if (it.newer) "发现新版本 ${it.versionName}" else "已是最新版本 ${it.versionName}")
                                         }
                                         .onFailure { updateError = it.friendlyNetworkMessage() }
                                     updateBusy = false
@@ -677,7 +700,7 @@ fun App() {
                             onLiveTest = { toast(repo.startLiveTest()) },
                             onStopLiveTest = {
                                 repo.stopLiveTest()
-                                toast("已停止测试")
+                                toast("已停止通知测试")
                             },
                             onToggleCountdown = { on ->
                                 // 一起置迁移标记：用户手动表态过，下次启动就别再强制打开了。
@@ -690,6 +713,7 @@ fun App() {
                         )
                         }
                     }
+                }
                 }
             }
         }
@@ -718,12 +742,17 @@ fun App() {
                     AnimatedContent(
                         targetState = dest,
                         transitionSpec = {
-                            when (targetState.transition) {
-                                Transition.SlideIn ->
-                                    (slideInHorizontally { it } + fadeIn()) togetherWith (slideOutHorizontally { -it / 5 } + fadeOut())
-                                Transition.SlideOut ->
-                                    (slideInHorizontally { -it / 5 } + fadeIn()) togetherWith (slideOutHorizontally { it } + fadeOut())
-                                Transition.Fade -> fadeIn() togetherWith fadeOut()
+                            // 二级页互跳与整层推入用同一条弹簧，手感一致；
+                            // 方向看最近一次是前进还是返回（以前返回也当前进，页面从右边又推进来一次）。
+                            val back = nav.lastWasPop || targetState.transition == Transition.SlideOut
+                            when {
+                                targetState.transition == Transition.Fade -> fadeIn() togetherWith fadeOut()
+                                back ->
+                                    (slideInHorizontally(StackSpring) { -it / 4 } + fadeIn()) togetherWith
+                                        (slideOutHorizontally(StackSpring) { it } + fadeOut())
+                                else ->
+                                    (slideInHorizontally(StackSpring) { it } + fadeIn()) togetherWith
+                                        (slideOutHorizontally(StackSpring) { -it / 4 } + fadeOut())
                             }
                         },
                         label = "qingke-stack",
@@ -786,7 +815,7 @@ fun App() {
                                     }
                                 },
                                 onSubmit = { form, values ->
-                                    runJob(job = "leave") {
+                                    runJob(job = "leave", action = "提交") {
                                         val message = repo.submitLeave(form, values)
                                         toast(message)
                                     }
@@ -794,7 +823,7 @@ fun App() {
                                 onRefresh = {
                                     runJob(job = "leave") {
                                         repo.syncHall()
-                                        toast("请假已同步")
+                                        toast("已同步请假记录")
                                     }
                                 },
                                 traces = leaveTraces,
@@ -804,7 +833,7 @@ fun App() {
                                         leaveTraceBusy = id
                                         activeRequest { repo.loadLeaveTrace(id) }
                                             .onSuccess { leaveTraces = leaveTraces + (id to it) }
-                                            .onFailure { toast(it.friendlyNetworkMessage()) }
+                                            .onFailure { toast(failText("审批进度加载", it.friendlyNetworkMessage())) }
                                         leaveTraceBusy = ""
                                     }
                                 },
@@ -845,12 +874,12 @@ fun App() {
                                 },
                                 onSavePrice = { useCustom, water, electric ->
                                     repo.saveUtilityPrice(useCustom, water, electric)
-                                    toast(if (useCustom) "已用自定义单价" else "已用江门校区单价")
+                                    toast(if (useCustom) "已改用自定义单价" else "已改用江门校区单价")
                                 },
                                 onRefresh = {
                                     runJob(job = "utility") {
                                         repo.syncUtility()
-                                        toast("水电已同步")
+                                        toast("已同步水电")
                                     }
                                 },
                                 onPeekBind = {
@@ -868,7 +897,7 @@ fun App() {
                                         requests.launch("notice/$id") {
                                             try {
                                                 activeRequest { repo.loadNoticeBody(id) }
-                                                    .onFailure { toast(it.friendlyNetworkMessage().ifBlank { "通知正文加载失败" }) }
+                                                    .onFailure { toast(failText("正文加载", it.friendlyNetworkMessage())) }
                                             } finally {
                                                 noticeLoading = noticeLoading - id
                                             }
@@ -997,26 +1026,26 @@ fun App() {
                                     }
                                 },
                                 onSelectNow = { offer, section ->
-                                    runJob(job = "pick") {
+                                    runJob(job = "pick", action = "选课") {
                                         val message = repo.selectCourseNow(offer, section)
                                         toast(message)
                                     }
                                 },
                                 onQueue = { offer, section ->
                                     repo.queueCoursePick(offer, section)
-                                    toast("已加入队列")
+                                    toast("已加入选课队列")
                                 },
                                 onSchedule = { id, fireAt ->
                                     requestResult { repo.scheduleCoursePick(id, fireAt) }
-                                        .onSuccess { toast("已设定到点自动选") }
-                                        .onFailure { toast(it.message ?: "时间不对") }
+                                        .onSuccess { toast("已设定定时选课") }
+                                        .onFailure { toast(it.message?.takeIf { m -> m.isNotBlank() } ?: "选课时间无效") }
                                 },
                                 onRemove = { id ->
                                     repo.removeCoursePick(id)
-                                    toast("已移出队列")
+                                    toast("已移出选课队列")
                                 },
                                 onRunQueued = { id ->
-                                    runJob(job = "pick") {
+                                    runJob(job = "pick", action = "选课") {
                                         val message = repo.runQueuedCoursePick(id)
                                         toast(message)
                                     }
@@ -1038,15 +1067,15 @@ fun App() {
                                 busy = "xiaoai" in busyJobs,
                                 onSaveUrl = { url ->
                                     requestResult { repo.saveXiaoaiEditUrl(url) }
-                                        .onSuccess { toast("授权已保存") }
-                                        .onFailure { toast(it.message ?: "授权无效") }
+                                        .onSuccess { toast("已保存授权") }
+                                        .onFailure { toast(it.message?.takeIf { m -> m.isNotBlank() } ?: "授权无效") }
                                 },
                                 onClearUrl = {
                                     repo.clearXiaoaiEditUrl()
                                     toast("已清除授权")
                                 },
                                 onImport = {
-                                    runJob(job = "xiaoai") {
+                                    runJob(job = "xiaoai", action = "导入") {
                                         val msg = repo.importToXiaoai()
                                         openXiaoaiSchedule()
                                         toast(msg)
@@ -1065,6 +1094,9 @@ fun App() {
         }
     }
 }
+
+/** 二级页推入 / 退回的弹簧，和整层推入的 stackProgress 同参数。 */
+private val StackSpring = spring<IntOffset>(dampingRatio = 0.86f, stiffness = 380f)
 
 private fun routeTitle(route: Route): String = when (route) {
     is Route.Course -> "课程详情"

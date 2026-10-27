@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
@@ -74,7 +75,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
 import cn.edu.gzus.qingke.nav.TabDest
 import cn.edu.gzus.qingke.ui.blur.DampedDragAnimation
@@ -211,7 +211,7 @@ fun QingkeSideRail(
                 modifier = Modifier
                     .padding(horizontal = 8.dp)
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
+                    .clip(Radius.large)
                     .background(if (on) MiuixTheme.colorScheme.primary.copy(alpha = 0.14f) else Color.Transparent)
                     .clickable { onSelect(dest) }
                     .padding(vertical = 10.dp),
@@ -223,9 +223,11 @@ fun QingkeSideRail(
                     modifier = Modifier.size(22.dp),
                     tint = if (on) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onSurface,
                 )
+                Spacer(Modifier.height(Space.xs))
                 Text(
                     item.second,
-                    fontSize = 11.sp,
+                    fontSize = Type.tiny,
+                    fontWeight = if (on) FontWeight.Medium else FontWeight.Normal,
                     maxLines = 1,
                     color = if (on) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onSurface,
                 )
@@ -415,7 +417,7 @@ fun QingkeBottomBar(
                 )
                 Text(
                     text = item.second.second,
-                    fontSize = 11.sp,
+                    fontSize = Type.tiny,
                     fontWeight = FontWeight.Normal,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -429,6 +431,8 @@ fun QingkeBottomBar(
             .fillMaxWidth()
             .then(if (floating) Modifier else Modifier.background(dockedContainer)),
     ) {
+        // 贴底模式与内容之间用一条细线分界，而不是靠底色差硬切。
+        if (!floating) HairlineDivider()
         Box(
             modifier = Modifier
                 .padding(bottom = bottomPaddingValue, start = barHorizontalPadding, end = barHorizontalPadding)

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 预览标题前的品牌色圆点，和实际小组件标题左侧的圆点一致；也用作月历「今天」的圆底。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <solid android:color="#FF3482FF" />
+</shape>

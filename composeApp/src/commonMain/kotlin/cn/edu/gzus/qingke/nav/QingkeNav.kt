@@ -34,8 +34,16 @@ class QingkeNavigator(start: TabDest = TabDest.Today) {
     val current: Route get() = stack.lastOrNull() ?: Route.Tab(tab)
     val canPop: Boolean get() = stack.isNotEmpty()
 
+    /**
+     * 最近一次栈变化是不是「返回」。二级页之间互跳（大厅 → 请假 → 返回大厅）时，
+     * 转场方向要跟着它走：前进从右推入，返回从左退回，不能一律当成前进。
+     */
+    var lastWasPop by mutableStateOf(false)
+        private set
+
     fun goTab(dest: TabDest) {
         tab = dest
+        lastWasPop = stack.isNotEmpty()
         stack.clear()
     }
 
@@ -45,11 +53,13 @@ class QingkeNavigator(start: TabDest = TabDest.Today) {
             return
         }
         if (stack.lastOrNull() == route) return
+        lastWasPop = false
         stack += route
     }
 
     fun pop(): Boolean {
         if (stack.isEmpty()) return false
+        lastWasPop = true
         stack.removeAt(stack.lastIndex)
         return true
     }

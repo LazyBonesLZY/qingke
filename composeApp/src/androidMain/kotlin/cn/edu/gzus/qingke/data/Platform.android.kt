@@ -393,8 +393,8 @@ internal fun buildLiveNotification(
     val prefs = ctx.getSharedPreferences(LIVE_PREFS, android.content.Context.MODE_PRIVATE)
     if (prefs.getString(LIVE_DISMISSED_KEY, "") == key) return null
     val nm = ctx.getSystemService(NotificationManager::class.java) ?: return null
-    val channel = NotificationChannel(LIVE_CHANNEL, "上课进度", NotificationManager.IMPORTANCE_DEFAULT).apply {
-        description = "下一节课和上课中的 Live Update"
+    val channel = NotificationChannel(LIVE_CHANNEL, "上课提醒", NotificationManager.IMPORTANCE_DEFAULT).apply {
+        description = "课前提醒与上课进度，静默显示，不响铃不振动"
         setShowBadge(false)
         setSound(null, null)
         enableVibration(false)
@@ -421,8 +421,15 @@ internal fun buildLiveNotification(
             .putExtra(EXTRA_LIVE_DEADLINE, timing.deadlineMillis),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
-    val blue = 0xFF3482FF.toInt()
-    val track = 0xFFB7D2FF.toInt()
+    // 跟随深浅色：浅色用品牌蓝 + 淡蓝轨道；深色下品牌蓝提亮一档、轨道压暗，
+    // 否则深色通知栏里一条发白的轨道比进度本身还抢眼。
+    val night = ctx.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK ==
+        android.content.res.Configuration.UI_MODE_NIGHT_YES
+    val blue = if (night) 0xFF5B9DFF.toInt() else 0xFF3482FF.toInt()
+    val track = if (night) 0xFF2A3A55.toInt() else 0xFFD6E5FF.toInt()
+    // 副文本只放状态（上课中 / 即将上课）：开了倒计时时秒级计时器已经在旁边，
+    // 再写一遍「距下课 N 分」就是同一个数字说两次。
+    val headerText = timing.statusText
     if (Build.VERSION.SDK_INT >= 36) {
         val done = pct.coerceIn(0, 100)
         // 完成态不留轨道尾巴、起步不画 1 格蓝条：两段加起来恒 100。
@@ -457,7 +464,7 @@ internal fun buildLiveNotification(
             .setShowWhen(countdownEnabled)
             .setUsesChronometer(countdownEnabled)
             .setChronometerCountDown(countdownEnabled)
-            .setSubText(if (countdownEnabled) timing.countdownText else timing.statusText)
+            .setSubText(headerText)
             // All vendors use the same explicit minute text and native progress card.
             .setShortCriticalText(chipText)
             // Expire the old stage if both the service and alarm miss its boundary.
@@ -471,7 +478,7 @@ internal fun buildLiveNotification(
         .setContentTitle(title)
         .setContentText(detail)
         .setStyle(NotificationCompat.BigTextStyle().bigText(detail))
-        .setSubText(if (countdownEnabled) timing.countdownText else timing.statusText)
+        .setSubText(headerText)
         .setOngoing(true)
         .setOnlyAlertOnce(true)
         .setContentIntent(launch)

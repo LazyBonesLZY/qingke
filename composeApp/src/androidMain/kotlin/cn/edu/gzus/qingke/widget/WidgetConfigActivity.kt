@@ -7,16 +7,20 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import cn.edu.gzus.qingke.QingkeTheme
 import cn.edu.gzus.qingke.ui.components.InfoCard
+import cn.edu.gzus.qingke.ui.components.Inset
 import cn.edu.gzus.qingke.ui.components.ScreenHeader
+import cn.edu.gzus.qingke.ui.components.Space
 
 class WidgetConfigActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -31,17 +35,22 @@ class WidgetConfigActivity : ComponentActivity() {
         setResult(RESULT_CANCELED, Intent().putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id))
         setContent {
             QingkeTheme {
-                Column(Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 24.dp)) {
-                    Spacer(Modifier.height(16.dp))
-                    ScreenHeader("", "小组件样式", "选一种外观。放上桌面后可以拉大小。")
-                    Spacer(Modifier.height(16.dp))
+                // 边距与应用内页面一致：状态栏下留 xl，左右按 Inset.page 对齐（ScreenHeader 自带 16dp）。
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(WindowInsets.statusBars.asPaddingValues())
+                        .padding(vertical = Space.xl),
+                ) {
+                    ScreenHeader("", "小组件样式", "选择外观，放到桌面后可调整大小")
+                    Spacer(Modifier.height(Space.l))
                     Column(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(horizontal = Inset.page),
+                        verticalArrangement = Arrangement.spacedBy(Space.s),
                     ) {
-                        InfoCard("纯色", "不透明，字最清楚", height = null, onClick = { finishWith(id, WidgetStyle.Solid) })
+                        InfoCard("纯色", "不透明，文字最清晰", height = null, onClick = { finishWith(id, WidgetStyle.Solid) })
                         InfoCard("模糊", "半透明雾面，透出壁纸", height = null, onClick = { finishWith(id, WidgetStyle.Blur) })
-                        InfoCard("玻璃", "更透，带一圈高光边", height = null, onClick = { finishWith(id, WidgetStyle.Glass) })
+                        InfoCard("玻璃", "更通透，带一圈高光描边", height = null, onClick = { finishWith(id, WidgetStyle.Glass) })
                     }
                 }
             }

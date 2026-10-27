@@ -12,8 +12,10 @@ plugins {
 kotlin {
     jvmToolchain(17)
 
-    // miuix-blur 的桌面 artifact 需要 Java 21 字节码。测试执行器跟随当前 JVM：
+    // miuix-blur 的桌面 artifact 是 Java 21 字节码。测试执行器跟随当前 JVM：
     // JDK 21+ 上跑离屏渲染测试，JDK 17（CI）跳过并保留纯逻辑回归。
+    // 渲染测试一律按 `*RenderTest` 命名，新加渲染测试不用再改这里；
+    // 之前 TodayRenderTest 就是漏登记，CI（JDK 17）上整批 UnsupportedClassVersionError。
     tasks.withType<Test>().configureEach {
         val current = JavaVersion.current()
         if (current >= JavaVersion.VERSION_21) {
@@ -23,6 +25,8 @@ kotlin {
                 },
             )
             systemProperty("qingke.render.tests", "true")
+        } else {
+            exclude("**/*RenderTest.class")
         }
     }
 
@@ -89,12 +93,5 @@ compose.desktop {
             packageName = "qingke"
             packageVersion = "1.0.0"
         }
-    }
-}
-
-// 渲染测试仅在 JDK 21+（本机验证）执行；CI 的 JDK 17 只跑纯逻辑回归。
-tasks.named<Test>("desktopTest") {
-    if (JavaVersion.current() < JavaVersion.VERSION_21) {
-        exclude("**/BottomBarRenderTest.class")
     }
 }

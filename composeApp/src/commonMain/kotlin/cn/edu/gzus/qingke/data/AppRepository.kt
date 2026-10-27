@@ -1034,7 +1034,7 @@ class AppRepository(
         val timing = if (testEndMillis > nowMs) {
             liveTiming(nowMs, testStartMillis, testEndMillis)
         } else {
-            val notice = _state.value.liveNotice(nowDateTime(), nowMs) ?: return LIVE_STEP_MILLIS
+            val notice = _state.value.liveNotice(dateTimeAt(nowMs), nowMs) ?: return LIVE_STEP_MILLIS
             liveTiming(nowMs, notice.startMillis, notice.endMillis)
         }
         return timing?.refreshDelayMillis ?: LIVE_STEP_MILLIS
@@ -1058,6 +1058,7 @@ class AppRepository(
                 startMillis = testStartMillis,
                 endMillis = testEndMillis,
                 countdownEnabled = _state.value.settings.liveCountdownEnabled,
+                nowMillis = nowMs,
             )
             setLiveForeground(posted)
             if (posted) {
@@ -1074,7 +1075,7 @@ class AppRepository(
             _liveTick.update { it + 1 }
         }
         val snap = _state.value
-        val now = nowDateTime()
+        val now = dateTimeAt(nowMs)
         val notice = snap.liveNotice(now, nowMs)
         if (notice == null) {
             cancelLiveClass()
@@ -1099,6 +1100,7 @@ class AppRepository(
             startMillis = notice.startMillis,
             endMillis = notice.endMillis,
             countdownEnabled = snap.settings.liveCountdownEnabled,
+            nowMillis = nowMs,
         )
         // 服务只在通知真的挂出来时跑：被划掉 / 没权限时 buildLiveNotification
         // 返回 null，这时起服务只会「冷启动→判 null→自停」空转。
@@ -1178,7 +1180,12 @@ private fun AppSettings.mergeCalendar(calendar: TermCalendar?): AppSettings {
         yearCode = calendar.yearCode.ifBlank { yearCode },
         termCode = calendar.termCode.ifBlank { termCode },
         currentWeek = calendar.currentWeek.takeIf { it > 0 } ?: currentWeek,
-        termStart = calendar.termStart.ifBlank { termStart },
+        // 教务只给了「当前第几周」没给开学日时，按今天倒推开学周一：
+        // 沿用本地旧值的话，新学期还按上学期的开学日算周次，或者周次永远停在同步那天。
+        termStart = calendar.termStart.ifBlank {
+            if (calendar.currentWeek > 0) termStartFromCurrentWeek(nowDateTime().date, calendar.currentWeek).toString()
+            else termStart
+        },
         weekCount = calendar.weekCount.takeIf { it > 0 } ?: weekCount,
     )
 }

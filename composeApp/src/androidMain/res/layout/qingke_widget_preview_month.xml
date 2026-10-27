@@ -1,60 +1,91 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 本月课表预览：标题 + 本月有课天数，一行日期，「今天」用品牌色圆底，和实际渲染一致。 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@drawable/widget_preview_bg"
     android:orientation="vertical"
-    android:padding="14dp">
+    android:padding="16dp">
+
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <ImageView
+            android:layout_width="7dp"
+            android:layout_height="7dp"
+            android:background="@drawable/widget_preview_dot"
+            android:importantForAccessibility="no" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="7dp"
+            android:fontFamily="sans-serif-medium"
+            android:text="本月课表"
+            android:textColor="#1A1A1A"
+            android:textSize="16sp" />
+    </LinearLayout>
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="本月课表"
-        android:textColor="#1A1A1A"
-        android:textSize="13sp"
-        android:textStyle="bold" />
+        android:layout_marginTop="2dp"
+        android:text="本月 18 天有课"
+        android:textColor="#99303030"
+        android:textSize="11sp" />
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
+        android:layout_marginTop="12dp"
+        android:gravity="center_vertical"
         android:orientation="horizontal">
 
-        <TextView
+        <FrameLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:gravity="center"
-            android:text="18"
-            android:textColor="#FFFFFF"
-            android:textSize="12sp"
-            android:background="@drawable/qingke_live_badge" />
+            android:layout_weight="1">
+
+            <TextView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_gravity="center"
+                android:background="@drawable/widget_preview_dot"
+                android:fontFamily="sans-serif-medium"
+                android:gravity="center"
+                android:text="27"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp" />
+        </FrameLayout>
 
         <TextView
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:gravity="center"
-            android:text="19"
+            android:text="28"
             android:textColor="#1A1A1A"
-            android:textSize="12sp" />
+            android:textSize="11sp" />
 
         <TextView
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:gravity="center"
-            android:text="20"
+            android:text="29"
             android:textColor="#1A1A1A"
-            android:textSize="12sp" />
+            android:textSize="11sp" />
 
         <TextView
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:gravity="center"
-            android:text="21"
+            android:text="30"
             android:textColor="#1A1A1A"
-            android:textSize="12sp" />
+            android:textSize="11sp" />
     </LinearLayout>
 </LinearLayout>

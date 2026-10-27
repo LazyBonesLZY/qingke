@@ -337,6 +337,9 @@ fun zhkuTermId(year: String, term: String): String {
 }
 
 fun parseZhkuTerm(xnxqid: String): Pair<String, String> {
+    // 周历页没选中学期时拿到的是空串。以前这里也回 "1"，mergeCalendar 只对空串回落，
+    // 下学期就被强行改成第 1 学期，课表、考试都按上学期去拉。
+    if (xnxqid.isBlank()) return "" to ""
     val parts = xnxqid.trim().split("-")
     if (parts.size < 3) return xnxqid.trim() to "1"
     return parts[0] to parts.last()

@@ -167,6 +167,7 @@ actual fun notifyLiveClass(
     startMillis: Long,
     endMillis: Long,
     countdownEnabled: Boolean,
+    nowMillis: Long,
 ): Boolean = false
 
 actual fun refreshHomeWidgets() = Unit

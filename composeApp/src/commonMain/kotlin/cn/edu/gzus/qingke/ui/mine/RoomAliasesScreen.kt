@@ -1,7 +1,9 @@
 package cn.edu.gzus.qingke.ui.mine
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -19,10 +21,15 @@ import androidx.compose.ui.unit.dp
 import cn.edu.gzus.qingke.data.AppSnapshot
 import cn.edu.gzus.qingke.data.compactRoomName
 import cn.edu.gzus.qingke.data.uniqueRooms
-import cn.edu.gzus.qingke.ui.components.EmptyHint
+import cn.edu.gzus.qingke.ui.components.EmptyState
+import cn.edu.gzus.qingke.ui.components.Inset
+import cn.edu.gzus.qingke.ui.components.Space
+import cn.edu.gzus.qingke.ui.components.StatusTag
+import cn.edu.gzus.qingke.ui.components.Tone
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
+import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.preference.ArrowPreference
@@ -37,33 +44,47 @@ fun RoomAliasesScreen(
     val rooms = uniqueRooms(snapshot.slots)
     val aliases = snapshot.settings.roomAliases
     var editing by remember { mutableStateOf<String?>(null) }
+    // 刚保存 / 恢复过的那一行，右侧给一个成功回执，不然编辑区一收起像什么都没发生。
+    var receiptRoom by remember { mutableStateOf<String?>(null) }
+    var receiptText by remember { mutableStateOf("") }
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(contentPadding)
-            .padding(bottom = 24.dp),
+            .padding(bottom = Space.xl),
     ) {
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(Space.s))
         Text(
             "只改课表格子里的教室写法。默认会砍掉「电教实训室」这类尾巴，只留楼名和房号。",
-            modifier = Modifier.padding(horizontal = 16.dp),
-            color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+            modifier = Modifier.padding(horizontal = Inset.page),
+            color = Tone.muted(),
             style = MiuixTheme.textStyles.body2,
         )
-        Spacer(Modifier.height(12.dp))
         if (rooms.isEmpty()) {
-            EmptyHint("同步课表后才能改教室缩写")
+            Spacer(Modifier.height(Space.m))
+            EmptyState(
+                title = "还没有教室",
+                detail = "同步课表后，这里会列出用到的教室，可以逐个改缩写。",
+            )
         } else {
+            SmallTitle(text = "教室 · ${rooms.size} 间")
             Card(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = Inset.page),
                 insideMargin = PaddingValues(0.dp),
             ) {
                 rooms.forEach { room ->
                     val shown = compactRoomName(room, aliases)
+                    val custom = !aliases[room].isNullOrBlank()
                     ArrowPreference(
                         title = room,
-                        summary = if (shown == room) "格子里照原样显示" else "格子里显示 $shown",
+                        summary = if (shown == room && !custom) "格子里照原样显示" else "格子里显示 $shown",
+                        endActions = {
+                            when {
+                                receiptRoom == room -> StatusTag(receiptText, color = Tone.success())
+                                custom -> StatusTag("已自定义")
+                            }
+                        },
                         onClick = { editing = if (editing == room) null else room },
                     )
                     if (editing == room) {
@@ -72,6 +93,8 @@ fun RoomAliasesScreen(
                             aliases = aliases,
                             onSave = { value ->
                                 onSaveAlias(room, value)
+                                receiptRoom = room
+                                receiptText = if (value.isBlank()) "已恢复默认" else "已保存"
                                 editing = null
                             },
                         )
@@ -89,16 +112,12 @@ private fun RoomAliasEditor(
     onSave: (String) -> Unit,
 ) {
     val fallback = compactRoomName(room)
+    val saved = aliases[room]?.trim().orEmpty()
     var draft by remember(room) {
-        mutableStateOf(aliases[room]?.trim().orEmpty().ifBlank { fallback })
+        mutableStateOf(saved.ifBlank { fallback })
     }
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
-        Text(
-            "默认是 $fallback，最多 8 个字",
-            style = MiuixTheme.textStyles.footnote1,
-            color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
-        )
-        Spacer(Modifier.height(8.dp))
+    val trimmed = draft.trim()
+    Column(Modifier.fillMaxWidth().padding(horizontal = Inset.page).padding(top = Space.xs, bottom = Space.l)) {
         TextField(
             value = draft,
             onValueChange = { draft = it.take(8) },
@@ -106,19 +125,30 @@ private fun RoomAliasEditor(
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
-        Spacer(Modifier.height(12.dp))
-        Button(
-            onClick = { onSave(draft.trim()) },
-            enabled = draft.trim().isNotBlank(),
-            modifier = Modifier.fillMaxWidth(),
-            minHeight = 44.dp,
-            colors = ButtonDefaults.buttonColorsPrimary(),
-        ) { Text("保存缩写") }
-        Spacer(Modifier.height(8.dp))
-        Button(
-            onClick = { onSave("") },
-            modifier = Modifier.fillMaxWidth(),
-            minHeight = 44.dp,
-        ) { Text("恢复默认") }
+        Spacer(Modifier.height(Space.xs))
+        // 校验错误紧贴输入框，用危险色；没问题时给规则提示。
+        if (trimmed.isBlank()) {
+            Text("缩写不能为空；想用默认就点「恢复默认」", style = MiuixTheme.textStyles.footnote1, color = Tone.danger())
+        } else {
+            Text("默认是 $fallback · ${trimmed.length}/8 字", style = MiuixTheme.textStyles.footnote1, color = Tone.muted())
+        }
+        Spacer(Modifier.height(Space.m))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+            Button(
+                onClick = { onSave("") },
+                // 没自定义过时「恢复默认」什么也不会改，置灰。
+                enabled = saved.isNotBlank(),
+                modifier = Modifier.weight(1f),
+                minHeight = 44.dp,
+            ) { Text("恢复默认") }
+            Button(
+                onClick = { onSave(trimmed) },
+                // 和当前生效的一样就没必要再存一遍。
+                enabled = trimmed.isNotBlank() && trimmed != saved.ifBlank { fallback },
+                modifier = Modifier.weight(1f),
+                minHeight = 44.dp,
+                colors = ButtonDefaults.buttonColorsPrimary(),
+            ) { Text("保存") }
+        }
     }
 }

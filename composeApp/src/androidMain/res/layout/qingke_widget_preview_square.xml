@@ -1,34 +1,39 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 一格课表预览：品牌色小字「下一节」+ 课程名 + 节次 / 教室，与实际渲染层级一致。 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@drawable/widget_preview_bg"
     android:gravity="center_vertical"
     android:orientation="vertical"
-    android:padding="12dp">
+    android:padding="14dp">
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:fontFamily="sans-serif-medium"
         android:text="下一节"
         android:textColor="#3482FF"
-        android:textSize="11sp"
-        android:textStyle="bold" />
+        android:textSize="11sp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:ellipsize="end"
+        android:fontFamily="sans-serif-medium"
+        android:maxLines="1"
+        android:text="高等数学"
+        android:textColor="#1A1A1A"
+        android:textSize="17sp" />
 
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="4dp"
-        android:text="高等数学"
-        android:textColor="#1A1A1A"
-        android:textSize="16sp"
-        android:textStyle="bold" />
-
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="2dp"
-        android:text="3-4节"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:text="3-4节 · 教A301"
         android:textColor="#99303030"
-        android:textSize="12sp" />
+        android:textSize="11sp" />
 </LinearLayout>

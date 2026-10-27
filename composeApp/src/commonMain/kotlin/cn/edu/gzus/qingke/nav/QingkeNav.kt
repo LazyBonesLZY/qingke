@@ -34,8 +34,16 @@ class QingkeNavigator(start: TabDest = TabDest.Today) {
     val current: Route get() = stack.lastOrNull() ?: Route.Tab(tab)
     val canPop: Boolean get() = stack.isNotEmpty()
 
+    /**
+     * 最近一次栈变化是不是「返回」。二级页之间互跳（大厅 → 请假 → 返回大厅）时，
+     * 转场方向要跟着它走：前进从右推入，返回从左退回，不能一律当成前进。
+     */
+    var lastWasPop by mutableStateOf(false)
+        private set
+
     fun goTab(dest: TabDest) {
         tab = dest
+        lastWasPop = stack.isNotEmpty()
         stack.clear()
     }
 
@@ -45,14 +53,27 @@ class QingkeNavigator(start: TabDest = TabDest.Today) {
             return
         }
         if (stack.lastOrNull() == route) return
+        lastWasPop = false
         stack += route
     }
 
     fun pop(): Boolean {
         if (stack.isEmpty()) return false
+        lastWasPop = true
         stack.removeAt(stack.lastIndex)
         return true
     }
+
+    /** 去「我的」并直接展开「第1周周一」的日期选择，不用再自己往下找。 */
+    fun openTermStart() {
+        termStartFocus = true
+        goTab(TabDest.Mine)
+    }
+
+    /** 「我的」页进场时取一次：是不是被 [openTermStart] 带过来的。 */
+    fun consumeTermStartFocus(): Boolean = termStartFocus.also { termStartFocus = false }
+
+    private var termStartFocus = false
 
     fun swipeTab(delta: Int) {
         val order = TabDest.entries

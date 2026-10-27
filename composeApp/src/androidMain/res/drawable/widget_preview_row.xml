@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 预览里的课程行 / 课程格：10dp 圆角，颜色由 backgroundTint 给（与实际渲染的课程色板一致）。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#FFFFFFFF" />
+    <corners android:radius="10dp" />
+</shape>

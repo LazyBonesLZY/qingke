@@ -1,7 +1,9 @@
 package cn.edu.gzus.qingke.ui.mine
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -19,10 +21,15 @@ import androidx.compose.ui.unit.dp
 import cn.edu.gzus.qingke.data.AppSnapshot
 import cn.edu.gzus.qingke.data.compactCourseName
 import cn.edu.gzus.qingke.data.uniqueCourses
-import cn.edu.gzus.qingke.ui.components.EmptyHint
+import cn.edu.gzus.qingke.ui.components.EmptyState
+import cn.edu.gzus.qingke.ui.components.Inset
+import cn.edu.gzus.qingke.ui.components.Space
+import cn.edu.gzus.qingke.ui.components.StatusTag
+import cn.edu.gzus.qingke.ui.components.Tone
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
+import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.preference.ArrowPreference
@@ -37,34 +44,48 @@ fun CourseAliasesScreen(
     val courses = uniqueCourses(snapshot.slots)
     val aliases = snapshot.settings.courseAliases
     var editingId by remember { mutableStateOf<String?>(null) }
+    // 刚保存 / 恢复过的那一行，右侧给一个成功回执，不然编辑区一收起像什么都没发生。
+    var receiptKey by remember { mutableStateOf<String?>(null) }
+    var receiptText by remember { mutableStateOf("") }
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(contentPadding)
-            .padding(bottom = 24.dp),
+            .padding(bottom = Space.xl),
     ) {
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(Space.s))
         Text(
-            "只改课表格子里的简称。",
-            modifier = Modifier.padding(horizontal = 16.dp),
-            color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+            "只改课表格子里的简称，课程全名不受影响。",
+            modifier = Modifier.padding(horizontal = Inset.page),
+            color = Tone.muted(),
             style = MiuixTheme.textStyles.body2,
         )
-        Spacer(Modifier.height(12.dp))
         if (courses.isEmpty()) {
-            EmptyHint("同步课表后才能改缩写")
+            Spacer(Modifier.height(Space.m))
+            EmptyState(
+                title = "还没有课程",
+                detail = "同步课表后，这里会列出每门课，可以逐个改缩写。",
+            )
         } else {
+            SmallTitle(text = "课程 · ${courses.size} 门")
             Card(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = Inset.page),
                 insideMargin = PaddingValues(0.dp),
             ) {
                 courses.forEach { course ->
                     val key = course.courseId.ifBlank { course.courseName }
                     val shown = compactCourseName(course.courseName, aliases, course.courseId)
+                    val custom = !aliases[key].isNullOrBlank() || !aliases[course.courseName].isNullOrBlank()
                     ArrowPreference(
                         title = course.courseName,
                         summary = "格子里显示 $shown",
+                        endActions = {
+                            when {
+                                receiptKey == key -> StatusTag(receiptText, color = Tone.success())
+                                custom -> StatusTag("已自定义")
+                            }
+                        },
                         onClick = { editingId = if (editingId == key) null else key },
                     )
                     if (editingId == key) {
@@ -74,6 +95,8 @@ fun CourseAliasesScreen(
                             aliases = aliases,
                             onSave = { id, name, alias ->
                                 onSaveAlias(id, name, alias)
+                                receiptKey = key
+                                receiptText = if (alias.isBlank()) "已恢复默认" else "已保存"
                                 editingId = null
                             },
                         )
@@ -93,16 +116,12 @@ private fun AliasEditor(
 ) {
     val key = courseId.ifBlank { courseName }
     val fallback = compactCourseName(courseName)
+    val saved = aliases[key] ?: aliases[courseName]
     var draft by remember(key) {
-        mutableStateOf(aliases[key] ?: aliases[courseName] ?: fallback)
+        mutableStateOf(saved ?: fallback)
     }
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
-        Text(
-            "默认是 $fallback，最多 4 个字",
-            style = MiuixTheme.textStyles.footnote1,
-            color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
-        )
-        Spacer(Modifier.height(8.dp))
+    val trimmed = draft.trim()
+    Column(Modifier.fillMaxWidth().padding(horizontal = Inset.page).padding(top = Space.xs, bottom = Space.l)) {
         TextField(
             value = draft,
             onValueChange = { draft = it.take(4) },
@@ -110,19 +129,30 @@ private fun AliasEditor(
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
-        Spacer(Modifier.height(12.dp))
-        Button(
-            onClick = { onSave(courseId, courseName, draft.trim()) },
-            enabled = draft.trim().isNotBlank(),
-            modifier = Modifier.fillMaxWidth(),
-            minHeight = 44.dp,
-            colors = ButtonDefaults.buttonColorsPrimary(),
-        ) { Text("保存缩写") }
-        Spacer(Modifier.height(8.dp))
-        Button(
-            onClick = { onSave(courseId, courseName, "") },
-            modifier = Modifier.fillMaxWidth(),
-            minHeight = 44.dp,
-        ) { Text("恢复默认") }
+        Spacer(Modifier.height(Space.xs))
+        // 校验错误紧贴输入框，用危险色；没问题时给规则提示。
+        if (trimmed.isBlank()) {
+            Text("缩写不能为空；想用默认就点「恢复默认」", style = MiuixTheme.textStyles.footnote1, color = Tone.danger())
+        } else {
+            Text("默认是 $fallback · ${trimmed.length}/4 字", style = MiuixTheme.textStyles.footnote1, color = Tone.muted())
+        }
+        Spacer(Modifier.height(Space.m))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+            Button(
+                onClick = { onSave(courseId, courseName, "") },
+                // 没自定义过时「恢复默认」什么也不会改，置灰。
+                enabled = !saved.isNullOrBlank(),
+                modifier = Modifier.weight(1f),
+                minHeight = 44.dp,
+            ) { Text("恢复默认") }
+            Button(
+                onClick = { onSave(courseId, courseName, trimmed) },
+                // 和当前生效的一样就没必要再存一遍。
+                enabled = trimmed.isNotBlank() && trimmed != (saved ?: fallback),
+                modifier = Modifier.weight(1f),
+                minHeight = 44.dp,
+                colors = ButtonDefaults.buttonColorsPrimary(),
+            ) { Text("保存") }
+        }
     }
 }

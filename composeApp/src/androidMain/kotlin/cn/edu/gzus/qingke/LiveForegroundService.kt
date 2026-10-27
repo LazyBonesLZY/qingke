@@ -13,13 +13,12 @@ import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import cn.edu.gzus.qingke.data.LIVE_CHANNEL
 import cn.edu.gzus.qingke.data.LIVE_ID
 import cn.edu.gzus.qingke.data.LIVE_STEP_MILLIS
 import cn.edu.gzus.qingke.data.buildLiveNotification
 import cn.edu.gzus.qingke.data.liveTiming
 import cn.edu.gzus.qingke.data.nextLiveWake
-import cn.edu.gzus.qingke.data.nowDateTime
+import cn.edu.gzus.qingke.data.dateTimeAt
 import cn.edu.gzus.qingke.data.readSnapshotStore
 import cn.edu.gzus.qingke.data.scheduleLiveWake
 import cn.edu.gzus.qingke.shared.R
@@ -33,7 +32,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-/** One native Live notification doubles as the foreground-service notification on every vendor. */
+/** Keeps the Live notification fresh during class; the Live card itself is a plain notification with a timeout. */
 class LiveForegroundService : Service() {
     // Service callbacks and loop cleanup share Main: an old loop cannot remove a newer notification.
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -73,13 +72,16 @@ class LiveForegroundService : Service() {
         val liveNotification = runCatching { currentNotification() }
             .onFailure { Log.w(TAG, "Read Live notification failed", it) }
             .getOrNull()
-        val notification = liveNotification ?: recoveryNotification()
-        if (runCatching { startForeground(LIVE_ID, notification) }
+        // 前台服务挂自己那条静默保活通知，上课通知单独发：系统不会按 setTimeoutAfter
+        // 撤下前台服务的通知，进程一旦被厂商冻结（ColorOS 的 Hans 会冻结前台服务），
+        // 过了上下课点通知就一直挂着、倒数走成负数。普通通知到点由系统自己撤，不依赖进程活着。
+        if (runCatching { startForeground(KEEPALIVE_ID, keepaliveNotification()) }
                 .onFailure { Log.w(TAG, "Start foreground failed", it) }.isFailure
         ) {
             stopSelfResult(startId)
             return START_NOT_STICKY
         }
+        liveNotification?.let { getSystemService(NotificationManager::class.java)?.notify(LIVE_ID, it) }
         if (liveNotification == null) {
             // Complete the foreground-start contract even if the course ended during startup.
             finishLive(startId)
@@ -89,8 +91,8 @@ class LiveForegroundService : Service() {
         return START_STICKY
     }
 
-    private fun currentNotification(): Notification? {
-        val params = currentLiveParams(System.currentTimeMillis()) ?: return null
+    private fun currentNotification(nowMs: Long = System.currentTimeMillis()): Notification? {
+        val params = currentLiveParams(nowMs) ?: return null
         return buildLiveNotification(
             title = params.title,
             detail = params.detail,
@@ -99,25 +101,28 @@ class LiveForegroundService : Service() {
             startMillis = params.startMillis,
             endMillis = params.endMillis,
             countdownEnabled = params.countdownEnabled,
+            nowMillis = nowMs,
         )
     }
 
-    private fun recoveryNotification(): Notification {
+    /** 最低重要性：不进状态栏、折叠在静默区，只为满足前台服务必须挂一条通知。 */
+    private fun keepaliveNotification(): Notification {
         getSystemService(NotificationManager::class.java)?.createNotificationChannel(
-            NotificationChannel(LIVE_CHANNEL, "上课进度", NotificationManager.IMPORTANCE_DEFAULT).apply {
+            NotificationChannel(KEEPALIVE_CHANNEL, "上课提醒后台刷新", NotificationManager.IMPORTANCE_MIN).apply {
+                description = "上课期间刷新倒计时用，可以在这里关掉显示，不影响上课提醒"
                 setSound(null, null)
                 enableVibration(false)
                 setShowBadge(false)
             },
         )
-        return NotificationCompat.Builder(this, LIVE_CHANNEL)
+        return NotificationCompat.Builder(this, KEEPALIVE_CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_live)
-            .setContentTitle("青课")
-            .setContentText("正在恢复上课提醒")
+            .setContentTitle("上课提醒正在刷新")
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setSilent(true)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .build()
     }
 
@@ -133,14 +138,19 @@ class LiveForegroundService : Service() {
                 // 以前整节课持锁加每分钟一次闹钟，是上课期间最耗电的地方。
                 scheduleLiveWake(timing.deadlineMillis)
                 // 只在离上下课不到两分钟时拿 CPU：保证正好在边沿换阶段，倒数不会走成负数。
-                if (timing.remainingMillis <= EDGE_HOLD_MILLIS) {
+                // 判断的是「这次 delay 醒来时」离边沿多远，而不是现在：剩 3 分钟时那一跳
+                // 不拿锁的话，灭屏 CPU 一睡 delay 就停住，根本走不到「剩 2 分钟」去拿锁。
+                // 真错过了边沿，上课通知也会被系统按 setTimeoutAfter 撤掉，不会挂着负数；
+                // 这里是尽量让连堂时下课点无缝换成下一节的「距上课」。
+                if (timing.remainingMillis - timing.refreshDelayMillis < EDGE_HOLD_MILLIS) {
                     wakeLock?.acquire(timing.remainingMillis + 10_000L)
                 } else {
                     releaseWakeLock()
                 }
                 delay(timing.refreshDelayMillis)
                 if (generation != runGeneration) return
-                val notification = currentNotification() ?: return
+                // 醒来可能已过边沿（被冻结 / 迟到）：用同一时刻判课和建通知，连堂时直接换成下一节。
+                val notification = currentNotification(System.currentTimeMillis()) ?: return
                 getSystemService(NotificationManager::class.java)?.notify(LIVE_ID, notification)
             }
         } catch (cancelled: CancellationException) {
@@ -162,9 +172,11 @@ class LiveForegroundService : Service() {
             // A dismissed/blocked course stays silent until its end; do not spin every minute.
             params.endMillis + 1_000L
         } else {
-            runCatching { readSnapshotStore()?.nextLiveWake(nowDateTime(), nowMs) }.getOrNull()
+            runCatching { readSnapshotStore()?.nextLiveWake(dateTimeAt(nowMs), nowMs) }.getOrNull()
         }
         try {
+            // 上课通知不再随前台服务一起撤：没课可挂了就显式撤掉（被划掉的那条本来就没了）。
+            if (params == null && !retry) getSystemService(NotificationManager::class.java)?.cancel(LIVE_ID)
             scheduleLiveWake(nextWake)
         } finally {
             releaseWakeLock()
@@ -189,6 +201,8 @@ class LiveForegroundService : Service() {
     companion object {
         private const val TAG = "QingkeLive"
         private const val EDGE_HOLD_MILLIS = 2 * LIVE_STEP_MILLIS
+        private const val KEEPALIVE_ID = LIVE_ID + 1
+        private const val KEEPALIVE_CHANNEL = "qingke_live_keepalive"
 
         fun sync(context: Context, active: Boolean) {
             val intent = Intent(context, LiveForegroundService::class.java)

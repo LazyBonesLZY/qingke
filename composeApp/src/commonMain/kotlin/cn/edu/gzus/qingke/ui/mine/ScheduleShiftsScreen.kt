@@ -23,12 +23,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import cn.edu.gzus.qingke.data.AppSnapshot
 import cn.edu.gzus.qingke.data.HolidayDay
+import cn.edu.gzus.qingke.data.School
+import cn.edu.gzus.qingke.data.school
 import cn.edu.gzus.qingke.data.WeekdayNames
 import cn.edu.gzus.qingke.data.chip
 import cn.edu.gzus.qingke.data.formatLongDate
@@ -42,6 +44,12 @@ import cn.edu.gzus.qingke.data.nowDateTime
 import cn.edu.gzus.qingke.data.parseIsoDate
 import cn.edu.gzus.qingke.data.shiftConflict
 import cn.edu.gzus.qingke.data.weekdayIndex
+import cn.edu.gzus.qingke.ui.components.ConfirmDialog
+import cn.edu.gzus.qingke.ui.components.EmptyState
+import cn.edu.gzus.qingke.ui.components.Inset
+import cn.edu.gzus.qingke.ui.components.Space
+import cn.edu.gzus.qingke.ui.components.StatusTag
+import cn.edu.gzus.qingke.ui.components.Tone
 import kotlinx.datetime.DatePeriod
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.minus
@@ -79,24 +87,33 @@ fun ScheduleShiftsScreen(
     var to by remember { mutableStateOf<LocalDate?>(null) }
     var picking by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    var removing by remember { mutableStateOf<String?>(null) }
+    // 刚保存成功的那条（"from>to"），列表里标「刚添加」，表单下给成功回执。
+    var justAdded by remember { mutableStateOf<String?>(null) }
+    var addedText by remember { mutableStateOf("") }
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(contentPadding)
-            .padding(bottom = 24.dp),
+            .padding(bottom = Space.xl),
     ) {
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(Space.s))
         Text(
-            "放假日没课。广软的补课可以自动拉，也可以在下面手动加。",
-            modifier = Modifier.padding(horizontal = 16.dp),
-            color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+            // 自动拉调休只有广软有（MineScreen 里的开关也只对广软显示），别的学校别提它。
+            if (snapshot.settings.school() == School.Gzus) {
+                "放假日没课。广软的补课可以在「我的」里自动拉，也可以在下面手动加。"
+            } else {
+                "放假日没课。补课按学校通知，在下面选原上课日和调到哪天。"
+            },
+            modifier = Modifier.padding(horizontal = Inset.page),
+            color = Tone.muted(),
             style = MiuixTheme.textStyles.body2,
         )
         if (cloud.offs.isNotEmpty() || cloudShifts.isNotEmpty()) {
             SmallTitle(text = cloud.title.ifBlank { "云端调休" })
             Card(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = Inset.page),
                 insideMargin = PaddingValues(0.dp),
             ) {
                 cloud.offs.groupBy { it.name.ifBlank { "放假" } }.forEach { (name, days) ->
@@ -117,37 +134,42 @@ fun ScheduleShiftsScreen(
                 }
             }
         }
-        SmallTitle(text = "已有调课")
+        SmallTitle(text = if (shifts.isEmpty()) "已有调课" else "已有调课 · ${shifts.size} 条")
         if (shifts.isEmpty()) {
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                insideMargin = PaddingValues(0.dp),
-            ) {
-                BasicComponent(title = "还没有调课", summary = "下面按原上课日和调到哪天各选一天")
-            }
+            EmptyState(
+                title = "还没有调课",
+                detail = "在下面按原上课日和调到哪天各选一天。",
+            )
         } else {
             Card(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = Inset.page),
                 insideMargin = PaddingValues(0.dp),
             ) {
+                // 点一下不直接删，误触无法撤回；走统一的危险确认框。
                 shifts.forEach { shift ->
                     ArrowPreference(
                         title = formatShift(shift),
                         summary = "点按删除",
-                        onClick = { onRemove(shift.id) },
+                        endActions = {
+                            if (justAdded == "${shift.fromDate}>${shift.toDate}") StatusTag("刚添加", color = Tone.success())
+                        },
+                        onClick = { removing = shift.id },
                     )
                 }
             }
         }
         if (offDays.isNotEmpty() || makeupDays.isNotEmpty()) {
             SmallTitle(text = "节假日参考")
-            HolidayHintCard("放假的工作日，常当作原上课日", offDays) { date ->
-                from = date
-                picking = null
-                error = null
+            // 只有补班日时不要先画一张空卡。
+            if (offDays.isNotEmpty()) {
+                HolidayHintCard("放假的工作日，常当作原上课日", offDays) { date ->
+                    from = date
+                    picking = null
+                    error = null
+                }
             }
             if (makeupDays.isNotEmpty()) {
-                Spacer(Modifier.height(8.dp))
+                if (offDays.isNotEmpty()) Spacer(Modifier.height(Space.s))
                 HolidayHintCard("补班日，常当作调到哪天", makeupDays) { date ->
                     to = date
                     picking = null
@@ -157,7 +179,7 @@ fun ScheduleShiftsScreen(
         }
         SmallTitle(text = "添加调课")
         Card(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = Inset.page),
             insideMargin = PaddingValues(0.dp),
         ) {
             ArrowPreference(
@@ -193,16 +215,27 @@ fun ScheduleShiftsScreen(
                 )
             }
         }
-        if (!error.isNullOrBlank()) {
-            Spacer(Modifier.height(8.dp))
+        // 表单下方只放一行状态：校验失败用危险色，保存成功用成功色。
+        val status = error
+        if (!status.isNullOrBlank()) {
+            Spacer(Modifier.height(Space.s))
             Text(
-                error.orEmpty(),
-                modifier = Modifier.padding(horizontal = 16.dp),
-                color = MiuixTheme.colorScheme.primary,
+                status,
+                modifier = Modifier.padding(horizontal = Inset.page),
+                color = Tone.danger(),
+                style = MiuixTheme.textStyles.footnote1,
+            )
+        } else if (addedText.isNotBlank() && from == null && to == null) {
+            // 开始选下一条后回执自动消失。
+            Spacer(Modifier.height(Space.s))
+            Text(
+                addedText,
+                modifier = Modifier.padding(horizontal = Inset.page),
+                color = Tone.success(),
                 style = MiuixTheme.textStyles.footnote1,
             )
         }
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(Space.m))
         Button(
             onClick = {
                 val src = from
@@ -218,16 +251,35 @@ fun ScheduleShiftsScreen(
                 }
                 error = onAdd(src, dest)
                 if (error == null) {
+                    justAdded = "$src>$dest"
+                    addedText = "已添加：${formatLongDate(src)} 的课调到 ${formatLongDate(dest)}"
                     from = null
                     to = null
                     picking = null
+                } else {
+                    addedText = ""
                 }
             },
             enabled = from != null && to != null,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = Inset.page),
             minHeight = 44.dp,
             colors = ButtonDefaults.buttonColorsPrimary(),
         ) { Text("保存调课") }
+    }
+
+    val target = shifts.firstOrNull { it.id == removing }
+    if (target != null) {
+        ConfirmDialog(
+            title = "删除这条调课？",
+            message = "${formatShift(target)}\n删除后课表不再按这条调课排。",
+            confirmText = "删除",
+            onConfirm = {
+                if (justAdded == "${target.fromDate}>${target.toDate}") justAdded = null
+                onRemove(target.id)
+            },
+            onDismiss = { removing = null },
+            destructive = true,
+        )
     }
 }
 
@@ -238,7 +290,7 @@ private fun HolidayHintCard(
     onPick: (LocalDate) -> Unit,
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = Inset.page),
         insideMargin = PaddingValues(0.dp),
     ) {
         days.forEach { day ->
@@ -285,19 +337,19 @@ private fun ShiftDayPicker(
                 Icon(MiuixIcons.ChevronForward, contentDescription = "下一月")
             }
         }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(Space.s))
         Row(Modifier.fillMaxWidth()) {
             WeekdayNames.forEach { name ->
                 Text(
                     name,
                     modifier = Modifier.weight(1f),
                     textAlign = TextAlign.Center,
-                    fontSize = 12.sp,
-                    color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                    style = MiuixTheme.textStyles.footnote1,
+                    color = Tone.muted(),
                 )
             }
         }
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(Space.xs))
         for (row in 0 until total / 7) {
             Row(Modifier.fillMaxWidth().height(44.dp)) {
                 for (col in 0..6) {
@@ -314,20 +366,20 @@ private fun ShiftDayPicker(
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(28.dp)
+                                .size(32.dp)
                                 .clip(CircleShape)
                                 .background(
                                     when {
                                         isSelected -> MiuixTheme.colorScheme.primary
                                         isToday -> MiuixTheme.colorScheme.primary.copy(alpha = 0.12f)
-                                        else -> androidx.compose.ui.graphics.Color.Transparent
+                                        else -> Color.Transparent
                                     },
                                 ),
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
                                 date.dayOfMonth.toString(),
-                                fontSize = 13.sp,
+                                style = MiuixTheme.textStyles.body2,
                                 fontWeight = if (isSelected || isToday) FontWeight.SemiBold else FontWeight.Normal,
                                 color = when {
                                     isSelected -> MiuixTheme.colorScheme.onPrimary
@@ -340,7 +392,7 @@ private fun ShiftDayPicker(
                 }
             }
         }
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(Space.m))
         Button(
             onClick = { onPick(selected) },
             modifier = Modifier.fillMaxWidth(),
@@ -349,13 +401,13 @@ private fun ShiftDayPicker(
         ) { Text("用 ${formatLongDate(selected)}") }
     }
     if (embedded) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = Space.m, vertical = Space.m)) {
             body()
         }
     } else {
         Card(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            insideMargin = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = Inset.page),
+            insideMargin = PaddingValues(horizontal = Space.m, vertical = Space.m),
         ) {
             body()
         }

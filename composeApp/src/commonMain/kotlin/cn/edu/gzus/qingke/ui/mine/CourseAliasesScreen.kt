@@ -62,9 +62,10 @@ fun CourseAliasesScreen(
                 courses.forEach { course ->
                     val key = course.courseId.ifBlank { course.courseName }
                     val shown = compactCourseName(course.courseName, aliases, course.courseId)
+                    val custom = !aliases[key].isNullOrBlank() || !aliases[course.courseName].isNullOrBlank()
                     ArrowPreference(
                         title = course.courseName,
-                        summary = "格子里显示 $shown",
+                        summary = if (custom) "格子里显示 $shown · 已自定义" else "格子里显示 $shown",
                         onClick = { editingId = if (editingId == key) null else key },
                     )
                     if (editingId == key) {
@@ -93,8 +94,9 @@ private fun AliasEditor(
 ) {
     val key = courseId.ifBlank { courseName }
     val fallback = compactCourseName(courseName)
+    val saved = aliases[key] ?: aliases[courseName]
     var draft by remember(key) {
-        mutableStateOf(aliases[key] ?: aliases[courseName] ?: fallback)
+        mutableStateOf(saved ?: fallback)
     }
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
         Text(
@@ -113,7 +115,8 @@ private fun AliasEditor(
         Spacer(Modifier.height(12.dp))
         Button(
             onClick = { onSave(courseId, courseName, draft.trim()) },
-            enabled = draft.trim().isNotBlank(),
+            // 和当前生效的一样就没必要再存一遍。
+            enabled = draft.trim().isNotBlank() && draft.trim() != (saved ?: fallback),
             modifier = Modifier.fillMaxWidth(),
             minHeight = 44.dp,
             colors = ButtonDefaults.buttonColorsPrimary(),
@@ -121,6 +124,8 @@ private fun AliasEditor(
         Spacer(Modifier.height(8.dp))
         Button(
             onClick = { onSave(courseId, courseName, "") },
+            // 没自定义过时「恢复默认」什么也不会改，置灰。
+            enabled = !saved.isNullOrBlank(),
             modifier = Modifier.fillMaxWidth(),
             minHeight = 44.dp,
         ) { Text("恢复默认") }

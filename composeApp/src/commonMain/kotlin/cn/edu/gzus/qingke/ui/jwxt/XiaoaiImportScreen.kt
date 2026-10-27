@@ -32,14 +32,17 @@ import cn.edu.gzus.qingke.data.openXiaoaiSchedule
 import cn.edu.gzus.qingke.data.parseXiaoaiToken
 import cn.edu.gzus.qingke.ui.components.EmptyHint
 import cn.edu.gzus.qingke.ui.components.FactsCard
-import cn.edu.gzus.qingke.ui.components.InfoCard
+import cn.edu.gzus.qingke.ui.components.ListGroup
+import cn.edu.gzus.qingke.ui.components.ListRow
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
+import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.utils.PressFeedbackType
 
 @Composable
 fun XiaoaiImportScreen(
@@ -60,6 +63,12 @@ fun XiaoaiImportScreen(
     var url by remember(snapshot.settings.xiaoaiEditUrl) {
         mutableStateOf(snapshot.settings.xiaoaiEditUrl)
     }
+    // 输入框里的内容先本地认一遍，认不出就别让人点保存再等 toast
+    val draftToken = remember(url) { parseXiaoaiToken(url) }
+    val saved = url.trim() == snapshot.settings.xiaoaiEditUrl.trim() && token != null
+    var commandCopied by remember { mutableStateOf(false) }
+    var confirmImport by remember { mutableStateOf(false) }
+    var confirmClear by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -107,12 +116,28 @@ fun XiaoaiImportScreen(
             style = MiuixTheme.textStyles.body2,
         )
         Spacer(Modifier.height(8.dp))
-        Text(
-            "copy(JSON.stringify(await window.xiaoai.getUserInfo()))",
-            modifier = Modifier.padding(horizontal = 16.dp),
-            color = MiuixTheme.colorScheme.primary,
-            style = MiuixTheme.textStyles.footnote1,
-        )
+        // 这句要原样敲进 vConsole，手抄容易错，点一下直接复制
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            insideMargin = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+            pressFeedbackType = PressFeedbackType.Sink,
+            onClick = {
+                copyToClipboard(XiaoaiUserInfoCommand)
+                commandCopied = true
+            },
+        ) {
+            Text(
+                XiaoaiUserInfoCommand,
+                color = MiuixTheme.colorScheme.primary,
+                style = MiuixTheme.textStyles.footnote1,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                if (commandCopied) "已复制，去 vConsole 的 Command 里粘贴" else "点这里复制这句",
+                color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                style = MiuixTheme.textStyles.footnote1,
+            )
+        }
         Spacer(Modifier.height(8.dp))
         TextField(
             value = url,
@@ -121,10 +146,16 @@ fun XiaoaiImportScreen(
             singleLine = false,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         )
-        if (token != null) {
+        val authHint = when {
+            url.isBlank() -> ""
+            draftToken == null -> "认不出这段内容：要么是整段 UserInfo JSON，要么是旧的 PC 编辑链接"
+            !saved -> draftToken.authSummary() + "，点「保存授权」后生效"
+            else -> draftToken.authSummary()
+        }
+        if (authHint.isNotBlank()) {
             Text(
-                token.authSummary(),
-                color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                authHint,
+                color = if (draftToken == null || draftToken.expired()) MiuixTheme.colorScheme.error else MiuixTheme.colorScheme.onSurfaceContainerVariant,
                 style = MiuixTheme.textStyles.footnote1,
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
             )
@@ -136,14 +167,14 @@ fun XiaoaiImportScreen(
         ) {
             Button(
                 onClick = { onSaveUrl(url) },
-                enabled = !busy && url.isNotBlank(),
+                enabled = !busy && draftToken != null && !draftToken.expired() && !saved,
                 modifier = Modifier.fillMaxWidth(),
                 minHeight = 50.dp,
             ) {
-                Text("保存授权")
+                Text(if (saved) "授权已保存" else "保存授权")
             }
             Button(
-                onClick = onImport,
+                onClick = { confirmImport = true },
                 enabled = !busy && converted.apiCourses.isNotEmpty() && token != null,
                 modifier = Modifier.fillMaxWidth(),
                 minHeight = 50.dp,
@@ -152,9 +183,22 @@ fun XiaoaiImportScreen(
                 if (busy) InfiniteProgressIndicator()
                 Text(if (busy) "正在写入小爱" else "一键导入")
             }
+            val importBlocker = when {
+                converted.apiCourses.isEmpty() -> "没有能导入的课，先同步课表"
+                token == null -> "先粘贴并保存授权，才能一键导入"
+                else -> ""
+            }
+            if (importBlocker.isNotBlank() && !busy) {
+                Text(
+                    importBlocker,
+                    color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                    style = MiuixTheme.textStyles.footnote1,
+                    modifier = Modifier.padding(horizontal = 4.dp),
+                )
+            }
             if (token != null) {
                 Button(
-                    onClick = onClearUrl,
+                    onClick = { confirmClear = true },
                     enabled = !busy,
                     modifier = Modifier.fillMaxWidth(),
                     minHeight = 50.dp,
@@ -164,34 +208,55 @@ fun XiaoaiImportScreen(
             }
         }
         SmallTitle(text = "其他")
-        Column(
-            modifier = Modifier.padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            InfoCard(
-                title = "打开小爱课程表",
-                summary = "有独立 App 就打开，没有就进网页",
-                onClick = { openXiaoaiSchedule() },
-            )
-            InfoCard(
-                title = "复制官方 JSON",
-                summary = "courseInfos + timer，给适配器或自用",
-                onClick = {
-                    copyToClipboard(encodeXiaoaiOfficial(converted.official))
-                    onCopied()
-                },
-            )
-            InfoCard(
-                title = "小爱开放平台",
-                summary = "open-schedule-prod.ai.xiaomi.com",
-                onClick = { openUrl("https://open-schedule-prod.ai.xiaomi.com/") },
-            )
-            InfoCard(
-                title = "小爱网页课表",
-                summary = XIAOAI_SCHEDULE_HOME,
-                onClick = { openUrl(XIAOAI_SCHEDULE_HOME) },
-            )
-        }
+        ListGroup(
+            listOf(
+                ListRow(
+                    title = "打开小爱课程表",
+                    summary = "有独立 App 就打开，没有就进网页",
+                    onClick = { openXiaoaiSchedule() },
+                ),
+                ListRow(
+                    title = "复制官方 JSON",
+                    summary = "courseInfos + timer，给适配器或自用",
+                    onClick = {
+                        copyToClipboard(encodeXiaoaiOfficial(converted.official))
+                        onCopied()
+                    },
+                ),
+                ListRow(
+                    title = "小爱开放平台",
+                    summary = "open-schedule-prod.ai.xiaomi.com",
+                    onClick = { openUrl("https://open-schedule-prod.ai.xiaomi.com/") },
+                ),
+                ListRow(
+                    title = "小爱网页课表",
+                    summary = XIAOAI_SCHEDULE_HOME,
+                    onClick = { openUrl(XIAOAI_SCHEDULE_HOME) },
+                ),
+            ),
+        )
         Spacer(Modifier.height(16.dp))
     }
+
+    if (confirmImport) {
+        // 导入走 replaceCourses，会整表替换小爱里现有的课
+        JwxtConfirmDialog(
+            title = "导入小爱课程表",
+            message = "会把 ${converted.apiCourses.size} 门课写进小爱课程表，替换那张表里现有的课程。手动在小爱里加的课会被覆盖。",
+            confirmText = "确认导入",
+            onConfirm = onImport,
+            onDismiss = { confirmImport = false },
+        )
+    }
+    if (confirmClear) {
+        JwxtConfirmDialog(
+            title = "清除授权",
+            message = "清除后要重新去小爱复制一份 UserInfo 才能再导入。",
+            confirmText = "清除",
+            onConfirm = onClearUrl,
+            onDismiss = { confirmClear = false },
+        )
+    }
 }
+
+private const val XiaoaiUserInfoCommand = "copy(JSON.stringify(await window.xiaoai.getUserInfo()))"

@@ -1,6 +1,7 @@
 package cn.edu.gzus.qingke.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -426,6 +427,83 @@ fun EmptyHint(text: String) {
     ) {
         Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
             ScrollText(text, color = MiuixTheme.colorScheme.onSurfaceContainerVariant, style = MiuixTheme.textStyles.body2)
+        }
+    }
+}
+
+/** 列表行右侧徽标的语气：成绩好坏、提醒、普通计数。 */
+enum class BadgeTone { Neutral, Accent, Good, Warn, Muted }
+
+data class ListRow(
+    val title: String,
+    val summary: String = "",
+    /** 右侧醒目的值：成绩、条数、状态；空就画箭头（可点时）。 */
+    val badge: String = "",
+    val tone: BadgeTone = BadgeTone.Neutral,
+    val onClick: (() -> Unit)? = null,
+)
+
+/**
+ * 一组同类条目放进一张卡，行间细分割线。以前每项一张 88dp 的独立卡，
+ * 一屏只放得下六七项，分数之类的关键值也埋在小字里。
+ */
+@Composable
+fun ListGroup(rows: List<ListRow>, modifier: Modifier = Modifier.padding(horizontal = 16.dp)) {
+    if (rows.isEmpty()) return
+    val divider = MiuixTheme.colorScheme.outline.copy(alpha = 0.35f)
+    Card(modifier = modifier.fillMaxWidth(), insideMargin = PaddingValues(vertical = 4.dp)) {
+        rows.forEachIndexed { index, row ->
+            if (index > 0) {
+                Box(Modifier.padding(horizontal = 16.dp).fillMaxWidth().height(0.5.dp).background(divider))
+            }
+            ListRowItem(row)
+        }
+    }
+}
+
+@Composable
+private fun ListRowItem(row: ListRow) {
+    val muted = MiuixTheme.colorScheme.onSurfaceContainerVariant
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .then(if (row.onClick != null) Modifier.clickable(onClick = row.onClick) else Modifier)
+            .heightIn(min = 56.dp)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                row.title,
+                style = MiuixTheme.textStyles.main,
+                color = MiuixTheme.colorScheme.onBackground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (row.summary.isNotBlank()) {
+                Spacer(Modifier.height(2.dp))
+                Text(row.summary, style = MiuixTheme.textStyles.footnote1, color = muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        if (row.badge.isNotBlank()) {
+            Spacer(Modifier.width(12.dp))
+            val color = when (row.tone) {
+                BadgeTone.Neutral -> MiuixTheme.colorScheme.onBackground
+                BadgeTone.Accent -> MiuixTheme.colorScheme.primary
+                BadgeTone.Good -> Color(0xFF22A86B)
+                BadgeTone.Warn -> Color(0xFFF2544B)
+                BadgeTone.Muted -> muted
+            }
+            Text(
+                row.badge,
+                style = if (row.tone == BadgeTone.Muted) MiuixTheme.textStyles.footnote1 else MiuixTheme.textStyles.title3,
+                fontWeight = if (row.tone == BadgeTone.Muted) FontWeight.Normal else FontWeight.SemiBold,
+                color = color,
+                maxLines = 1,
+            )
+        } else if (row.onClick != null) {
+            Spacer(Modifier.width(8.dp))
+            Text("›", style = MiuixTheme.textStyles.title3, color = muted.copy(alpha = 0.6f))
         }
     }
 }

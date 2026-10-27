@@ -3,6 +3,7 @@ package cn.edu.gzus.qingke.ui.theme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,6 +12,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -92,7 +95,8 @@ fun ThemeSettingsScreen(
                         onPicked = { uri ->
                             onUpdate { it.copy(backgroundImageUri = uri, backgroundMode = BACKGROUND_CUSTOM) }
                         },
-                        onClear = { onUpdate { it.copy(backgroundImageUri = "") } },
+                        // 清掉图片后还停在「自定义图片」只会得到空背景，顺手退回跟随系统。
+                        onClear = { onUpdate { it.copy(backgroundImageUri = "", backgroundMode = BACKGROUND_SYSTEM) } },
                     )
                 }
             }
@@ -118,7 +122,7 @@ fun ThemeSettingsScreen(
                 )
                 ArrowPreference(
                     title = "界面缩放",
-                    summary = "当前 ${uiScaleLabel(settings.uiScale)} · 全局字号与间距同步缩放",
+                    summary = "全局字号与间距同步缩放",
                     endActions = {
                         Text(
                             uiScaleLabel(settings.uiScale),
@@ -284,10 +288,18 @@ private fun CustomBackgroundActions(
             onPicked = onPicked,
         )
     }
-    if (uri.isNotBlank()) {
+    if (uri.isBlank()) {
+        Text(
+            "还没选图片，选好之前先显示默认背景",
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            style = MiuixTheme.textStyles.footnote1,
+            color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+        )
+    } else {
+        // 原来摘要直接露出 content:// 这类长串路径，对用户没有意义。
         ArrowPreference(
             title = "清除自定义图片",
-            summary = uri.takeLast(48),
+            summary = "恢复为跟随系统背景",
             onClick = onClear,
         )
     }
@@ -344,14 +356,17 @@ private fun ChoiceDialog(
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp),
         ) {
-            SmallTitle(text = title)
-            content()
-            ArrowPreference(
-                title = "取消",
-                summary = "不修改",
-                endActions = {},
-                onClick = onDismiss,
-            )
+            // 色块底色有 12 档，小屏横竖都可能放不下，内容区要能滚。
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                SmallTitle(text = title)
+                content()
+                ArrowPreference(
+                    title = "取消",
+                    summary = "不修改",
+                    endActions = {},
+                    onClick = onDismiss,
+                )
+            }
         }
     }
 }

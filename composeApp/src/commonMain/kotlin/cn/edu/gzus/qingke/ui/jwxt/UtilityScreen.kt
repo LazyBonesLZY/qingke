@@ -21,6 +21,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cn.edu.gzus.qingke.data.AppSnapshot
 import cn.edu.gzus.qingke.data.GZUS_ECARD_ORIGIN
@@ -78,8 +79,11 @@ fun UtilityScreen(
     var searching by remember { mutableStateOf(false) }
     val bound = snapshot.settings.hasUtilityBind()
     val shown = options.take(100)
-    val waterPrice = waterText.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 }
-    val electricPrice = electricText.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 }
+    val waterPrice = waterText.trim().toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 }
+    val electricPrice = electricText.trim().toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 }
+    val priceChanged = waterPrice != snapshot.settings.utilityWaterPrice ||
+        electricPrice != snapshot.settings.utilityElectricPrice ||
+        !snapshot.settings.utilityUseCustomPrice
     LaunchedEffect(snapshot.session.loggedIn, bound) {
         if (snapshot.session.loggedIn && snapshot.settings.gzusUsesCas() && !bound) {
             onPeekBind()
@@ -117,7 +121,8 @@ fun UtilityScreen(
             height = null,
             tintTitle = snapshot.utility.isLow(),
         )
-        if (!snapshot.session.loggedIn || !snapshot.settings.gzusUsesCas()) {
+        // 已经绑好了就别再劝人去登录认宿舍
+        if (!bound && (!snapshot.session.loggedIn || !snapshot.settings.gzusUsesCas())) {
             Spacer(Modifier.height(8.dp))
             InfoCard(
                 title = "不想手动搜？",
@@ -171,7 +176,12 @@ fun UtilityScreen(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         InfiniteProgressIndicator()
-                        Text("正在搜索 ${query.trim()}", color = MiuixTheme.colorScheme.onSurfaceContainerVariant)
+                        Text(
+                            "正在搜索 ${query.trim()}",
+                            color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
                     !optionsError.isNullOrBlank() -> BasicComponent(
                         title = optionsError,
@@ -182,29 +192,39 @@ fun UtilityScreen(
                         summary = "搜索并选择你的宿舍",
                     )
                     shown.isEmpty() -> BasicComponent(title = "未找到宿舍", summary = "换个楼栋或房间号再搜")
-                    else -> shown.forEach { item ->
-                        ArrowPreference(
-                            title = item.name,
-                            summary = listOf(item.areaName, item.buildingName, item.roomName)
-                                .filter { it.isNotBlank() && it != item.name }
-                                .joinToString(" ")
-                                .ifBlank { "点选绑定" },
-                            onClick = {
-                                onSaveBind(
-                                    UtilityBind(
-                                        areaId = item.areaId,
-                                        areaName = item.areaName,
-                                        buildingId = item.buildingId,
-                                        buildingName = item.buildingName.ifBlank { item.buildingId },
-                                        roomId = item.roomId.ifBlank { item.id },
-                                        roomName = item.roomName.ifBlank { item.name },
-                                    ),
-                                )
-                                searching = false
-                                query = ""
-                                onRefresh()
-                            },
-                        )
+                    else -> Column {
+                        shown.forEach { item ->
+                            ArrowPreference(
+                                title = item.name,
+                                summary = listOf(item.areaName, item.buildingName, item.roomName)
+                                    .filter { it.isNotBlank() && it != item.name }
+                                    .joinToString(" ")
+                                    .ifBlank { "点选绑定" },
+                                onClick = {
+                                    onSaveBind(
+                                        UtilityBind(
+                                            areaId = item.areaId,
+                                            areaName = item.areaName,
+                                            buildingId = item.buildingId,
+                                            buildingName = item.buildingName.ifBlank { item.buildingId },
+                                            roomId = item.roomId.ifBlank { item.id },
+                                            roomName = item.roomName.ifBlank { item.name },
+                                        ),
+                                    )
+                                    searching = false
+                                    query = ""
+                                    onRefresh()
+                                },
+                            )
+                        }
+                        if (options.size > shown.size) {
+                            Text(
+                                "只显示前 ${shown.size} 个，房间号写全一点能更快找到。",
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                                color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                                style = MiuixTheme.textStyles.footnote1,
+                            )
+                        }
                     }
                 }
             }
@@ -220,7 +240,8 @@ fun UtilityScreen(
                 checked = custom,
                 onCheckedChange = { on ->
                     custom = on
-                    onSavePrice(on, waterText.toDoubleOrNull() ?: JIANGMEN_WATER_PRICE, electricText.toDoubleOrNull() ?: JIANGMEN_ELECTRIC_PRICE)
+                    // 以前直接 toDoubleOrNull，填了 0 或负数也会被开关存进去，绕过下面的校验
+                    onSavePrice(on, waterPrice ?: JIANGMEN_WATER_PRICE, electricPrice ?: JIANGMEN_ELECTRIC_PRICE)
                 },
             )
         }
@@ -243,19 +264,25 @@ fun UtilityScreen(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             )
-            Spacer(Modifier.height(8.dp))
             if (waterPrice == null || electricPrice == null) {
-                Text("水、电单价都需填写大于 0 的数字", modifier = Modifier.padding(horizontal = 16.dp), color = MiuixTheme.colorScheme.error)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "水、电单价都需填写大于 0 的数字",
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                    color = MiuixTheme.colorScheme.error,
+                    style = MiuixTheme.textStyles.footnote1,
+                )
             }
+            Spacer(Modifier.height(8.dp))
             Button(
                 onClick = {
                     if (waterPrice != null && electricPrice != null) onSavePrice(true, waterPrice, electricPrice)
                 },
-                enabled = waterPrice != null && electricPrice != null,
+                enabled = waterPrice != null && electricPrice != null && priceChanged,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                 minHeight = 44.dp,
                 colors = ButtonDefaults.buttonColorsPrimary(),
-            ) { Text("保存单价") }
+            ) { Text(if (priceChanged) "保存单价" else "单价已保存") }
         }
         Spacer(Modifier.height(12.dp))
         Button(

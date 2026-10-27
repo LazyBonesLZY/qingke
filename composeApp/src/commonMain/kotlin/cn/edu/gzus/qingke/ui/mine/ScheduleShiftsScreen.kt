@@ -2,6 +2,7 @@ package cn.edu.gzus.qingke.ui.mine
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -29,6 +30,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cn.edu.gzus.qingke.data.AppSnapshot
 import cn.edu.gzus.qingke.data.HolidayDay
+import cn.edu.gzus.qingke.data.School
+import cn.edu.gzus.qingke.data.school
 import cn.edu.gzus.qingke.data.WeekdayNames
 import cn.edu.gzus.qingke.data.chip
 import cn.edu.gzus.qingke.data.formatLongDate
@@ -79,6 +82,7 @@ fun ScheduleShiftsScreen(
     var to by remember { mutableStateOf<LocalDate?>(null) }
     var picking by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    var removing by remember { mutableStateOf<String?>(null) }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -88,7 +92,12 @@ fun ScheduleShiftsScreen(
     ) {
         Spacer(Modifier.height(8.dp))
         Text(
-            "放假日没课。广软的补课可以自动拉，也可以在下面手动加。",
+            // 自动拉调休只有广软有（MineScreen 里的开关也只对广软显示），别的学校别提它。
+            if (snapshot.settings.school() == School.Gzus) {
+                "放假日没课。广软的补课可以在「我的」里自动拉，也可以在下面手动加。"
+            } else {
+                "放假日没课。补课按学校通知，在下面选原上课日和调到哪天。"
+            },
             modifier = Modifier.padding(horizontal = 16.dp),
             color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
             style = MiuixTheme.textStyles.body2,
@@ -130,12 +139,34 @@ fun ScheduleShiftsScreen(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                 insideMargin = PaddingValues(0.dp),
             ) {
+                // 原来点一下就直接删，误触无法撤回；改成先展开确认。
                 shifts.forEach { shift ->
+                    val confirming = removing == shift.id
                     ArrowPreference(
                         title = formatShift(shift),
-                        summary = "点按删除",
-                        onClick = { onRemove(shift.id) },
+                        summary = if (confirming) "确认删除这条调课？" else "点按删除",
+                        onClick = { removing = if (confirming) null else shift.id },
                     )
+                    if (confirming) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Button(
+                                onClick = { removing = null },
+                                modifier = Modifier.weight(1f),
+                                minHeight = 40.dp,
+                            ) { Text("取消") }
+                            Button(
+                                onClick = {
+                                    removing = null
+                                    onRemove(shift.id)
+                                },
+                                modifier = Modifier.weight(1f),
+                                minHeight = 40.dp,
+                            ) { Text("删除", color = MiuixTheme.colorScheme.error, fontWeight = FontWeight.Medium) }
+                        }
+                    }
                 }
             }
         }
@@ -198,7 +229,8 @@ fun ScheduleShiftsScreen(
             Text(
                 error.orEmpty(),
                 modifier = Modifier.padding(horizontal = 16.dp),
-                color = MiuixTheme.colorScheme.primary,
+                // 校验失败用错误色，原来用主题蓝看着像普通提示。
+                color = MiuixTheme.colorScheme.error,
                 style = MiuixTheme.textStyles.footnote1,
             )
         }

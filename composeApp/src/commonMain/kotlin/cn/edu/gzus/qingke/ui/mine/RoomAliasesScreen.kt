@@ -61,9 +61,14 @@ fun RoomAliasesScreen(
             ) {
                 rooms.forEach { room ->
                     val shown = compactRoomName(room, aliases)
+                    val custom = !aliases[room].isNullOrBlank()
                     ArrowPreference(
                         title = room,
-                        summary = if (shown == room) "格子里照原样显示" else "格子里显示 $shown",
+                        summary = when {
+                            custom -> "格子里显示 $shown · 已自定义"
+                            shown == room -> "格子里照原样显示"
+                            else -> "格子里显示 $shown"
+                        },
                         onClick = { editing = if (editing == room) null else room },
                     )
                     if (editing == room) {
@@ -89,8 +94,9 @@ private fun RoomAliasEditor(
     onSave: (String) -> Unit,
 ) {
     val fallback = compactRoomName(room)
+    val saved = aliases[room]?.trim().orEmpty()
     var draft by remember(room) {
-        mutableStateOf(aliases[room]?.trim().orEmpty().ifBlank { fallback })
+        mutableStateOf(saved.ifBlank { fallback })
     }
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
         Text(
@@ -109,7 +115,8 @@ private fun RoomAliasEditor(
         Spacer(Modifier.height(12.dp))
         Button(
             onClick = { onSave(draft.trim()) },
-            enabled = draft.trim().isNotBlank(),
+            // 和当前生效的一样就没必要再存一遍。
+            enabled = draft.trim().isNotBlank() && draft.trim() != saved.ifBlank { fallback },
             modifier = Modifier.fillMaxWidth(),
             minHeight = 44.dp,
             colors = ButtonDefaults.buttonColorsPrimary(),
@@ -117,6 +124,8 @@ private fun RoomAliasEditor(
         Spacer(Modifier.height(8.dp))
         Button(
             onClick = { onSave("") },
+            // 没自定义过时「恢复默认」什么也不会改，置灰。
+            enabled = saved.isNotBlank(),
             modifier = Modifier.fillMaxWidth(),
             minHeight = 44.dp,
         ) { Text("恢复默认") }

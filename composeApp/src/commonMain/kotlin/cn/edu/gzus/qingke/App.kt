@@ -68,6 +68,7 @@ import cn.edu.gzus.qingke.data.friendlyNetworkMessage
 import cn.edu.gzus.qingke.data.isSessionLost
 import cn.edu.gzus.qingke.data.resolved
 import cn.edu.gzus.qingke.data.cancelLiveClass
+import cn.edu.gzus.qingke.data.resolvedGpa
 import cn.edu.gzus.qingke.data.mondayOf
 import cn.edu.gzus.qingke.data.nowDateTime
 import cn.edu.gzus.qingke.data.openUrl
@@ -221,7 +222,11 @@ fun App() {
         }
 
         fun runJob(login: Boolean = false, job: String = "sync", block: suspend () -> Unit) {
-            if (job in busyJobs) return
+            if (job in busyJobs) {
+                // 以前静默返回：同步没结束时点「退出登录」，确认框关了却什么都没发生。
+                toast("上一个操作还在进行，稍等一下")
+                return
+            }
             busyJobs = busyJobs + job
             scope.launch {
                 try {
@@ -377,7 +382,10 @@ fun App() {
             }
         }
 
-        QingkeBackHandler(enabled = nav.canPop) { nav.pop() }
+        // 在课表 / 成绩等 tab 按返回先回「今日」，再按才退出，不至于一按就把应用关掉。
+        QingkeBackHandler(enabled = nav.canPop || nav.tab != TabDest.Today) {
+            if (!nav.pop()) nav.goTab(TabDest.Today)
+        }
 
         var heldRoute by remember { mutableStateOf<Route?>(null) }
         SideEffect {
@@ -473,7 +481,7 @@ fun App() {
                         }
                         TabDest.Timetable -> QingkeWideFrame(fill = true) {
                         SyncPull(snapshot.session.loggedIn, busy, padding, onRefresh = pullSync) {
-                            key(calendarDay) { TimetableScreen(snapshot, nav, padding) }
+                            key(calendarDay) { TimetableScreen(snapshot, nav, padding, onSync = pullSync) }
                         }
                         }
                         TabDest.Grades -> QingkeWideFrame {
@@ -481,7 +489,11 @@ fun App() {
                             GradesScreen(snapshot, nav, padding)
                         }
                         }
-                        TabDest.Jwxt -> QingkeWideFrame { JwxtScreen(snapshot, nav, padding) }
+                        TabDest.Jwxt -> QingkeWideFrame {
+                        SyncPull(snapshot.session.loggedIn, busy, padding, onRefresh = pullSync) {
+                            JwxtScreen(snapshot, nav, padding)
+                        }
+                        }
                         TabDest.Mine -> QingkeWideFrame {
                         MineScreen(
                             snapshot = snapshot,
@@ -726,10 +738,13 @@ fun App() {
                                 blocks = snapshot.resolved().periodBlocks,
                                 today = nowDateTime().date,
                                 adjust = snapshot.scheduleAdjust,
+                                grade = snapshot.grades.filter { it.courseId == current.courseId }
+                                    .maxByOrNull { it.resolvedGpa() ?: -1.0 },
                             )
                             is Route.EmptyRoom -> EmptyRoomScreen(
                                 snapshot = snapshot,
                                 contentPadding = padding,
+                                onLogin = { nav.goTab(TabDest.Mine) },
                                 busy = roomBusy,
                                 rooms = rooms,
                                 error = roomError,
@@ -745,7 +760,7 @@ fun App() {
                                     }
                                 },
                             )
-                            is Route.Exams -> ExamsScreen(snapshot, padding)
+                            is Route.Exams -> ExamsScreen(snapshot, padding, onLogin = { nav.goTab(TabDest.Mine) })
                             is Route.Hall -> HallScreen(
                                 snapshot = snapshot,
                                 nav = nav,
@@ -845,6 +860,7 @@ fun App() {
                             is Route.Notices -> NoticesScreen(
                                 snapshot = snapshot,
                                 contentPadding = padding,
+                                onLogin = { nav.goTab(TabDest.Mine) },
                                 bodyLoading = noticeLoading,
                                 onOpen = { id ->
                                     if (id !in noticeLoading) {

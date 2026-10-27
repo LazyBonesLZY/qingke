@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
@@ -24,26 +23,46 @@ import cn.edu.gzus.qingke.data.AppSettings
 import cn.edu.gzus.qingke.data.AppSnapshot
 import cn.edu.gzus.qingke.data.normalizeClock
 import cn.edu.gzus.qingke.data.resolved
+import cn.edu.gzus.qingke.data.withFetchedPeriodTimes
 import top.yukonga.miuix.kmp.basic.Button
-import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
+ * 打字中途的半截值不算完整：带冒号时分钟必须两位（"08:3" 会被 normalizeClock 读成 08:03，
+ * 一提交就把输入框改写成 08:03，用户再也打不出 08:30）；不带冒号要 3～4 位数字。
+ */
+private fun looksComplete(raw: String): Boolean {
+    val text = raw.trim().replace('：', ':').replace(" ", "")
+    return if (text.contains(':')) text.substringAfter(':').length == 2 else text.length in 3..4
+}
+
+/**
  * 两格都合法才写回；两格都清空则撤掉这一节的手动覆盖（回落到教务/内置值）。
  * 只有一边合法时什么都不做——打字中途的半截值不能写进去。
  */
 private fun commitOrClear(start: String, end: String, onChange: (String?, String?) -> Unit) {
-    val s = normalizeClock(start)
-    val e = normalizeClock(end)
+    val s = if (looksComplete(start)) normalizeClock(start) else null
+    val e = if (looksComplete(end)) normalizeClock(end) else null
     when {
         // 起止反了（"10:00-09:00"）不当成有效输入，否则会原样上屏、
         // 让进度条和提醒拿到一个负长度区间。
         s != null && e != null -> if (s < e) onChange(s, e) else Unit
         start.isBlank() && end.isBlank() -> onChange(null, null)
     }
+}
+
+/** 给这一行的输入状态出一句提示；null 表示没问题或还没动过。 */
+private fun rowProblem(start: String, end: String): String? {
+    if (start.isBlank() && end.isBlank()) return null
+    if (start.isBlank() || end.isBlank()) return "两格都填才生效；都清空就恢复默认"
+    val s = if (looksComplete(start)) normalizeClock(start) else null
+    val e = if (looksComplete(end)) normalizeClock(end) else null
+    if (s == null || e == null) return "格式不对，填 24 小时制，例如 08:00"
+    if (s >= e) return "结束要晚于开始，这次修改没生效"
+    return null
 }
 
 /**
@@ -59,6 +78,11 @@ fun PeriodTimeScreen(
     val blocks = snapshot.resolved().periodBlocks
     val overrides = snapshot.settings.periodTimeOverrides
     val fetched = snapshot.profile.periodTimes
+    // 不含手动覆盖的「默认值」，用于提示「清空后会回到什么」。
+    val defaults = snapshot.settings.resolved().withFetchedPeriodTimes(fetched).periodBlocks
+        .associate { it.label to "${it.start}–${it.end}" }
+    // 点「清除我的修改」时自增，让各行输入框重新取初值；平时不跟着快照重置，免得打字时被改写。
+    var resetToken by remember { mutableStateOf(0) }
 
     Column(
         modifier = Modifier
@@ -69,7 +93,7 @@ fun PeriodTimeScreen(
     ) {
         Spacer(Modifier.height(8.dp))
         Text(
-            "改的是课表左边那一列的时间。填 24 小时制，例如 08:00 和 09:40；两格都合法才生效。",
+            "改的是课表左边那一列的时间。填 24 小时制，例如 08:00 和 09:40；两格都合法就自动保存。",
             modifier = Modifier.padding(horizontal = 16.dp),
             color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
             style = MiuixTheme.textStyles.body2,
@@ -95,6 +119,9 @@ fun PeriodTimeScreen(
                 if (index > 0) Spacer(Modifier.height(14.dp))
                 PeriodTimeRow(
                     label = block.label,
+                    resetToken = resetToken,
+                    customized = overrides.containsKey(block.label),
+                    defaultRange = defaults[block.label].orEmpty(),
                     initialStart = overrides[block.label]?.substringBefore("-")?.trim()
                         ?: block.start,
                     initialEnd = overrides[block.label]?.substringAfter("-", "")?.trim()
@@ -115,31 +142,56 @@ fun PeriodTimeScreen(
         }
         Spacer(Modifier.height(16.dp))
         Button(
-            onClick = { onUpdate { it.copy(periodTimeOverrides = emptyMap()) } },
+            onClick = {
+                onUpdate { it.copy(periodTimeOverrides = emptyMap()) }
+                resetToken++
+            },
             enabled = overrides.isNotEmpty(),
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             minHeight = 44.dp,
-        ) { Text(if (fetched.isNotEmpty()) "清除我的修改，回到教务时间" else "全部恢复内置预设") }
+        ) {
+            Text(
+                when {
+                    overrides.isEmpty() -> "还没有改过任何一节"
+                    fetched.isNotEmpty() -> "清除 ${overrides.size} 节修改，回到教务时间"
+                    else -> "清除 ${overrides.size} 节修改，恢复内置预设"
+                },
+            )
+        }
     }
 }
 
 @Composable
 private fun PeriodTimeRow(
     label: String,
+    resetToken: Int,
+    customized: Boolean,
+    defaultRange: String,
     initialStart: String,
     initialEnd: String,
     onChange: (String?, String?) -> Unit,
 ) {
-    var startText by remember(label, initialStart) { mutableStateOf(initialStart) }
-    var endText by remember(label, initialEnd) { mutableStateOf(initialEnd) }
+    var startText by remember(label, resetToken) { mutableStateOf(initialStart) }
+    var endText by remember(label, resetToken) { mutableStateOf(initialEnd) }
+    val problem = rowProblem(startText, endText)
 
     Column(Modifier.fillMaxWidth()) {
-        Text(
-            // 「中午」这类没有编号的块不能再套「第…节」，否则会变成「第 中午 节」。
-            if (label.any { it.isDigit() }) "第 $label 节" else label,
-            style = MiuixTheme.textStyles.body2,
-            color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                // 「中午」这类没有编号的块不能再套「第…节」，否则会变成「第 中午 节」。
+                if (label.any { it.isDigit() }) "第 $label 节" else label,
+                modifier = Modifier.weight(1f),
+                style = MiuixTheme.textStyles.body2,
+                color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+            )
+            if (customized) {
+                Text(
+                    if (defaultRange.isBlank()) "已自定义" else "已自定义 · 默认 $defaultRange",
+                    style = MiuixTheme.textStyles.footnote1,
+                    color = MiuixTheme.colorScheme.primary,
+                )
+            }
+        }
         Spacer(Modifier.height(6.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -170,6 +222,22 @@ private fun PeriodTimeRow(
                 label = "结束",
                 singleLine = true,
                 modifier = Modifier.weight(1f),
+            )
+        }
+        if (problem != null) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                problem,
+                style = MiuixTheme.textStyles.footnote1,
+                color = MiuixTheme.colorScheme.error,
+            )
+        } else if (startText.isBlank() && endText.isBlank() && defaultRange.isNotBlank()) {
+            // 两格清空 = 撤掉覆盖，给个回执，不然看着像把这一节删了。
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "已恢复默认 $defaultRange",
+                style = MiuixTheme.textStyles.footnote1,
+                color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
             )
         }
     }

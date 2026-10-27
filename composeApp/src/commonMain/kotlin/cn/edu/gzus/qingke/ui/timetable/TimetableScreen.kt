@@ -3,6 +3,7 @@ package cn.edu.gzus.qingke.ui.timetable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -20,18 +21,26 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
+import cn.edu.gzus.qingke.QingkeOnResume
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -43,6 +52,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cn.edu.gzus.qingke.data.formatPeriod
+import cn.edu.gzus.qingke.data.periodText
 import cn.edu.gzus.qingke.data.clockRangeIn
 import cn.edu.gzus.qingke.data.AppSettings
 import cn.edu.gzus.qingke.data.AppSnapshot
@@ -177,6 +187,13 @@ private fun resolveInk(settings: AppSettings, tint: Color, backdrop: Color): Col
         else -> autoInk(tint, backdrop)
     }
 
+/** 判断「是不是同一门课」用的键：courseId 缺失时退回课名，和课程配色的取键一致。 */
+private fun LessonSlot.courseKey(): String = courseId.ifBlank { courseName }
+
+/** 实践课周次补上「周」字，和首页的写法一致。 */
+private fun weeksText(weeks: String): String =
+    weeks.trim().let { if (it.isBlank() || it.endsWith("周")) it else "${it}周" }
+
 /** 某一列里连续占着同一组课的一段（span 为跨了几个节次块）。 */
 private class DayRun(val span: Int, val slots: List<LessonSlot>)
 
@@ -209,14 +226,30 @@ fun TimetableScreen(
     snapshot: AppSnapshot,
     nav: QingkeNavigator,
     contentPadding: PaddingValues,
+    onSync: () -> Unit = {},
 ) {
-    val today = nowDateTime().date
+    // 从后台切回来时重组一次：跨过零点后「今天」高亮、本周和月历才会跟着换天。
+    var resumeTick by remember { mutableIntStateOf(0) }
+    QingkeOnResume { resumeTick++ }
+    val today = resumeTick.let { nowDateTime().date }
     val settings = snapshot.settings
+    val school = remember(snapshot) { snapshot.resolved() }
     val currentWeek = resolvedCurrentWeek(settings, today)
-    val used = weeksInUse(snapshot.slots)
+    val used = remember(snapshot.slots) { weeksInUse(snapshot.slots) }
     val weekLo = 1
     val weekHi = settings.resolvedWeekCount(snapshot.slots).coerceAtLeast(1)
-    var mode by remember { mutableIntStateOf(0) }
+    // 周/月切换要跨 tab 保留：切去成绩再回来，不该又被打回周视图。
+    var mode by rememberSaveable { mutableIntStateOf(0) }
+    // 同一格有多门课时，点开在网格下面列出来挑。
+    var conflict by remember { mutableStateOf<List<LessonSlot>?>(null) }
+    // 面板在网格下面，竖屏课表一长就落在屏幕外，看起来像「点了没反应」，所以弹出后滚过去。
+    val conflictRequester = remember { BringIntoViewRequester() }
+    LaunchedEffect(conflict) {
+        if (conflict != null) {
+            withFrameNanos { }
+            conflictRequester.bringIntoView()
+        }
+    }
     var viewWeek by remember(currentWeek, weekLo, weekHi) {
         mutableIntStateOf(currentWeek.coerceIn(weekLo, weekHi))
     }
@@ -225,22 +258,26 @@ fun TimetableScreen(
 
     val monday = mondayOfTeachingWeek(viewWeek.coerceAtLeast(1), settings, today)
     val sunday = monday.plus(DatePeriod(days = 6))
-    val weekSessions = (0..6).sumOf { offset ->
-        snapshot.slots.forDate(
-            monday.plus(DatePeriod(days = offset)),
-            settings,
-            today,
-            snapshot.scheduleAdjust,
-        ).size
+    // 只跟数据和所看的周有关，别每次重组都把整张课表过七遍。
+    val weekSessions = remember(snapshot.slots, monday, settings, today, snapshot.scheduleAdjust) {
+        (0..6).sumOf { offset ->
+            snapshot.slots.forDate(
+                monday.plus(DatePeriod(days = offset)),
+                settings,
+                today,
+                snapshot.scheduleAdjust,
+            ).size
+        }
     }
-    val weekPractices = snapshot.practices.filter { it.activeIn(viewWeek) }
+    val weekPractices = remember(snapshot.practices, viewWeek) { snapshot.practices.filter { it.activeIn(viewWeek) } }
     val dated = settings.hasTermStart()
     val wide = LocalQingkeWide.current
+    // 所看的周次、日期范围、年月在翻页器里都有，标题下只说「现在是第几周」，翻到别处也知道今天在哪。
     val subtitle = when {
-        !snapshot.hasTimetable -> if (snapshot.session.loggedIn) "同步后再看整周网格" else "登录后从${snapshot.resolved().jwxtName}同步"
-        !dated -> "第${viewWeek}周 · 先到「我的」选第1周周一"
-        wide || mode == 0 -> "第${viewWeek}周 · ${formatMonthDayRange(monday, sunday)}"
-        else -> formatYearMonth(monthAnchor)
+        !snapshot.hasTimetable -> if (snapshot.session.loggedIn) "同步后再看整周网格" else "登录后从${school.jwxtName}同步"
+        currentWeek < weekLo -> "学期还没开始 · 共 ${weekHi} 周"
+        currentWeek > weekHi -> "这学期 ${weekHi} 周已经上完"
+        else -> "现在第${currentWeek}周 · 共 ${weekHi} 周"
     }
 
     Column(
@@ -255,9 +292,9 @@ fun TimetableScreen(
             Spacer(Modifier.height(12.dp))
             InfoCard(
                 title = "还没有课表",
-                summary = if (snapshot.session.loggedIn) "同步后再看一周和一月。" else "去「我的」登录${snapshot.resolved().jwxtName}。",
+                summary = if (snapshot.session.loggedIn) "点一下立即同步，也可以下拉刷新。" else "去「我的」登录${school.jwxtName}。",
                 modifier = Modifier.padding(horizontal = 16.dp),
-                onClick = { nav.goTab(TabDest.Mine) },
+                onClick = { if (snapshot.session.loggedIn) onSync() else nav.goTab(TabDest.Mine) },
             )
             Spacer(Modifier.height(16.dp))
             return
@@ -266,9 +303,9 @@ fun TimetableScreen(
             Spacer(Modifier.height(12.dp))
             InfoCard(
                 title = "还没选第1周周一",
-                summary = "选了之后，周视图和月历才对得上真实日期。",
+                summary = "选了之后，周视图和月历才对得上真实日期。点这里去选。",
                 modifier = Modifier.padding(horizontal = 16.dp),
-                onClick = { nav.goTab(TabDest.Mine) },
+                onClick = { nav.openTermStart() },
             )
         }
         if (!wide) {
@@ -276,10 +313,31 @@ fun TimetableScreen(
         TabRowWithContour(
             tabs = listOf("周", "月"),
             selectedTabIndex = mode,
-            onTabSelected = { mode = it },
+            onTabSelected = { mode = it; conflict = null },
             modifier = Modifier.padding(horizontal = 16.dp),
         )
         Spacer(Modifier.height(10.dp))
+        }
+        val prevWeek = { if (viewWeek > weekLo) { viewWeek -= 1; conflict = null } }
+        val nextWeek = { if (viewWeek < weekHi) { viewWeek += 1; conflict = null } }
+        // pointerInput 只按 weekLo/weekHi 重建，里面必须拿最新的回调：
+        // viewWeek 的状态会随 currentWeek 重建，旧闭包改的是已经丢掉的那份，滑了没反应。
+        val latestPrev by rememberUpdatedState(prevWeek)
+        val latestNext by rememberUpdatedState(nextWeek)
+        // 只挂在网格上：挂在整列上会和周次条的横向滚动抢手势，滚到头再滑就误翻周。
+        val swipeWeeks = Modifier.pointerInput(weekLo, weekHi) {
+            // 左右滑换周：累计位移过阈值才算，竖向滚动和点格子不受影响。
+            var dragged = 0f
+            detectHorizontalDragGestures(
+                onDragStart = { dragged = 0f },
+                onDragEnd = {
+                    val threshold = 64.dp.toPx()
+                    if (dragged > threshold) latestPrev() else if (dragged < -threshold) latestNext()
+                },
+            ) { change, amount ->
+                dragged += amount
+                change.consume()
+            }
         }
         Row(
             Modifier
@@ -288,19 +346,23 @@ fun TimetableScreen(
             verticalAlignment = Alignment.Top,
         ) {
         if (wide || mode == 0) {
-        Column(Modifier.weight(if (wide) 1.55f else 1f).then(if (wide) Modifier.fillMaxHeight() else Modifier)) {
+        Column(
+            Modifier
+                .weight(if (wide) 1.55f else 1f)
+                .then(if (wide) Modifier.fillMaxHeight() else Modifier),
+        ) {
             WeekPager(
                 week = viewWeek,
                 weekLo = weekLo,
                 weekHi = weekHi,
-                currentWeek = currentWeek.coerceIn(weekLo, weekHi),
+                currentWeek = currentWeek,
                 range = formatMonthDayRange(monday, sunday),
                 sessions = weekSessions,
                 used = used,
-                onPrev = { if (viewWeek > weekLo) viewWeek -= 1 },
-                onNext = { if (viewWeek < weekHi) viewWeek += 1 },
-                onPick = { viewWeek = it },
-                onToday = { viewWeek = currentWeek.coerceIn(weekLo, weekHi) },
+                onPrev = prevWeek,
+                onNext = nextWeek,
+                onPick = { viewWeek = it; conflict = null },
+                onToday = { viewWeek = currentWeek.coerceIn(weekLo, weekHi); conflict = null },
             )
             Spacer(Modifier.height(10.dp))
             if (wide && weekPractices.isNotEmpty()) {
@@ -319,17 +381,34 @@ fun TimetableScreen(
                 today = today,
                 holidays = snapshot.holidays,
                 aliases = settings.courseAliases,
-                blocks = snapshot.resolved().periodBlocks,
-                hasClock = snapshot.resolved().hasPeriodClock,
+                blocks = school.periodBlocks,
+                hasClock = school.hasPeriodClock,
                 settings = settings,
                 adjust = snapshot.scheduleAdjust,
                 fit = wide,
                 compact = !wide && settings.compactTimetable,
-                onOpen = { nav.open(Route.Course(it)) },
+                modifier = swipeWeeks,
+                onOpen = { picked ->
+                    // 同一门课在一格里有多条（单双周拆开、教务重复给）不算冲突，直接打开。
+                    if (picked.distinctBy { it.courseKey() }.size == 1) {
+                        nav.open(Route.Course(picked.first().courseId))
+                    } else {
+                        conflict = picked
+                    }
+                },
             )
+            conflict?.let { picked ->
+                Spacer(Modifier.height(10.dp))
+                ConflictPanel(
+                    slots = picked,
+                    modifier = Modifier.bringIntoViewRequester(conflictRequester),
+                    onOpen = { nav.open(Route.Course(it)) },
+                    onClose = { conflict = null },
+                )
+            }
             if (!wide && weekSessions == 0 && weekPractices.isEmpty()) {
                 Spacer(Modifier.height(10.dp))
-                InfoCard("这一周没有理论课", if (wide) "左右换周，或在右边月历里点一天" else "左右换周，或到「月」里扫整月", modifier = Modifier.padding(horizontal = 16.dp))
+                InfoCard("这一周没有理论课", "左右滑动换周，或切到「月」看整月", modifier = Modifier.padding(horizontal = 16.dp))
             }
             if (!wide && weekPractices.isNotEmpty()) {
                 Spacer(Modifier.height(10.dp))
@@ -340,7 +419,7 @@ fun TimetableScreen(
                     weekPractices.forEach { item ->
                         InfoCard(
                             title = item.name,
-                            summary = listOf("实践", item.weeks, item.teacher).filter { it.isNotBlank() }.joinToString(" · "),
+                            summary = listOf("实践", weeksText(item.weeks), item.teacher).filter { it.isNotBlank() }.joinToString(" · "),
                         )
                     }
                 }
@@ -377,7 +456,10 @@ fun TimetableScreen(
                 onSelect = { date ->
                     selectedDate = date
                     val pickedWeek = teachingWeekOn(date, settings, today)
-                    if (pickedWeek in weekLo..weekHi) viewWeek = pickedWeek
+                    if (pickedWeek in weekLo..weekHi && pickedWeek != viewWeek) {
+                        viewWeek = pickedWeek
+                        conflict = null
+                    }
                     if (date.monthNumber != monthAnchor.monthNumber || date.year != monthAnchor.year) {
                         monthAnchor = LocalDate(date.year, date.monthNumber, 1)
                     }
@@ -391,13 +473,16 @@ fun TimetableScreen(
                     color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
                 )
             }
-            val daySlots = snapshot.slots.forDate(selectedDate, settings, today, snapshot.scheduleAdjust)
-            val dayWeek = teachingWeekOn(selectedDate, settings, today)
             if (!wide) {
+            val daySlots = remember(snapshot.slots, selectedDate, settings, today, snapshot.scheduleAdjust) {
+                snapshot.slots.forDate(selectedDate, settings, today, snapshot.scheduleAdjust)
+            }
+            val dayWeek = teachingWeekOn(selectedDate, settings, today)
+            val inTerm = dayWeek in weekLo..weekHi
             SmallTitle(
                 text = buildString {
                     append("${selectedDate.monthNumber}月${selectedDate.dayOfMonth}日 · 周${WeekdayNames.getOrElse(weekdayIndex(selectedDate) - 1) { "?" }}")
-                    if (dayWeek in weekLo..weekHi) append(" · 第${dayWeek}周")
+                    if (inTerm) append(" · 第${dayWeek}周")
                     snapshot.holidays.lookup(selectedDate)?.let { append(" · ").append(it.chip()) }
                     adjustDayLabel(selectedDate, settings, snapshot.scheduleAdjust, today)
                         .takeIf { it.isNotBlank() }
@@ -405,10 +490,16 @@ fun TimetableScreen(
                 },
             )
             if (daySlots.isEmpty()) {
+                // 没选第1周周一时日期本身就不准，直接给去选的入口；标题已说清的就不再重复一句。
                 InfoCard(
-                    title = if (dayWeek in weekLo..weekHi) "这天没有课" else "不在课表周次里",
-                    summary = if (dated) "这天课表是空的" else "先选第1周周一，日期才准",
+                    title = if (inTerm) "这天没有课" else "不在本学期周次里",
+                    summary = when {
+                        !dated -> "还没选第1周周一，日期可能对不上，点这里去选"
+                        inTerm -> ""
+                        else -> "这学期共 ${weekHi} 周"
+                    },
                     modifier = Modifier.padding(horizontal = 16.dp),
+                    onClick = if (dated) null else ({ nav.openTermStart() }),
                 )
             } else {
                 Column(
@@ -417,7 +508,7 @@ fun TimetableScreen(
                 ) {
                     daySlots.forEach { slot ->
                         InfoCard(
-                            title = "${snapshot.resolved().formatPeriod(slot.period, slot.periodLabel, snapshot.resolved().hasPeriodClock)}  ${slot.courseName}",
+                            title = "${school.formatPeriod(slot.period, slot.periodLabel, school.hasPeriodClock)}  ${slot.courseName}",
                             summary = listOf(slot.room, slot.teacher, slot.weeks).filter { it.isNotBlank() }.joinToString("\n"),
                             height = null,
                             onClick = { nav.open(Route.Course(slot.courseId)) },
@@ -425,7 +516,7 @@ fun TimetableScreen(
                     }
                 }
             }
-            val dayPractices = snapshot.practices.filter { it.activeIn(dayWeek) }
+            val dayPractices = if (inTerm) snapshot.practices.filter { it.activeIn(dayWeek) } else emptyList()
             if (dayPractices.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
                 Column(
@@ -435,7 +526,8 @@ fun TimetableScreen(
                     dayPractices.forEach { item ->
                         InfoCard(
                             title = item.name,
-                            summary = listOf("本周实践", item.weeks, item.teacher).filter { it.isNotBlank() }.joinToString(" · "),
+                            // 选中的那天不一定在本周，别写「本周」。
+                            summary = listOf("实践", weeksText(item.weeks), item.teacher).filter { it.isNotBlank() }.joinToString(" · "),
                         )
                     }
                 }
@@ -476,31 +568,41 @@ private fun WeekPager(
                     style = MiuixTheme.textStyles.title3,
                     color = MiuixTheme.colorScheme.onBackground,
                 )
-                Text(
-                    buildString {
-                        append(range)
-                        if (sessions > 0) append(" · ").append(sessions).append(" 节")
-                        if (week == currentWeek) append(" · 本周")
-                    },
-                    style = MiuixTheme.textStyles.footnote1,
-                    color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
-                )
+                // 「回到本周」放在同一行、行高固定：以前单独占一行，一翻周整张网格就上下跳。
+                // currentWeek 不在学期范围内（没开学/已结束）时没有「本周」可回，也不标「本周」。
+                val canReturn = currentWeek in weekLo..weekHi && week != currentWeek
+                Row(Modifier.height(24.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        buildString {
+                            append(range)
+                            if (sessions > 0) append(" · ").append(sessions).append(" 节")
+                            if (week == currentWeek) append(" · 本周")
+                        },
+                        modifier = Modifier.weight(1f, fill = false),
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (canReturn) {
+                        Text(
+                            "回到本周",
+                            modifier = Modifier
+                                .padding(start = 6.dp)
+                                .clip(RoundedCornerShape(99.dp))
+                                .background(MiuixTheme.colorScheme.primary.copy(alpha = 0.12f))
+                                .clickable(onClick = onToday)
+                                .padding(horizontal = 8.dp, vertical = 3.dp),
+                            style = MiuixTheme.textStyles.footnote1,
+                            color = MiuixTheme.colorScheme.primary,
+                            maxLines = 1,
+                        )
+                    }
+                }
             }
             IconButton(onClick = onNext, enabled = week < weekHi) {
                 Icon(MiuixIcons.ChevronForward, contentDescription = "下一周", tint = MiuixTheme.colorScheme.onBackground)
             }
-        }
-        if (week != currentWeek) {
-            Text(
-                "回到本周",
-                modifier = Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .clip(RoundedCornerShape(99.dp))
-                    .clickable(onClick = onToday)
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                style = MiuixTheme.textStyles.footnote1,
-                color = MiuixTheme.colorScheme.primary,
-            )
         }
         if (used.size > 1) {
             Spacer(Modifier.height(6.dp))
@@ -578,7 +680,8 @@ private fun ColumnScope.WeekGrid(
     adjust: CloudScheduleAdjust,
     fit: Boolean = false,
     compact: Boolean = false,
-    onOpen: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    onOpen: (List<LessonSlot>) -> Unit,
 ) {
     val shape = RoundedCornerShape(if (compact) CellRadiusCompact else CellRadius)
     val workColor = if (isSystemInDarkTheme()) Color(0xFFE8B86D) else Color(0xFFC9782A)
@@ -606,7 +709,8 @@ private fun ColumnScope.WeekGrid(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
-            .then(if (fit) Modifier.weight(1f) else Modifier),
+            .then(if (fit) Modifier.weight(1f) else Modifier)
+            .then(modifier),
     ) {
         val inside = if (fit) 4.dp else 6.dp
         val headerApprox = if (compact) 46.dp else 54.dp
@@ -796,7 +900,7 @@ private fun WeekCell(
     settings: AppSettings,
     compact: Boolean = false,
     modifier: Modifier,
-    onOpen: (String) -> Unit,
+    onOpen: (List<LessonSlot>) -> Unit,
 ) {
     val dark = isSystemInDarkTheme()
     val first = slots.firstOrNull()
@@ -810,7 +914,7 @@ private fun WeekCell(
             .background(tint ?: empty)
             .then(
                 if (first != null) {
-                    Modifier.clickable { onOpen(first.courseId) }
+                    Modifier.clickable { onOpen(slots) }
                 } else {
                     Modifier
                 },
@@ -845,9 +949,11 @@ private fun WeekCell(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                if (slots.size > 1) {
+                // 按课去重再数：同一门课拆成多条不算「还有别的课」，和点开后的判定一致。
+                val more = slots.distinctBy { it.courseKey() }.size - 1
+                if (more > 0) {
                     Text(
-                        "+${slots.size - 1}",
+                        "+$more",
                         fontSize = if (compact) 7.sp else 8.sp,
                         color = ink.copy(alpha = 0.55f),
                     )
@@ -1002,12 +1108,68 @@ private fun MonthCell(
                 color = if (holiday.off) MiuixTheme.colorScheme.primary
                 else if (isSystemInDarkTheme()) Color(0xFFE8B86D) else Color(0xFFC9782A),
             )
-        } else if (dots.isNotEmpty() && inMonth) {
+        }
+        // 调休上班日照样有课，休/班标记和课程点要一起显示，不能互相顶掉。
+        if (dots.isNotEmpty() && inMonth) {
             Spacer(Modifier.height(3.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                 dots.forEach { color ->
                     Box(Modifier.size(5.dp).clip(CircleShape).background(color).border(0.5.dp, MiuixTheme.colorScheme.onBackground.copy(alpha = 0.12f), CircleShape))
                 }
+            }
+        }
+    }
+}
+
+/** 同一格叠了几门课（冲突 / 单双周合并显示）时，在网格下面列出来逐个点开。 */
+@Composable
+private fun ConflictPanel(
+    slots: List<LessonSlot>,
+    modifier: Modifier = Modifier,
+    onOpen: (String) -> Unit,
+    onClose: () -> Unit,
+) {
+    Card(
+        modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        insideMargin = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "这一格有 ${slots.distinctBy { it.courseKey() }.size} 门课，点一门看详情",
+                modifier = Modifier.weight(1f),
+                style = MiuixTheme.textStyles.footnote1,
+                color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+            )
+            Text(
+                "收起",
+                modifier = Modifier.clickable(onClick = onClose).padding(horizontal = 4.dp, vertical = 4.dp),
+                style = MiuixTheme.textStyles.footnote1,
+                color = MiuixTheme.colorScheme.primary,
+            )
+        }
+        slots.distinctBy { it.courseId to it.period }.forEach { slot ->
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpen(slot.courseId) }
+                    .padding(vertical = 8.dp),
+            ) {
+                Text(
+                    slot.courseName,
+                    style = MiuixTheme.textStyles.main,
+                    color = MiuixTheme.colorScheme.onBackground,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    listOf(periodText(slot.period, slot.periodLabel), slot.room, slot.teacher, slot.weeks)
+                        .filter { it.isNotBlank() }
+                        .joinToString(" · "),
+                    style = MiuixTheme.textStyles.footnote1,
+                    color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }

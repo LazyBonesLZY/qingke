@@ -54,6 +54,17 @@ class QingkeNavigator(start: TabDest = TabDest.Today) {
         return true
     }
 
+    /** 去「我的」并直接展开「第1周周一」的日期选择，不用再自己往下找。 */
+    fun openTermStart() {
+        termStartFocus = true
+        goTab(TabDest.Mine)
+    }
+
+    /** 「我的」页进场时取一次：是不是被 [openTermStart] 带过来的。 */
+    fun consumeTermStartFocus(): Boolean = termStartFocus.also { termStartFocus = false }
+
+    private var termStartFocus = false
+
     fun swipeTab(delta: Int) {
         val order = TabDest.entries
         val next = (order.indexOf(tab) + delta).coerceIn(0, order.lastIndex)

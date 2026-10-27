@@ -27,10 +27,13 @@ import cn.edu.gzus.qingke.data.defaultLeaveFields
 import cn.edu.gzus.qingke.data.gzusUsesCas
 import cn.edu.gzus.qingke.data.leaveAffairs
 import cn.edu.gzus.qingke.data.leaveSummary
+import cn.edu.gzus.qingke.data.parseCoursePickWhen
 import cn.edu.gzus.qingke.nav.QingkeNavigator
 import cn.edu.gzus.qingke.nav.TabDest
 import cn.edu.gzus.qingke.ui.components.EmptyHint
 import cn.edu.gzus.qingke.ui.components.InfoCard
+import cn.edu.gzus.qingke.ui.components.ListGroup
+import cn.edu.gzus.qingke.ui.components.ListRow
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
@@ -66,6 +69,27 @@ fun LeaveScreen(
     }
     var picking by remember { mutableStateOf<String?>(null) }
     var openedTrace by remember { mutableStateOf("") }
+    var confirming by remember { mutableStateOf(false) }
+    // 提交和刷新共用 busy，记一下是不是自己点的提交，按钮文案才不会乱
+    var submitting by remember { mutableStateOf(false) }
+    // 提交前最新一条申请的 id；提交结束后列表头变了，说明大厅收到了
+    var baselineLeave by remember { mutableStateOf<String?>(null) }
+    var justSubmitted by remember { mutableStateOf(false) }
+    val missing = fields.filter { it.required && values[it.key].isNullOrBlank() }.map { it.label }
+    val timeError = leaveTimeError(fields, values)
+    val canSubmit = !busy && fields.isNotEmpty() && missing.isEmpty() && timeError == null
+
+    LaunchedEffect(busy) {
+        if (busy || !submitting) return@LaunchedEffect
+        submitting = false
+        val latest = hall.leaves.firstOrNull()?.traceId().orEmpty()
+        if (latest.isNotBlank() && latest != baselineLeave) {
+            // 大厅已经出现新申请：清空表单，免得同一份假条再点一次
+            values = fields.associate { it.key to it.value }
+            justSubmitted = true
+        }
+        baselineLeave = null
+    }
 
     LaunchedEffect(snapshot.session.loggedIn, cas, hall.leaveAffairs().firstOrNull()?.id) {
         if (snapshot.session.loggedIn && cas) {
@@ -115,11 +139,18 @@ fun LeaveScreen(
             SmallTitle(text = form?.affairName?.ifBlank { "发起请假" } ?: "发起请假")
             if (!formError.isNullOrBlank()) {
                 Text(
-                    formError,
+                    "${formError.trimEnd('。')}。下面是通用表单，也可以重新拉取大厅的。",
                     color = MiuixTheme.colorScheme.error,
                     style = MiuixTheme.textStyles.footnote1,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                 )
+                Button(
+                    onClick = { onLoadForm(hall.leaveAffairs().firstOrNull()?.id.orEmpty()) },
+                    enabled = !formBusy,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    minHeight = 40.dp,
+                ) { Text("重新拉取表单") }
+                Spacer(Modifier.height(8.dp))
             }
             Column(
                 modifier = Modifier.padding(horizontal = 16.dp),
@@ -131,27 +162,39 @@ fun LeaveScreen(
                         value = values[field.key].orEmpty(),
                         expanded = picking == field.key,
                         onToggle = { picking = if (picking == field.key) null else field.key },
-                        onChange = { next -> values = values + (field.key to next) },
+                        onChange = { next ->
+                            values = values + (field.key to next)
+                            justSubmitted = false
+                        },
                     )
                 }
             }
+            // 以前「任一项非空」就能点，而请假类型默认就有值，等于必填项全空也能提交
+            val tip = when {
+                justSubmitted -> "已提交，下面「我的请假」能看到这条申请"
+                timeError != null -> timeError
+                missing.isNotEmpty() -> "还差：${missing.joinToString("、")}"
+                else -> ""
+            }
+            if (tip.isNotBlank()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    tip,
+                    color = if (timeError != null && !justSubmitted) MiuixTheme.colorScheme.error else MiuixTheme.colorScheme.onSurfaceContainerVariant,
+                    style = MiuixTheme.textStyles.footnote1,
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                )
+            }
             Spacer(Modifier.height(12.dp))
             Button(
-                onClick = {
-                    val current = form ?: LeaveForm(
-                        affairId = hall.leaveAffairs().firstOrNull()?.id.orEmpty(),
-                        affairName = "请假",
-                        fields = fields,
-                    )
-                    onSubmit(current, values)
-                },
-                enabled = !busy && values.values.any { it.isNotBlank() },
+                onClick = { confirming = true },
+                enabled = canSubmit,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                 minHeight = 50.dp,
                 colors = ButtonDefaults.buttonColorsPrimary(),
             ) {
-                if (busy) InfiniteProgressIndicator()
-                Text(if (busy) "正在提交" else "提交请假")
+                if (submitting) InfiniteProgressIndicator()
+                Text(if (submitting) "正在提交" else "提交请假")
             }
         }
         if (cas && snapshot.session.loggedIn && !waitingForm) {
@@ -166,15 +209,14 @@ fun LeaveScreen(
                     hall.leaves.forEach { item ->
                         val traceId = item.traceId()
                         val open = openedTrace == traceId
+                        val range = listOf(item.start, item.end).filter { it.isNotBlank() }.joinToString(" ~ ")
                         InfoCard(
                             title = item.title,
                             summary = listOf(
-                                item.status,
-                                item.node,
-                                item.time,
-                                listOf(item.start, item.end).filter { it.isNotBlank() }.joinToString(" ~ "),
+                                listOf(item.status, item.node).filter { it.isNotBlank() }.joinToString(" · "),
+                                range.ifBlank { item.time },
                                 item.reason,
-                                if (open) "" else "点开看审批到哪了",
+                                if (open) "" else "点开看审批进度",
                             ).filter { it.isNotBlank() }.joinToString("\n"),
                             height = null,
                             tintTitle = open,
@@ -190,19 +232,30 @@ fun LeaveScreen(
                                     "正在读审批进度",
                                     color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
                                     style = MiuixTheme.textStyles.footnote1,
+                                    modifier = Modifier.padding(horizontal = 4.dp),
                                 )
-                                steps.isNullOrEmpty() -> Text(
+                                // 读失败时 traces 里没有这条；以前也显示「没有返回审批环节」，像是流程空了
+                                steps == null -> Button(
+                                    onClick = { onLoadTrace(traceId) },
+                                    enabled = traceBusy.isBlank(),
+                                    modifier = Modifier.fillMaxWidth(),
+                                    minHeight = 40.dp,
+                                ) { Text("审批进度没读到，再试一次") }
+                                steps.isEmpty() -> Text(
                                     "大厅没有返回审批环节",
                                     color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
                                     style = MiuixTheme.textStyles.footnote1,
+                                    modifier = Modifier.padding(horizontal = 4.dp),
                                 )
-                                else -> steps.forEach { step ->
-                                    InfoCard(
-                                        title = step.name.ifBlank { step.handler.ifBlank { "审批" } },
-                                        summary = step.brief(),
-                                        height = null,
-                                    )
-                                }
+                                else -> ListGroup(
+                                    steps.map { step ->
+                                        ListRow(
+                                            title = step.name.ifBlank { step.handler.ifBlank { "审批" } },
+                                            summary = step.brief(),
+                                        )
+                                    },
+                                    modifier = Modifier,
+                                )
                             }
                         }
                     }
@@ -214,10 +267,57 @@ fun LeaveScreen(
                 enabled = !busy,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                 minHeight = 44.dp,
-            ) { Text(if (busy) "正在同步" else "刷新申请") }
+            ) { Text(if (busy && !submitting) "正在同步" else "刷新申请") }
         }
     }
+
+    if (confirming) {
+        JwxtConfirmDialog(
+            title = "提交请假",
+            message = fields
+                .mapNotNull { field ->
+                    values[field.key]?.takeIf { it.isNotBlank() }?.let { "${field.label}：$it" }
+                }
+                .joinToString("\n") + "\n\n提交后进入大厅审批，撤回要去大厅操作。",
+            confirmText = "确认提交",
+            onConfirm = {
+                val current = form ?: LeaveForm(
+                    affairId = hall.leaveAffairs().firstOrNull()?.id.orEmpty(),
+                    affairName = "请假",
+                    fields = fields,
+                )
+                baselineLeave = hall.leaves.firstOrNull()?.traceId().orEmpty()
+                submitting = true
+                justSubmitted = false
+                onSubmit(current, values)
+            },
+            onDismiss = { confirming = false },
+        )
+    }
 }
+
+/** 开始、结束都按「yyyy-MM-dd HH:mm」写了，才比较先后；格式不标准的交给大厅判断。 */
+private fun leaveTimeError(fields: List<LeaveField>, values: Map<String, String>): String? {
+    val start = fields.firstOrNull { it.isStartTime() }?.let { values[it.key] }.orEmpty()
+    val end = fields.firstOrNull { it.isEndTime() }?.let { values[it.key] }.orEmpty()
+    val from = leaveMillis(start)
+    val to = leaveMillis(end)
+    if (from <= 0L || to <= 0L) return null
+    return if (to <= from) "结束时间要晚于开始时间" else null
+}
+
+private val LeaveTimePattern = Regex("""(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}:\d{2}(:\d{2})?)""")
+
+private fun leaveMillis(text: String): Long {
+    val match = LeaveTimePattern.matchEntire(text.trim()) ?: return 0L
+    val g = match.groupValues
+    val date = "${g[1]}-${g[2].padStart(2, '0')}-${g[3].padStart(2, '0')}"
+    return parseCoursePickWhen(date, g[4])
+}
+
+private fun LeaveField.isStartTime(): Boolean = key.equals("KSSJ", true) || label.contains("开始")
+
+private fun LeaveField.isEndTime(): Boolean = key.equals("JSSJ", true) || label.contains("结束")
 
 @Composable
 private fun LeaveFieldBlock(
@@ -264,8 +364,8 @@ private fun LeaveFieldBlock(
         modifier = Modifier.fillMaxWidth(),
     )
     val hint = when {
-        field.key.equals("KSSJ", true) || field.label.contains("开始") -> "例如 2026-09-16 08:00"
-        field.key.equals("JSSJ", true) || field.label.contains("结束") -> "例如 2026-09-16 17:00"
+        field.isStartTime() -> "例如 2026-09-16 08:00"
+        field.isEndTime() -> "例如 2026-09-16 17:00"
         field.label.contains("事由") || field.label.contains("原因") -> "写清楚请假原因"
         else -> ""
     }

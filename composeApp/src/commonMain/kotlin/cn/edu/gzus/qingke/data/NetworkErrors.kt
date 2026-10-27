@@ -9,7 +9,12 @@ fun Throwable.friendlyNetworkMessage(): String {
     if (isSessionLost(message.orEmpty()) && !isTransientNetwork(this)) return SESSION_LOST_HINT
     if (!isTransientNetwork(this) && !isTransientNetworkText(message.orEmpty())) {
         val raw = message?.trim().orEmpty()
-        if (isCasEnvelopeMessage(raw)) return "门户没有返回票据"
+        // 教务维护 / 网关报错时回的是 HTML 页，按 JSON 解析会抛一大段解析器原文
+        // （「Unexpected JSON token at offset 0 … JSON input: <html>…」），不能原样甩给用户。
+        if (isUnreadableResponse(this, raw)) return UNREADABLE_RESPONSE_HINT
+        // 空消息（NPE、NoSuchElement 之类没带说明的异常）也算「信封」会被说成门户没票据，
+        // 仲恺、生态的用户也看到这句，完全不沾边。只认确实是 ok/success 这类信封字样的。
+        if (raw.isNotBlank() && isCasEnvelopeMessage(raw)) return "门户没有返回票据"
         return raw.takeIf { it.isNotBlank() } ?: "请求失败"
     }
     return when {
@@ -38,6 +43,18 @@ fun Throwable.friendlyNetworkMessage(): String {
             "连接被断开，换网络再试。"
         else -> NETWORK_HINT
     }
+}
+
+const val UNREADABLE_RESPONSE_HINT = "教务返回的内容读不懂，可能在维护，过一会儿再试。"
+
+private val JsonCastFailure = Regex("""is not a Json(Object|Array|Primitive|Null)""")
+
+private fun isUnreadableResponse(error: Throwable, raw: String): Boolean {
+    val name = error::class.simpleName.orEmpty()
+    if (name.contains("JsonDecodingException") || name.contains("SerializationException")) return true
+    if (raw.contains("Unexpected JSON token") || raw.contains("JSON input:")) return true
+    if (JsonCastFailure.containsMatchIn(raw)) return true
+    return raw.contains("<html", ignoreCase = true) || raw.contains("<!DOCTYPE", ignoreCase = true)
 }
 
 fun isTransientNetwork(error: Throwable): Boolean {

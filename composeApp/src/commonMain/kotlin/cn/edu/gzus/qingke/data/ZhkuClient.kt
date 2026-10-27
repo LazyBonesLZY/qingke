@@ -513,19 +513,17 @@ internal fun parseZhkuWeeksPeriod(raw: String): ZhkuWeeksPeriod {
         ?.let { zhkuPeriodSpan(it) }
         .orEmpty()
     val head = text.substringBefore("[")
-    val parity = when {
-        head.contains("单") -> "单"
-        head.contains("双") -> "双"
-        else -> ""
-    }
+    // 单双标记留在它所属的那一段后面，交给 parseWeekSet 逐段判断。
+    // 以前把标记全删掉再统一挂到串尾：「1-7(单),8-16(双)」变成「1-7,8-16单」，
+    // 前半段被当成每周上，后半段单双还反了。
     val weeks = head
-        .replace(Regex("""[(（]\s*[单双]?\s*周?\s*[)）]"""), "")
+        .replace(ZhkuParityParens, "\$1")
         .replace("周", "")
-        .replace("单", "")
-        .replace("双", "")
         .trim()
-    return ZhkuWeeksPeriod(weeks + parity, period)
+    return ZhkuWeeksPeriod(weeks, period)
 }
+
+private val ZhkuParityParens = Regex("""[(（]\s*([单双]?)\s*周?\s*[)）]""")
 
 // 强智会写 [10-11-12节]、[01-02节]，格子只认首尾两节。
 private fun zhkuPeriodSpan(raw: String): String {

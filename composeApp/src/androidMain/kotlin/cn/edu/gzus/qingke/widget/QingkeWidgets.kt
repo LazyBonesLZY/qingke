@@ -24,6 +24,7 @@ import cn.edu.gzus.qingke.MainActivity
 import cn.edu.gzus.qingke.data.periodStartOf
 import cn.edu.gzus.qingke.data.readSnapshotStore
 import cn.edu.gzus.qingke.data.periodEndOf
+import cn.edu.gzus.qingke.data.clockKnown
 import cn.edu.gzus.qingke.data.clockRangeOf
 import cn.edu.gzus.qingke.data.ResolvedSchool
 import cn.edu.gzus.qingke.data.AppSnapshot
@@ -245,7 +246,8 @@ object QingkeWidgets {
         val frosted = style != WidgetStyle.Solid
         val title = when (range) {
             WidgetRange.Day -> "${today.monthNumber}月${today.dayOfMonth}日"
-            WidgetRange.Week -> if (week >= 1) "第${week}周" else "本周"
+            // 开学前 drawWeek 画的是第 1 周（week 被夹到 1），标题写「本周」就和下面的日期对不上。
+            WidgetRange.Week -> if (week >= 1) "第${week}周" else "第1周"
             WidgetRange.Month -> "${today.year}年${today.monthNumber}月"
             WidgetRange.Square -> ""
         }
@@ -367,6 +369,11 @@ object QingkeWidgets {
             nextLiveLesson(snap.slots, today, snap.settings, today, now.time, snap.scheduleAdjust, school.periodBlocks)
         } else {
             null
+        }
+        // 有作息、算不出下一节、今天的课又都有时间：说明已经上完了，别再挂早上第一节。
+        if (hasClock && live == null && slots.all { school.clockKnown(it.period) }) {
+            drawCentered(canvas, "今天的课上完了", box.centerX(), box.centerY(), paint(context, muted(dark), 14f, false))
+            return
         }
         val focus = live?.slot ?: slots.first()
         val side = minOf(box.width(), box.height())

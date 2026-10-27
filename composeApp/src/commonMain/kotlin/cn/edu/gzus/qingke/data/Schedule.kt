@@ -2,6 +2,7 @@ package cn.edu.gzus.qingke.data
 
 import kotlinx.datetime.Clock
 import kotlinx.datetime.DatePeriod
+import kotlinx.datetime.Instant
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.LocalTime
@@ -26,38 +27,48 @@ fun parseWeekSet(raw: String): Set<Int> {
 }
 
 private fun computeWeekSet(raw: String): Set<Int> {
-    var text = raw
+    val text = raw
         .replace("周", "")
         .replace("第", "")
         .replace(" ", "")
         .replace("－", "-")
         .replace("—", "-")
+        .replace("–", "-")
         .replace("~", "-")
         .replace("到", "-")
     if (text.isBlank()) return emptySet()
-    val oddOnly = text.contains("单") && !text.contains("双")
-    val evenOnly = text.contains("双") && !text.contains("单")
-    text = text.replace("单", "").replace("双", "")
-        .replace("(", "").replace(")", "")
-        .replace("（", "").replace("）", "")
+    val segments = text.split(",", "，", "、", ";", "；").filter { it.isNotBlank() }
+    // 单双周跟着各自那一段走：「2-8(双),9-16」里的 9-16 是每周都上。
+    // 只有一段标了单双、其余段是光秃秃的单个周次时（「3,5,7(单)」），才把标记套到整串。
+    val bareSingles = segments.size > 1 && segments.dropLast(1).all { seg -> seg.all { it.isDigit() } }
+    val tailParity = segments.lastOrNull()?.let(::segmentParity)
     val out = mutableSetOf<Int>()
-    text.split(",", "、", ";", "；").forEach { part ->
-        val piece = part.filter { it.isDigit() || it == '-' }
+    segments.forEach { segment ->
+        val parity = segmentParity(segment) ?: if (bareSingles) tailParity else null
+        val piece = segment.filter { it.isDigit() || it == '-' }
         if (piece.isBlank()) return@forEach
         // 区间端点只认 1-40：全越界（"0-0""99-100"）直接丢，不凭空产周；
         // 「1-2-3」这种多段按最小到最大收，不静默丢第三段。
         val valid = piece.split("-").mapNotNull { it.toIntOrNull() }.filter { it in 1..40 }
-        when {
-            valid.isEmpty() -> Unit
-            valid.size == 1 -> out += valid[0]
-            else -> for (w in valid.min()..valid.max()) out += w
+        val weeks = when {
+            valid.isEmpty() -> emptyList()
+            valid.size == 1 -> listOf(valid[0])
+            else -> (valid.min()..valid.max()).toList()
+        }
+        out += when (parity) {
+            1 -> weeks.filter { it % 2 == 1 }
+            0 -> weeks.filter { it % 2 == 0 }
+            else -> weeks
         }
     }
-    return when {
-        oddOnly -> out.filter { it % 2 == 1 }.toSet()
-        evenOnly -> out.filter { it % 2 == 0 }.toSet()
-        else -> out
-    }
+    return out
+}
+
+/** 一段周次的单双：1=单周，0=双周，null=每周。 */
+private fun segmentParity(segment: String): Int? = when {
+    segment.contains("单") && !segment.contains("双") -> 1
+    segment.contains("双") && !segment.contains("单") -> 0
+    else -> null
 }
 
 fun parseWeekday(xqj: String, xqjmc: String): Int {
@@ -102,6 +113,10 @@ fun periodToBlock(period: String): String {
 
 fun nowDateTime(): LocalDateTime =
     Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
+
+/** 毫秒时刻对应的本地时间。上课提醒判课和算倒数要用同一个时刻，不能各取一次表。 */
+fun dateTimeAt(millis: Long): LocalDateTime =
+    Instant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.currentSystemDefault())
 
 fun greeting(hour: Int): String = when (hour) {
     in 0..4 -> "夜深了"
@@ -341,12 +356,13 @@ private fun liveLessonFrom(
     time: LocalTime,
     blocks: List<PeriodBlock> = emptyList(),
 ): LiveLesson? {
-    day.forEach { slot ->
-        val toStart = minutesUntil(time, blockStart(blocks, slot.period)) ?: return@forEach
-        val toEnd = minutesUntil(time, blockEnd(blocks, slot.period)) ?: return@forEach
-        if (toEnd > 0) return LiveLesson(slot, toStart, toEnd)
-    }
-    return null
+    // 按真实开课时间挑最早还没下课的一节，而不是按节次编号的第一个：
+    // 「中午」这类没编号的块排序键是 99，按列表顺序会被下午的课抢先。
+    return day.mapNotNull { slot ->
+        val toStart = minutesUntil(time, blockStart(blocks, slot.period)) ?: return@mapNotNull null
+        val toEnd = minutesUntil(time, blockEnd(blocks, slot.period)) ?: return@mapNotNull null
+        if (toEnd > 0) LiveLesson(slot, toStart, toEnd) else null
+    }.minByOrNull { it.minutesToStart }
 }
 
 fun nextLesson(

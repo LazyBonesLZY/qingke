@@ -243,7 +243,12 @@ class JwxtClient(
     }
 
     override suspend fun fetchGrades(): List<GradeItem> {
-        val text = postQuery(api("grades", "cjcx/cjcx_cxDgXscj.html?doType=query&gnmkdm=N305005"))
+        // 成绩是全部学期一次拉：默认每页 100 条，大三大四（含重修、补考记录）会超，
+        // 超出的那部分成绩和学分静默丢掉，GPA 也跟着算错。
+        val text = postQuery(
+            api("grades", "cjcx/cjcx_cxDgXscj.html?doType=query&gnmkdm=N305005"),
+            extra = mapOf("queryModel.showCount" to "5000"),
+        )
         val root = requireJsonObject(text, emptyHint = "成绩还没出来")
         val items = root["items"] as? JsonArray ?: return emptyList()
         return items.map { el ->
@@ -288,6 +293,8 @@ class JwxtClient(
                 "xqj" to weekday,
                 "ksjc" to start,
                 "jsjc" to end,
+                // 整个校区的空教室常常不止 100 间，默认一页 100 条会截掉后面的楼。
+                "queryModel.showCount" to "1000",
             ),
         )
         val root = requireJsonObject(text, emptyHint = "空教室没有结果")

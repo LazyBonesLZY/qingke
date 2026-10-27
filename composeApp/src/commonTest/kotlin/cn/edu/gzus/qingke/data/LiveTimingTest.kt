@@ -101,6 +101,59 @@ class LiveTimingTest {
             .withLiveCountdownMigration().settings.liveCountdownEnabled)
     }
 
+    @Test
+    fun backToBackCoursesHandOverWithoutNegativeCountdown() {
+        // 连堂：课间 10 分钟比提醒提前量还短，下课那一刻要无缝换成下一节的「距上课」。
+        val snapshot = snapshot().copy(
+            settings = snapshot().settings.copy(
+                remindLeadMinutes = 15,
+                periodTimeOverrides = mapOf("1-2" to "10:00-10:40", "3-4" to "10:50-11:30"),
+            ),
+        )
+        val firstEnd = combineMillis(day, "10:40")
+        val secondStart = combineMillis(day, "10:50")
+        val secondEnd = combineMillis(day, "11:30")
+
+        val last = snapshot.liveNotice(dateTimeAt(firstEnd - 1L), firstEnd - 1L)!!
+        assertEquals("Course 1-2", last.title)
+        assertTrue(last.inClass)
+        assertEquals(firstEnd, snapshot.nextLiveWake(dateTimeAt(firstEnd - 30_000L), firstEnd - 30_000L))
+
+        val handover = snapshot.liveNotice(dateTimeAt(firstEnd), firstEnd)!!
+        assertEquals("Course 3-4", handover.title)
+        assertFalse(handover.inClass)
+        assertEquals(10, handover.etaMinutes)
+        assertEquals(secondStart, handover.startMillis)
+
+        // 逐秒走完两节课：任何时刻挂出的通知，倒数的截止点都在未来，分钟数不会是 0 或负数。
+        var nowMs = combineMillis(day, "10:00")
+        while (nowMs < secondEnd) {
+            val notice = snapshot.liveNotice(dateTimeAt(nowMs), nowMs)!!
+            val timing = liveTiming(nowMs, notice.startMillis, notice.endMillis)!!
+            assertTrue(timing.deadlineMillis > nowMs, "deadline passed at $nowMs")
+            assertTrue(notice.etaMinutes >= 1, "eta ${notice.etaMinutes} at $nowMs")
+            val wake = snapshot.nextLiveWake(dateTimeAt(nowMs), nowMs)!!
+            assertTrue(wake in (nowMs + 1)..timing.deadlineMillis, "wake $wake at $nowMs")
+            nowMs += 1_000L
+        }
+        assertNull(snapshot.liveNotice(dateTimeAt(secondEnd), secondEnd))
+    }
+
+    @Test
+    fun picksTheEarliestUnfinishedLessonEvenWithUnnumberedBlocks() {
+        val blocks = listOf(
+            PeriodBlock(index = 1, label = "1-2", start = "08:00", end = "09:40", band = ""),
+            PeriodBlock(index = 2, label = "中午", start = "12:00", end = "13:00", band = ""),
+            PeriodBlock(index = 3, label = "5-6", start = "14:00", end = "15:40", band = ""),
+        )
+        val day = listOf(slot("5-6"), slot("中午"))
+        val atEleven = nextLiveLesson(day, 1, 1, LocalTime(11, 0), blocks)!!
+        assertEquals("中午", atEleven.slot.period)
+        val atNoon = nextLiveLesson(day, 1, 1, LocalTime(12, 30), blocks)!!
+        assertEquals("中午", atNoon.slot.period)
+        assertTrue(atNoon.inClass)
+    }
+
     private val day = LocalDate(2026, 10, 5)
 
     private fun snapshot(): AppSnapshot = AppSnapshot(

@@ -8,7 +8,7 @@ import cn.edu.gzus.qingke.data.liveTiming
 import cn.edu.gzus.qingke.data.liveNotice
 import cn.edu.gzus.qingke.data.nextLiveWake
 import cn.edu.gzus.qingke.data.notifyLiveClass
-import cn.edu.gzus.qingke.data.nowDateTime
+import cn.edu.gzus.qingke.data.dateTimeAt
 import cn.edu.gzus.qingke.data.readLiveTestWindow
 import cn.edu.gzus.qingke.data.readSnapshotStore
 import cn.edu.gzus.qingke.data.scheduleLiveWake
@@ -85,7 +85,7 @@ internal fun currentLiveParams(nowMs: Long): LiveParams? {
         writeLiveTestWindow(0L, 0L)
     }
     val snap = readSnapshotStore() ?: return null
-    val notice = snap.liveNotice(nowDateTime(), nowMs) ?: return null
+    val notice = snap.liveNotice(dateTimeAt(nowMs), nowMs) ?: return null
     return LiveParams(
         title = notice.title,
         detail = notice.detail,
@@ -109,6 +109,7 @@ internal fun runLiveTick() {
             startMillis = params.startMillis,
             endMillis = params.endMillis,
             countdownEnabled = params.countdownEnabled,
+            nowMillis = nowMs,
         )
         if (posted) {
             // 冷启动、开机恢复和应用更新广播也要进入同一条前台服务链路。
@@ -126,5 +127,5 @@ internal fun runLiveTick() {
         return
     }
     cancelLiveClass()
-    scheduleLiveWake(readSnapshotStore()?.nextLiveWake(nowDateTime(), nowMs))
+    scheduleLiveWake(readSnapshotStore()?.nextLiveWake(dateTimeAt(nowMs), nowMs))
 }

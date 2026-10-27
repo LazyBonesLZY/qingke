@@ -366,9 +366,9 @@ actual fun refreshHomeWidgets() {
 }
 
 /**
- * 构建 Live 通知。抽成独立函数是为了让前台服务能用同一个对象
- * startForeground——前台服务的通知必须就是这条 Live 通知本身，
- * 否则会多出一条常驻条目。
+ * 构建 Live 通知，应用循环、后台闹钟和前台服务共用。
+ * 它不能当前台服务的通知：系统不按 setTimeoutAfter 撤前台服务的通知，
+ * 进程被冻结时就会挂着负数倒计时。
  * 返回 null 表示这次不该显示（没权限 / 已被划掉）。
  */
 internal fun buildLiveNotification(
@@ -379,6 +379,9 @@ internal fun buildLiveNotification(
     startMillis: Long,
     endMillis: Long,
     countdownEnabled: Boolean,
+    // 判课和建通知必须用同一个时刻：分两次取表，卡在上下课边沿时会判出「该挂 A」却建不出 A，
+    // 前台服务就当成被划掉把整条链停到下一节结束。
+    nowMillis: Long = System.currentTimeMillis(),
 ): Notification? {
     val ctx = QingkeApp.app
     if (Build.VERSION.SDK_INT >= 33 &&
@@ -401,7 +404,7 @@ internal fun buildLiveNotification(
     if (!nm.areNotificationsEnabled() || savedChannel?.importance == NotificationManager.IMPORTANCE_NONE) {
         return null
     }
-    val timing = liveTiming(System.currentTimeMillis(), startMillis, endMillis) ?: return null
+    val timing = liveTiming(nowMillis, startMillis, endMillis) ?: return null
     val pct = timing.progressPercent
     val chipText = if (countdownEnabled) timing.countdownText else timing.statusText
     val launch = PendingIntent.getActivity(
@@ -494,6 +497,7 @@ actual fun notifyLiveClass(
     startMillis: Long,
     endMillis: Long,
     countdownEnabled: Boolean,
+    nowMillis: Long,
 ): Boolean {
     val notification = buildLiveNotification(
         title = title,
@@ -503,6 +507,7 @@ actual fun notifyLiveClass(
         startMillis = startMillis,
         endMillis = endMillis,
         countdownEnabled = countdownEnabled,
+        nowMillis = nowMillis,
     ) ?: return false
     val manager = QingkeApp.app.getSystemService(NotificationManager::class.java) ?: return false
     manager.notify(LIVE_ID, notification)

@@ -34,6 +34,12 @@ const val GZIST_CHANGE_PASSWORD_URL = "https://ids.gzist.edu.cn/lyuapServer/logi
 const val GZIST_JWXT_ORIGIN = "https://jw.gzist.edu.cn"
 const val GZIST_SSO_SERVICE = "http://jw.gzist.edu.cn/sso/lyiotlogin"
 
+// 电子科技大学中山学院：强智 jsxsd，登录页无验证码，账号密码各做一次标准 Base64。
+// 教务在 jwgln.zsc.edu.cn（"jwgln" 是"教务管理"），周历在「我的桌面」jxzl_query。
+const val ZSC_ORIGIN = "https://jwgln.zsc.edu.cn"
+const val ZSC_LOGIN_URL = "$ZSC_ORIGIN/jsxsd/xk/LoginToXk"
+const val ZSC_CHANGE_PASSWORD_URL = "$ZSC_ORIGIN/jsxsd/grsz/grsz_xgmm"
+
 // 广东生态工程职业学院：综合系统（AIC，ASP.NET）出票，教务本身是强智 jsxsd。
 // 教务不给直登——jsxsd 登录页要验证码，而且账号只认 SSO 过来的票。
 const val GDTSY_AIC_ORIGIN = "https://aic.gdsty.edu.cn"

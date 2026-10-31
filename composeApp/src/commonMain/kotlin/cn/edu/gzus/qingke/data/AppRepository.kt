@@ -25,6 +25,7 @@ class AppRepository(
     private val zhku: ZhkuClient = ZhkuClient(),
     private val gzist: GzistClient = GzistClient(),
     private val gdsty: GdstyClient = GdstyClient(),
+    private val zsc: ZscClient = ZscClient(),
     private val xiaoai: XiaoaiClient = XiaoaiClient(),
     private val holidays: HolidayClient = HolidayClient(),
     private val updates: UpdateClient = UpdateClient(),
@@ -37,6 +38,7 @@ class AppRepository(
             School.Zhku -> zhku
             School.Gzist -> gzist
             School.Gdsty -> gdsty
+            School.Zsc -> zsc
             School.Custom -> customPortal(settings.customJwxt)
         }
     }
@@ -329,7 +331,7 @@ class AppRepository(
             }
             return
         }
-        if (snap.settings.school() == School.Gdsty) {
+        if (snap.settings.school() == School.Gdsty || snap.settings.school() == School.Zsc) {
             activeRequest { portal().keepAlive() }.getOrElse { failed ->
                 if (failed is JwxtNeedFirstLogin) throw failed
                 if (isTransientNetwork(failed)) return
@@ -597,6 +599,7 @@ class AppRepository(
         val settings = _state.value.settings
         return settings.school() == School.Zhku ||
             settings.school() == School.Gdsty ||
+            settings.school() == School.Zsc ||
             (settings.school() == School.Custom && settings.customJwxt.normalizedKind() == "kingosoft")
     }
 

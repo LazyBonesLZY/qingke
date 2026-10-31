@@ -18,3 +18,6 @@ captures/
 *.aab
 *.log
 gradle/native/*.so
+
+# 本地构建产物（APK / 说明），不入库
+dist/

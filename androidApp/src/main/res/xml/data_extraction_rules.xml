@@ -3,9 +3,11 @@
     <cloud-backup>
         <exclude domain="file" path="qingke-relogin.bin" />
         <exclude domain="file" path="qingke-cookies.json" />
+        <exclude domain="file" path="qingke-snapshot.json" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="file" path="qingke-relogin.bin" />
         <exclude domain="file" path="qingke-cookies.json" />
+        <exclude domain="file" path="qingke-snapshot.json" />
     </device-transfer>
 </data-extraction-rules>

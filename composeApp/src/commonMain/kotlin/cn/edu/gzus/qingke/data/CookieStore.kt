@@ -17,6 +17,10 @@ internal data class CookieRow(
     val value: String,
     val domain: String,
     val path: String,
+    val expiresAt: Long? = null,
+    val secure: Boolean = false,
+    val httpOnly: Boolean = false,
+    val hostOnly: Boolean = false, // legacy rows had no hostOnly information
 )
 
 class PersistCookieStorage : CookiesStorage {
@@ -35,7 +39,10 @@ class PersistCookieStorage : CookiesStorage {
 
     private fun load() {
         val raw = readStore(COOKIE_FILE) ?: return
-        runCatching { cookies = json.decodeFromString<List<CookieRow>>(raw) }
+        runCatching {
+            val now = Clock.System.now().toEpochMilliseconds()
+            cookies = json.decodeFromString<List<CookieRow>>(raw).filter { it.expiresAt == null || it.expiresAt > now }
+        }
     }
 
     private fun persist(rows: List<CookieRow>) {
@@ -43,29 +50,29 @@ class PersistCookieStorage : CookiesStorage {
     }
 
     override suspend fun get(requestUrl: Url): List<Cookie> = mutex.withLock {
-        cookies.filter {
-            matches(requestUrl.host, it.domain) && pathMatches(requestUrl.encodedPath, it.path)
-        }.sortedWith(
-            // 同名 cookie 只留一份：path 越长、domain 越具体越优先，
-            // 服务端一般取第一份，旧的宽泛值就不会盖掉新的精确值。
-            compareByDescending<CookieRow> { it.path.length }
-                .thenByDescending { it.domain.trimStart('.').length },
-        ).distinctBy { it.name }
-            .map {
-                Cookie(name = it.name, value = it.value, domain = it.domain, path = it.path)
-            }
+        selectCookies(cookies, requestUrl, Clock.System.now().toEpochMilliseconds()).map {
+            Cookie(name = it.name, value = it.value,
+                domain = if (it.hostOnly) null else it.domain, path = it.path,
+                secure = it.secure, httpOnly = it.httpOnly)
+        }
     }
 
     override suspend fun addCookie(requestUrl: Url, cookie: Cookie) {
         mutex.withLock {
-            val domain = cookie.domain ?: requestUrl.host
+            val domain = (cookie.domain ?: requestUrl.host).trimStart('.').lowercase()
+            if (!matches(requestUrl.host.lowercase(), domain)) return@withLock
             val path = cookie.path ?: "/"
             val rest = cookies.filterNot {
                 it.name == cookie.name && it.domain == domain && it.path == path
             }
             // Max-Age=0 或过期时间已过，是服务端在删 cookie（退出、换会话）。
             // 照浏览器的规矩删掉，不要存成空值再带回去。
-            val next = if (cookie.isDeletion()) rest else rest + CookieRow(cookie.name, cookie.value, domain, path)
+            val now = Clock.System.now().toEpochMilliseconds()
+            val expiresAt = cookie.maxAge?.let { now + it.toLong() * 1_000L } ?: cookie.expires?.timestamp
+            val next = if (cookie.isDeletion()) rest else rest + CookieRow(
+                cookie.name, cookie.value, domain, path, expiresAt,
+                cookie.secure, cookie.httpOnly, cookie.domain == null,
+            )
             // 跳转链里同一个 cookie 常被原样重发；结果没变就别整份重写文件。
             if (next == cookies) return@withLock
             cookies = next
@@ -75,9 +82,9 @@ class PersistCookieStorage : CookiesStorage {
 
     override fun close() = Unit
 
-    fun snapshot(): List<Pair<String, String>> = cookies.map { it.name to it.value }
+    fun snapshot(): List<Pair<String, String>> = currentRows(cookies).map { it.name to it.value }
 
-    fun records(): List<CookieRecord> = cookies.map { CookieRecord(it.name, it.value, it.domain, it.path) }
+    fun records(): List<CookieRecord> = currentRows(cookies).map { CookieRecord(it.name, it.value, it.domain, it.path) }
 
     fun wipe() {
         // 自旋拿锁：addCookie 的 persist 在做文件 IO，窗口虽小但撞上时
@@ -112,10 +119,25 @@ class PersistCookieStorage : CookiesStorage {
 
 private fun Cookie.isDeletion(): Boolean {
     val age = maxAge
-    if (age != null && age <= 0) return true
+    if (age != null) return age <= 0
     val at = expires ?: return false
     return at.timestamp <= Clock.System.now().toEpochMilliseconds()
 }
+
+private fun currentRows(rows: List<CookieRow>, now: Long = Clock.System.now().toEpochMilliseconds()): List<CookieRow> =
+    rows.filter { it.expiresAt == null || it.expiresAt > now }
+
+/** Selection is pure so expiry, HTTPS-only and host-only rules can be regression tested. */
+internal fun selectCookies(rows: List<CookieRow>, requestUrl: Url, now: Long): List<CookieRow> =
+    currentRows(rows, now).filter { row ->
+        val host = requestUrl.host.lowercase()
+        val allowedHost = if (row.hostOnly) host == row.domain.lowercase() else matches(host, row.domain.lowercase())
+        allowedHost && pathMatches(requestUrl.encodedPath, row.path) &&
+            (!row.secure || requestUrl.protocol.name.equals("https", ignoreCase = true))
+    }.sortedWith(
+        compareByDescending<CookieRow> { it.path.length }
+            .thenByDescending { it.domain.trimStart('.').length },
+    ).distinctBy { it.name }
 
 private fun matches(host: String, domain: String): Boolean {
     if (domain.isBlank()) return true

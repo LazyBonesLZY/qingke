@@ -182,8 +182,8 @@ private fun LessonSlot.toLine(
 }
 
 /**
- * 详情页头：课程名就是页面主标题（顶栏只写「课程详情」），
- * 右侧放成绩，下面一行是课程号 / 教师和属性、调课标签，关键事实不用往下翻。
+ * 课程标题优先占整行，长课程名完整显示；成绩在下一行而不是挤压标题。
+ * 颜色、字号仍沿用 Miuix 现有层级。
  */
 @Composable
 private fun CourseHeader(
@@ -198,36 +198,33 @@ private fun CourseHeader(
     val score = grade?.score?.takeIf { it.isNotBlank() }
     val gpa = grade?.resolvedGpa()?.let { "绩点 ${formatGpa(it)}" }
     Column(Modifier.fillMaxWidth().padding(horizontal = Inset.page)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-            Text(
-                name,
-                modifier = Modifier.weight(1f),
-                style = MiuixTheme.textStyles.title2,
-                color = MiuixTheme.colorScheme.onBackground,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (score != null || gpa != null) {
-                Spacer(Modifier.width(Space.m))
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        score ?: gpa.orEmpty(),
-                        style = MiuixTheme.textStyles.title2,
-                        fontWeight = FontWeight.SemiBold,
-                        color = grade?.let { scoreColor(it) } ?: MiuixTheme.colorScheme.onBackground,
-                        maxLines = 1,
-                        textAlign = TextAlign.End,
-                    )
-                    if (score != null && gpa != null) {
-                        Text(gpa, style = MiuixTheme.textStyles.footnote1, color = muted, maxLines = 1)
-                    }
+        Text(
+            name,
+            style = MiuixTheme.textStyles.title2,
+            color = MiuixTheme.colorScheme.onBackground,
+        )
+        if (courseId.isNotBlank()) {
+            Spacer(Modifier.height(Space.xs))
+            Text("课程号 · $courseId", style = MiuixTheme.textStyles.body2, color = muted)
+        }
+        if (teachers.isNotBlank()) {
+            Spacer(Modifier.height(Space.xs))
+            Text("教师 · $teachers", style = MiuixTheme.textStyles.body2, color = muted)
+        }
+        if (score != null || gpa != null) {
+            Spacer(Modifier.height(Space.m))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    score ?: gpa.orEmpty(),
+                    style = MiuixTheme.textStyles.title2,
+                    fontWeight = FontWeight.SemiBold,
+                    color = scoreColor(grade),
+                )
+                if (score != null && gpa != null) {
+                    Spacer(Modifier.width(Space.m))
+                    Text(gpa, style = MiuixTheme.textStyles.footnote1, color = muted)
                 }
             }
-        }
-        val sub = listOf(courseId, teachers).filter { it.isNotBlank() }.joinToString(" · ")
-        if (sub.isNotBlank()) {
-            Spacer(Modifier.height(Space.xs))
-            Text(sub, style = MiuixTheme.textStyles.body2, color = muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
         if (kind.isNotBlank() || hasShift) {
             Spacer(Modifier.height(Space.s))

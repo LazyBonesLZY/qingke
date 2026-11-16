@@ -160,6 +160,10 @@ data class AppSettings(
     val blurEnabled: Boolean = true,
     val floatingBottomBar: Boolean = true,
     val compactTimetable: Boolean = true,
+    /** 周课表默认只显示周一到周五；用户可以随时展开周末，此选项会持久化。 */
+    val showWeekend: Boolean = false,
+    /** 首页轻提示：换教室、临近考试、课程较满时才出现；不产生通知和网络请求。 */
+    val dailyCareEnabled: Boolean = true,
     /** 界面整体缩放，0.7~1.4，越界由 QingkeTheme 夹紧。 */
     val uiScale: Float = 1f,
     /** 课程色块自定义底色，空串表示跟随系统配色。 */
@@ -182,7 +186,6 @@ data class AppSettings(
     val weekCount: Int = 0,
     val courseAliases: Map<String, String> = emptyMap(),
     val roomAliases: Map<String, String> = emptyMap(),
-    val xiaoaiEditUrl: String = "",
     val schoolId: String = School.Default.id,
     val gzusLoginChannel: String = GZUS_LOGIN_CAS,
     val remindLeadMinutes: Int = DefaultRemindLeadMinutes,
@@ -198,6 +201,8 @@ data class AppSettings(
     val autoCheckUpdate: Boolean = true,
     val autoSyncOnStart: Boolean = false,
     val coursePickQueue: List<CoursePickTask> = emptyList(),
+    /** 将定时选课与学校/登录通道/学号/学期绑定，绝不跨账号提交。 */
+    val coursePickOwner: String = "",
 )
 
 @Serializable
@@ -260,6 +265,7 @@ fun AppSettings.forSchool(school: School): AppSettings {
         termStart = "",
         weekCount = 0,
         coursePickQueue = emptyList(),
+        coursePickOwner = "",
     )
 }
 
@@ -348,6 +354,8 @@ data class AppSnapshot(
     val holidays: HolidayCalendar = HolidayCalendar(),
     val scheduleAdjust: CloudScheduleAdjust = CloudScheduleAdjust(),
     val session: SessionState = SessionState(),
+    /** Non-fatal data-source failures on the latest sync (timetable can still be current). */
+    val syncWarnings: List<String> = emptyList(),
     val seeded: Boolean = false,
 ) {
     val hasTimetable: Boolean get() = slots.isNotEmpty() || practices.isNotEmpty()
@@ -725,14 +733,14 @@ fun formatCoursePickWhen(millis: Long): String {
 /** 解析手填的开选时间。填错返回 0，由调用方提示，别在点击回调里抛异常。 */
 fun parseCoursePickWhen(date: String, time: String): Long {
     val day = runCatching { LocalDate.parse(date.trim()) }.getOrNull() ?: return 0L
-    val parts = time.trim().split(':', '：', '.', '-', ' ')
-        .mapNotNull { it.toIntOrNull() }
-    if (parts.isEmpty()) return 0L
-    val clock = LocalTime(
-        hour = parts[0].coerceIn(0, 23),
-        minute = parts.getOrElse(1) { 0 }.coerceIn(0, 59),
-        second = parts.getOrElse(2) { 0 }.coerceIn(0, 59),
-    )
+    val parts = time.trim().replace('：', ':').split(':')
+    if (parts.size !in 2..3 || parts.any { it.isBlank() || it.length > 2 || !it.all(Char::isDigit) }) return 0L
+    val numbers = parts.map { it.toIntOrNull() ?: return 0L }
+    val hour = numbers[0]
+    val minute = numbers[1]
+    val second = numbers.getOrElse(2) { 0 }
+    if (hour !in 0..23 || minute !in 0..59 || second !in 0..59) return 0L
+    val clock = LocalTime(hour, minute, second)
     return runCatching {
         LocalDateTime(day, clock).toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds()
     }.getOrDefault(0L)

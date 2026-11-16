@@ -1,5 +1,7 @@
 package cn.edu.gzus.qingke.widget
 
+import kotlinx.coroutines.launch
+
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
@@ -809,7 +811,14 @@ internal const val ACTION_TICK = "cn.edu.gzus.qingke.widget.TICK"
 /** 到点叫醒：重画一次，顺便把下一次闹钟排上。 */
 class WidgetTickReceiver : android.content.BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        runCatching { QingkeWidgets.refreshAll(context) }
+        val pending = goAsync()
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
+            try {
+                runCatching { QingkeWidgets.refreshAll(context.applicationContext) }
+            } finally {
+                pending.finish()
+            }
+        }
     }
 }
 
@@ -822,8 +831,15 @@ class WidgetClockReceiver : android.content.BroadcastReceiver() {
             Intent.ACTION_TIMEZONE_CHANGED,
             Intent.ACTION_MY_PACKAGE_REPLACED,
             -> {
-                runCatching { QingkeWidgets.refreshAll(context) }
-                runCatching { cn.edu.gzus.qingke.runLiveTick() }
+                val pending = goAsync()
+                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
+                    try {
+                        runCatching { QingkeWidgets.refreshAll(context.applicationContext) }
+                        runCatching { cn.edu.gzus.qingke.runLiveTick() }
+                    } finally {
+                        pending.finish()
+                    }
+                }
             }
         }
     }

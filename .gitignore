@@ -18,3 +18,7 @@ captures/
 *.aab
 *.log
 gradle/native/*.so
+/work-tmp/
+/.agent-teams/
+/qingke-seven-stage-live-fallback-integrated-20261116.zip
+*:Zone.Identifier

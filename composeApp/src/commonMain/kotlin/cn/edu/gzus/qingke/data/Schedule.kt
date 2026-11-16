@@ -131,10 +131,9 @@ fun formatMonthDay(date: LocalDate): String = "${date.monthNumber}月${date.dayO
 fun weekdayIndex(date: LocalDate): Int = date.dayOfWeek.ordinal + 1 // 1=Mon
 
 fun minutesUntil(now: LocalTime, start: String): Int? {
-    val parts = start.split(":")
-    if (parts.size < 2) return null
-    val hour = parts[0].toIntOrNull() ?: return null
-    val minute = parts[1].toIntOrNull() ?: return null
+    val clock = normalizeClock(start) ?: return null
+    val hour = clock.substringBefore(":").toInt()
+    val minute = clock.substringAfter(":").toInt()
     return hour * 60 + minute - (now.hour * 60 + now.minute)
 }
 
@@ -164,7 +163,7 @@ fun periodStart(period: String): String {
 fun periodClockRange(period: String): String {
     val first = period.substringBefore("-").toIntOrNull() ?: return ""
     val last = period.substringAfter("-", period).toIntOrNull() ?: first
-    if (first !in 1..16 || last !in 1..16) return ""
+    if (first !in 1..16 || last !in 1..16 || last < first) return ""
     return "${periodStart(period)}-${periodEnd(period)}"
 }
 
@@ -194,7 +193,9 @@ private fun ResolvedSchool.anyBlockHasClock(): Boolean =
  * 而不是拿别的学校的作息顶上去。
  */
 fun ResolvedSchool.clockKnown(period: String): Boolean =
-    blocksFor(periodBlocks, period).any { it.start.isNotBlank() && it.end.isNotBlank() }
+    blocksFor(periodBlocks, period).let { blocks ->
+        blocks.isNotEmpty() && blocks.all { it.start.isNotBlank() && it.end.isNotBlank() }
+    }
 
 /**
  * 下面这组是**按学校自己的作息**算时间，而不是用写死的表。
@@ -221,14 +222,17 @@ fun ResolvedSchool.periodEndOf(period: String): String {
 
 fun ResolvedSchool.clockRangeOf(period: String): String {
     val hit = blocksFor(periodBlocks, period).filter { it.start.isNotBlank() && it.end.isNotBlank() }
-    if (hit.isNotEmpty()) return "${hit.first().start}-${hit.last().end}"
+    if (clockKnown(period)) return "${hit.first().start}-${hit.last().end}"
     return if (anyBlockHasClock()) "" else periodClockRange(period)
 }
 
 /** 同上，但直接吃节次块列表（调用方手上没有 ResolvedSchool 时用）。 */
 fun clockRangeIn(period: String, blocks: List<PeriodBlock>): String {
     val hit = blocksFor(blocks, period).filter { it.start.isNotBlank() && it.end.isNotBlank() }
-    if (hit.isNotEmpty()) return "${hit.first().start}-${hit.last().end}"
+    val matched = blocksFor(blocks, period)
+    if (matched.isNotEmpty() && matched.all { it.start.isNotBlank() && it.end.isNotBlank() }) {
+        return "${hit.first().start}-${hit.last().end}"
+    }
     val anyClock = blocks.any { it.start.isNotBlank() && it.end.isNotBlank() }
     return if (anyClock) "" else periodClockRange(period)
 }
@@ -238,7 +242,12 @@ fun normalizeClock(raw: String): String? {
     val digits = raw.trim().replace('：', ':').replace(" ", "")
     if (digits.isEmpty()) return null
     val parts = when {
-        digits.contains(':') -> digits.split(":", limit = 2)
+        digits.contains(':') -> {
+            val fields = digits.split(":")
+            if (fields.size !in 2..3) return null
+            if (fields.size == 3 && fields[2].toIntOrNull()?.let { it in 0..59 } != true) return null
+            fields.take(2)
+        }
         digits.length == 4 -> listOf(digits.substring(0, 2), digits.substring(2))
         digits.length == 3 -> listOf(digits.substring(0, 1), digits.substring(1))
         else -> return null
@@ -285,7 +294,8 @@ fun ResolvedSchool.sectionTime(index: Int): Pair<String, String>? {
     val step = (to - from) / count
     if (step <= 0) return null
     val offset = (index - bs).coerceIn(0, count - 1)
-    return minutesToClock(from + offset * step) to minutesToClock(from + (offset + 1) * step)
+    val lastMinute = if (offset == count - 1) to else from + (offset + 1) * step
+    return minutesToClock(from + offset * step) to minutesToClock(lastMinute)
 }
 
 fun ResolvedSchool.formatPeriod(period: String, periodLabel: String = "", hasClock: Boolean): String {
@@ -485,10 +495,9 @@ fun weeksInUse(slots: List<LessonSlot>): List<Int> =
     slots.flatMap { parseWeekSet(it.weeks) }.toSortedSet().toList()
 
 fun combineMillis(date: LocalDate, hm: String): Long {
-    val parts = hm.split(":")
-    if (parts.size < 2) return 0L
-    val hour = parts[0].toIntOrNull() ?: return 0L
-    val minute = parts[1].toIntOrNull() ?: return 0L
+    val clock = normalizeClock(hm) ?: return 0L
+    val hour = clock.substringBefore(":").toInt()
+    val minute = clock.substringAfter(":").toInt()
     return LocalDateTime(date, LocalTime(hour, minute, 0))
         .toInstant(TimeZone.currentSystemDefault())
         .toEpochMilliseconds()

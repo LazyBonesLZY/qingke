@@ -4,7 +4,9 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import cn.edu.gzus.qingke.data.cancelLiveClass
+import cn.edu.gzus.qingke.data.livePostFailureWake
 import cn.edu.gzus.qingke.data.liveTiming
+import cn.edu.gzus.qingke.data.isLiveStageTimeout
 import cn.edu.gzus.qingke.data.liveNotice
 import cn.edu.gzus.qingke.data.nextLiveWake
 import cn.edu.gzus.qingke.data.notifyLiveClass
@@ -20,8 +22,6 @@ internal const val LIVE_DISMISSED_KEY = "dismissed"
 internal const val EXTRA_LIVE_DISMISS = "dismiss_key"
 internal const val EXTRA_LIVE_DEADLINE = "dismiss_deadline"
 
-/** 离阶段截止这么近收到的 deleteIntent，当成系统超时撤下，不当成用户划掉。 */
-private const val LIVE_TIMEOUT_SLACK_MILLIS = 1_000L
 internal const val ACTION_LIVE_TICK = "cn.edu.gzus.qingke.LIVE_TICK"
 
 class LiveDismissReceiver : BroadcastReceiver() {
@@ -30,7 +30,7 @@ class LiveDismissReceiver : BroadcastReceiver() {
         // setTimeoutAfter 到点撤通知时系统也会发 deleteIntent。那是上课/下课的阶段切换，
         // 不是用户划掉；当成划掉记下来，会把同一节课的「上课中」整节吞掉。
         val deadline = intent.getLongExtra(EXTRA_LIVE_DEADLINE, 0L)
-        val timedOut = deadline > 0L && System.currentTimeMillis() >= deadline - LIVE_TIMEOUT_SLACK_MILLIS
+        val timedOut = isLiveStageTimeout(System.currentTimeMillis(), deadline)
         if (!timedOut) {
             context.getSharedPreferences(LIVE_PREFS, Context.MODE_PRIVATE)
                 .edit()
@@ -119,10 +119,10 @@ internal fun runLiveTick() {
             // 通知权限/渠道关闭或用户已划掉当前课程时，不再每分钟空唤醒；
             // 到本节结束后再恢复下一节的调度。
             setLiveForeground(false)
-            scheduleLiveWake(params.endMillis + 1_000L)
+            scheduleLiveWake(livePostFailureWake(params.title, params.startMillis, params.endMillis))
         } else {
             val timing = liveTiming(nowMs, params.startMillis, params.endMillis)
-            scheduleLiveWake(timing?.let { nowMs + it.refreshDelayMillis })
+            scheduleLiveWake(timing?.deadlineMillis)
         }
         return
     }

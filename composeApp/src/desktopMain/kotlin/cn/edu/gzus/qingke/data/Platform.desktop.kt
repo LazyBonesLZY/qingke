@@ -149,10 +149,6 @@ actual fun copyToClipboard(text: String) {
     clipboard.setContents(java.awt.datatransfer.StringSelection(text), null)
 }
 
-actual fun openXiaoaiSchedule() {
-    openUrl(XIAOAI_SCHEDULE_HOME)
-}
-
 actual fun requestLiveUpdatePermission() = Unit
 
 actual fun liveKeepaliveStatus(): String = "桌面端常驻运行，无需保活"
@@ -183,3 +179,5 @@ actual fun resetLiveDismiss() = Unit
 actual fun liveUpdateStatus(leadMinutes: Int): String = "仅 Android 支持 Live Update"
 
 actual fun openLiveUpdateSettings() = Unit
+
+internal actual fun livePostFailureWake(title: String, startMillis: Long, endMillis: Long): Long = endMillis

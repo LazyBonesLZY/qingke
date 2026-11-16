@@ -26,6 +26,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -74,7 +75,6 @@ import cn.edu.gzus.qingke.data.resolvedGpa
 import cn.edu.gzus.qingke.data.mondayOf
 import cn.edu.gzus.qingke.data.nowDateTime
 import cn.edu.gzus.qingke.data.openUrl
-import cn.edu.gzus.qingke.data.openXiaoaiSchedule
 import cn.edu.gzus.qingke.data.requestLiveUpdatePermission
 import cn.edu.gzus.qingke.data.resetLiveDismiss
 import cn.edu.gzus.qingke.data.resolveCourseDetail
@@ -104,7 +104,6 @@ import cn.edu.gzus.qingke.ui.jwxt.HallScreen
 import cn.edu.gzus.qingke.ui.jwxt.JwxtScreen
 import cn.edu.gzus.qingke.ui.jwxt.LeaveScreen
 import cn.edu.gzus.qingke.ui.jwxt.UtilityScreen
-import cn.edu.gzus.qingke.ui.jwxt.XiaoaiImportScreen
 import cn.edu.gzus.qingke.ui.mine.CourseAliasesScreen
 import cn.edu.gzus.qingke.ui.mine.MineScreen
 import cn.edu.gzus.qingke.ui.mine.PeriodTimeScreen
@@ -164,8 +163,12 @@ fun App() {
                 if (date != calendarDay) calendarDay = date
             }
         }
-        // 从后台切回来先校正一次日期，别等下一个 60 秒。
-        QingkeOnResume { calendarDay = nowDateTime().date }
+        // 日期没变也要重启提醒计时：后台可能已经跨过一节课或用户修改了系统时间。
+        var liveResumeTick by remember { mutableIntStateOf(0) }
+        QingkeOnResume {
+            calendarDay = nowDateTime().date
+            liveResumeTick++
+        }
         val captcha by repo.captcha.collectAsState()
         val captchaError by repo.captchaError.collectAsState()
         var busyJobs by remember { mutableStateOf(emptySet<String>()) }
@@ -192,6 +195,9 @@ fun App() {
         var pickChosen by remember { mutableStateOf<List<CoursePickOffer>>(emptyList()) }
         var pickScopesBusy by remember { mutableStateOf(false) }
         var pickSearchBusy by remember { mutableStateOf(false) }
+        var pickMoreBusy by remember { mutableStateOf(false) }
+        var pickHasMore by remember { mutableStateOf(false) }
+        var pickPageOffset by remember { mutableStateOf(0) }
         var pickSectionsBusy by remember { mutableStateOf(false) }
         var pickError by remember { mutableStateOf<String?>(null) }
 
@@ -216,6 +222,9 @@ fun App() {
             pickError = null
             pickScopesBusy = false
             pickSearchBusy = false
+            pickMoreBusy = false
+            pickHasMore = false
+            pickPageOffset = 0
             pickSectionsBusy = false
         }
 
@@ -382,23 +391,21 @@ fun App() {
             snapshot.settings.remindBeforeClass, snapshot.settings.remindLeadMinutes,
             snapshot.settings.liveCountdownEnabled, snapshot.slots, snapshot.settings.currentWeek,
             snapshot.settings.termStart, snapshot.settings.periodTimeOverrides,
+            snapshot.settings.schoolId, snapshot.settings.customJwxt,
             snapshot.profile.periodTimes, snapshot.settings.scheduleShifts,
-            snapshot.settings.autoPullScheduleAdjust, snapshot.scheduleAdjust, calendarDay, liveTick,
+            snapshot.settings.autoPullScheduleAdjust, snapshot.scheduleAdjust, calendarDay, liveTick, liveResumeTick,
         ) {
             if (snapshot.settings.remindBeforeClass) requestLiveUpdatePermission()
             while (isActive) {
-                val live = repo.refreshLive()
+                repo.refreshLive()
                 val testing = repo.hasLiveTest()
                 if (!snapshot.settings.remindBeforeClass && !testing) {
                     cancelLiveClass()
                     break
                 }
-                if (live || testing) {
-                    // 和后台服务共用剩余分钟边界，上课/下课时立即换状态。
-                    delay(repo.liveRefreshDelayMs())
-                } else {
-                    delay(60_000)
-                }
+                // 有通知按剩余分钟刷新；无通知也不越过下一节的提醒点。
+                // 发布耗时跨过上下课点时，保存的绝对刷新点会让下一跳立即校正。
+                delay(repo.liveRefreshDelayMs())
             }
         }
 
@@ -509,7 +516,15 @@ fun App() {
                         }
                         TabDest.Timetable -> QingkeWideFrame(fill = true) {
                         SyncPull(snapshot.session.loggedIn, busy, padding, onRefresh = pullSync) {
-                            key(calendarDay) { TimetableScreen(snapshot, nav, padding, onSync = syncNow) }
+                            key(calendarDay) {
+                                TimetableScreen(
+                                    snapshot, nav, padding,
+                                    onSync = syncNow,
+                                    onShowWeekendChange = { show ->
+                                        repo.updateSettings { it.copy(showWeekend = show) }
+                                    },
+                                )
+                            }
                         }
                         }
                         TabDest.Grades -> QingkeWideFrame {
@@ -588,6 +603,9 @@ fun App() {
                                 }
                             },
                             onSync = syncNow,
+                            onToggleDailyCare = { on ->
+                                repo.updateSettings { it.copy(dailyCareEnabled = on) }
+                            },
                             onToggleAutoSync = { on ->
                                 repo.updateSettings { it.copy(autoSyncOnStart = on) }
                                 toast(if (on) "已打开启动自动同步" else "已关闭启动自动同步")
@@ -982,6 +1000,8 @@ fun App() {
                                 picked = pickChosen,
                                 scopesBusy = pickScopesBusy,
                                 searchBusy = pickSearchBusy,
+                                moreBusy = pickMoreBusy,
+                                hasMore = pickHasMore,
                                 sectionsBusy = pickSectionsBusy,
                                 error = pickError,
                                 onLoadScopes = {
@@ -998,6 +1018,10 @@ fun App() {
                                     }
                                 },
                                 onSearch = { item, keyword ->
+                                    requests.cancel("pickMore")
+                                    pickMoreBusy = false
+                                    pickHasMore = false
+                                    pickPageOffset = 0
                                     requests.cancel("pickSections")
                                     pickSectionsBusy = false
                                     requests.launch("pickSearch") {
@@ -1006,13 +1030,42 @@ fun App() {
                                         pickSections = emptyList()
                                         pickOffers = emptyList()
                                         pickChosen = emptyList()
-                                        activeRequest { repo.searchCoursePicks(item, keyword) }
-                                            .onSuccess { pickOffers = it }
+                                        activeRequest { repo.searchCoursePicks(item, keyword, start = 0, pageSize = 30) }
+                                            .onSuccess {
+                                                pickOffers = it
+                                                pickPageOffset = it.size
+                                                pickHasMore = it.size == 30
+                                            }
                                             .onFailure { failed -> pickError = failed.friendlyNetworkMessage() }
                                         activeRequest { repo.loadCoursePicked(item) }
                                             .onSuccess { pickChosen = it }
                                             .onFailure { failed -> pickError = failed.friendlyNetworkMessage() }
                                         pickSearchBusy = false
+                                    }
+                                },
+                                onLoadMore = { item, keyword ->
+                                    if (!pickMoreBusy && !pickSearchBusy && pickHasMore) {
+                                        requests.launch("pickMore") {
+                                            pickMoreBusy = true
+                                            val before = pickOffers
+                                            activeRequest {
+                                                repo.searchCoursePicks(item, keyword, start = pickPageOffset, pageSize = 30)
+                                            }.onSuccess { page ->
+                                                // Some portals repeat the last page. Stop instead of looping forever.
+                                                val known = before.map {
+                                                    listOf(it.courseId, it.classId, it.name, it.teacher).joinToString("|")
+                                                }.toSet()
+                                                val extra = page.filterNot {
+                                                    listOf(it.courseId, it.classId, it.name, it.teacher).joinToString("|") in known
+                                                }
+                                                pickOffers = before + extra
+                                                pickPageOffset += page.size
+                                                pickHasMore = page.size == 30 && extra.isNotEmpty()
+                                            }.onFailure { failed ->
+                                                pickError = failed.friendlyNetworkMessage()
+                                            }
+                                            pickMoreBusy = false
+                                        }
                                     }
                                 },
                                 onOpenSections = { offer ->
@@ -1061,28 +1114,6 @@ fun App() {
                                 contentPadding = padding,
                                 onUpdate = { transform -> repo.updateSettings(transform) },
                             )
-                            is Route.XiaoaiImport -> XiaoaiImportScreen(
-                                snapshot = snapshot,
-                                contentPadding = padding,
-                                busy = "xiaoai" in busyJobs,
-                                onSaveUrl = { url ->
-                                    requestResult { repo.saveXiaoaiEditUrl(url) }
-                                        .onSuccess { toast("已保存授权") }
-                                        .onFailure { toast(it.message?.takeIf { m -> m.isNotBlank() } ?: "授权无效") }
-                                },
-                                onClearUrl = {
-                                    repo.clearXiaoaiEditUrl()
-                                    toast("已清除授权")
-                                },
-                                onImport = {
-                                    runJob(job = "xiaoai", action = "导入") {
-                                        val msg = repo.importToXiaoai()
-                                        openXiaoaiSchedule()
-                                        toast(msg)
-                                    }
-                                },
-                                onCopied = { toast("已复制官方 JSON") },
-                            )
                         }
                     }
                     }
@@ -1106,7 +1137,6 @@ private fun routeTitle(route: Route): String = when (route) {
     is Route.Hall -> "办事大厅"
     is Route.Leave -> "请假"
     is Route.Utility -> "宿舍水电"
-    is Route.XiaoaiImport -> "导入小爱"
     is Route.CourseAliases -> "课表缩写"
     is Route.RoomAliases -> "教室缩写"
     is Route.ScheduleShifts -> "调课"

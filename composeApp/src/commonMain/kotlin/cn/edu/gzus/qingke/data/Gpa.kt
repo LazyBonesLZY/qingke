@@ -80,10 +80,20 @@ fun summarizeGpa(grades: List<GradeItem>): GpaSummary {
  * 认不出来返回 null，调用方就不按学期筛它。
  */
 fun gradeTermKey(term: String): Pair<Int, Int>? {
-    val numbers = Regex("\\d+").findAll(term).map { it.value }.toList()
-    val year = numbers.firstOrNull { it.length == 4 }?.toIntOrNull() ?: return null
-    val index = numbers.lastOrNull()?.takeIf { it.length <= 2 }?.toIntOrNull() ?: return null
-    return year to index
+    // Keep unrecognised labels unfiltered instead of silently placing grades in the wrong term.
+    val year = Regex("""20\d{2}""").find(term)?.value?.toIntOrNull() ?: return null
+    val label = Regex("""(?:第\s*)?([一二三1-3])\s*学期""").find(term)?.groupValues?.get(1)
+    val semester = when (label) {
+        "一", "1" -> 1
+        "二", "2" -> 2
+        "三", "3" -> 3
+        else -> when {
+            term.contains("上学期") -> 1
+            term.contains("下学期") -> 2
+            else -> Regex("""[-－—\s]([1-3])\s*$""").find(term)?.groupValues?.get(1)?.toIntOrNull()
+        }
+    } ?: return null
+    return year to semester
 }
 
 /** 设置里当前学年学期（正方码：学期 3=第一、12=第二、16=第三）；强智等没有码时返回 null。 */

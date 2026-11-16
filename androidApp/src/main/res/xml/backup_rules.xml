@@ -2,4 +2,5 @@
 <full-backup-content>
     <exclude domain="file" path="qingke-relogin.bin" />
     <exclude domain="file" path="qingke-cookies.json" />
+    <exclude domain="file" path="qingke-snapshot.json" />
 </full-backup-content>

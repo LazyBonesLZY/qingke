@@ -16,6 +16,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.util.AtomicFile
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
@@ -211,13 +212,13 @@ actual fun currentCookies(): List<Pair<String, String>> = cookiePairs()
 
 actual fun openUrl(url: String) {
     val ctx = QingkeApp.app
-    val inApp = listOf(
-        "jwxt.gzus.edu.cn",
-        "ecarduser.gzus.edu.cn",
-        "ehall.gzus.edu.cn",
-        "cas.gzus.edu.cn",
-        "sso.gzus.edu.cn",
-    ).any { url.contains(it) }
+    val parsed = Uri.parse(url)
+    val allowedHosts = setOf(
+        "jwxt.gzus.edu.cn", "ecarduser.gzus.edu.cn", "ehall.gzus.edu.cn",
+        "cas.gzus.edu.cn", "sso.gzus.edu.cn",
+    )
+    val inApp = parsed.scheme.equals("https", ignoreCase = true) &&
+        parsed.host?.lowercase() in allowedHosts
     val intent = if (inApp) {
         Intent(ctx, JwxtWebActivity::class.java)
             .putExtra(JwxtWebActivity.EXTRA_URL, url)
@@ -231,18 +232,6 @@ actual fun openUrl(url: String) {
 actual fun copyToClipboard(text: String) {
     val cm = QingkeApp.app.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     cm.setPrimaryClip(ClipData.newPlainText("qingke", text))
-}
-
-actual fun openXiaoaiSchedule() {
-    val ctx = QingkeApp.app
-    val pkgs = listOf("com.xiaomi.aischedule", "com.miui.voiceassist")
-    for (pkg in pkgs) {
-        val launch = ctx.packageManager.getLaunchIntentForPackage(pkg) ?: continue
-        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        ctx.startActivity(launch)
-        return
-    }
-    openUrl(XIAOAI_SCHEDULE_HOME)
 }
 
 actual fun requestLiveUpdatePermission() {
@@ -353,11 +342,8 @@ actual fun liveUpdateStatus(leadMinutes: Int): String {
     ) {
         return "上课提醒通知已关闭，可到系统设置开启"
     }
-    if (Build.VERSION.SDK_INT < 36) return "当前系统显示普通上课通知，不支持原生 Live 胶囊"
-    if (nm != null && !nm.canPostPromotedNotifications()) {
-        return "通知能发，状态栏 Live 还没开"
-    }
-    return "下一节课前 ${leadMinutes} 分钟出现，上课中倒数下课"
+    return (nm?.let { LiveAndroidBackend.status(ctx, it) } ?: "通知服务暂不可用") +
+        " · 提前 $leadMinutes 分钟"
 }
 
 actual fun refreshHomeWidgets() {
@@ -379,120 +365,128 @@ internal fun buildLiveNotification(
     startMillis: Long,
     endMillis: Long,
     countdownEnabled: Boolean,
-    // 判课和建通知必须用同一个时刻：分两次取表，卡在上下课边沿时会判出「该挂 A」却建不出 A，
-    // 前台服务就当成被划掉把整条链停到下一节结束。
     nowMillis: Long = System.currentTimeMillis(),
+    attempt: LiveDeliveryAttempt? = null,
 ): Notification? {
     val ctx = QingkeApp.app
     if (Build.VERSION.SDK_INT >= 33 &&
         ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-    ) {
-        return null
-    }
+    ) return null
     val key = "$title:$startMillis"
-    val prefs = ctx.getSharedPreferences(LIVE_PREFS, android.content.Context.MODE_PRIVATE)
+    val prefs = ctx.getSharedPreferences(LIVE_PREFS, Context.MODE_PRIVATE)
     if (prefs.getString(LIVE_DISMISSED_KEY, "") == key) return null
     val nm = ctx.getSystemService(NotificationManager::class.java) ?: return null
-    val channel = NotificationChannel(LIVE_CHANNEL, "上课提醒", NotificationManager.IMPORTANCE_DEFAULT).apply {
+    nm.createNotificationChannel(NotificationChannel(LIVE_CHANNEL, "上课提醒", NotificationManager.IMPORTANCE_DEFAULT).apply {
         description = "课前提醒与上课进度，静默显示，不响铃不振动"
         setShowBadge(false)
         setSound(null, null)
         enableVibration(false)
-    }
-    nm.createNotificationChannel(channel)
-    val savedChannel = nm.getNotificationChannel(LIVE_CHANNEL)
-    if (!nm.areNotificationsEnabled() || savedChannel?.importance == NotificationManager.IMPORTANCE_NONE) {
-        return null
-    }
+    })
+    if (!nm.areNotificationsEnabled() ||
+        nm.getNotificationChannel(LIVE_CHANNEL)?.importance == NotificationManager.IMPORTANCE_NONE
+    ) return null
+
     val timing = liveTiming(nowMillis, startMillis, endMillis) ?: return null
-    val pct = timing.progressPercent
-    val chipText = if (countdownEnabled) timing.countdownText else timing.statusText
-    val launch = PendingIntent.getActivity(
-        ctx,
-        0,
+    val status = timing.statusText
+    val chip = if (countdownEnabled) timing.countdownText else status
+    val launch = PendingIntent.getActivity(ctx, 0,
         Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
-    val dismiss = PendingIntent.getBroadcast(
-        ctx,
-        LIVE_ID,
+    val dismiss = PendingIntent.getBroadcast(ctx, LIVE_ID,
         Intent(ctx, LiveDismissReceiver::class.java)
+            // extras 不参与 PendingIntent 身份：旧通知到期时必须仍携带旧阶段的 key/deadline。
+            .setAction(liveDismissIdentity(key, timing.deadlineMillis))
             .putExtra(EXTRA_LIVE_DISMISS, key)
             .putExtra(EXTRA_LIVE_DEADLINE, timing.deadlineMillis),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
-    // 跟随深浅色：浅色用品牌蓝 + 淡蓝轨道；深色下品牌蓝提亮一档、轨道压暗，
-    // 否则深色通知栏里一条发白的轨道比进度本身还抢眼。
     val night = ctx.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK ==
         android.content.res.Configuration.UI_MODE_NIGHT_YES
-    val blue = if (night) 0xFF5B9DFF.toInt() else 0xFF3482FF.toInt()
+    val accent = if (night) 0xFF5B9DFF.toInt() else 0xFF3482FF.toInt()
     val track = if (night) 0xFF2A3A55.toInt() else 0xFFD6E5FF.toInt()
-    // 副文本只放状态（上课中 / 即将上课）：开了倒计时时秒级计时器已经在旁边，
-    // 再写一遍「距下课 N 分」就是同一个数字说两次。
-    val headerText = timing.statusText
-    if (Build.VERSION.SDK_INT >= 36) {
-        val done = pct.coerceIn(0, 100)
-        // 完成态不留轨道尾巴、起步不画 1 格蓝条：两段加起来恒 100。
-        val left = 100 - done
-        val style = Notification.ProgressStyle()
-            .setStyledByProgress(true)
-            .setProgress(done)
-            .setProgressSegments(
-                buildList {
-                    if (done > 0) add(Notification.ProgressStyle.Segment(done).setColor(blue))
-                    if (left > 0) add(Notification.ProgressStyle.Segment(left).setColor(track))
-                },
-            )
-            .setProgressTrackerIcon(android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_live_now))
-            .setProgressStartIcon(android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_live_start))
-            .setProgressEndIcon(android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_live_end))
-        val builder = Notification.Builder(ctx, LIVE_CHANNEL)
-            .setSmallIcon(R.drawable.ic_stat_live)
-            .setContentTitle(title)
-            .setContentText(detail)
-            .setStyle(style)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setContentIntent(launch)
-            .setDeleteIntent(dismiss)
-            .setCategory(Notification.CATEGORY_PROGRESS)
-            .setColor(blue)
-            .setColorized(false)
-            .setWhen(timing.deadlineMillis)
-            // 卡片自带秒级倒数计时器：SystemUI 渲染，进程冻结也照走，不耗电。
-            // 倒计时开关关闭时不显示计时器，只显示状态文字。
-            .setShowWhen(countdownEnabled)
-            .setUsesChronometer(countdownEnabled)
-            .setChronometerCountDown(countdownEnabled)
-            .setSubText(headerText)
-            // All vendors use the same explicit minute text and native progress card.
-            .setShortCriticalText(chipText)
-            // Expire the old stage if both the service and alarm miss its boundary.
-            .setTimeoutAfter(timing.remainingMillis)
-        builder.addExtras(Bundle().apply { putBoolean("android.requestPromotedOngoing", true) })
-        return builder.build()
-    }
-    // Older Android versions have no native Live chip; keep a standard progress card.
-    val builder = NotificationCompat.Builder(ctx, LIVE_CHANNEL)
+    // A standard retry must not invoke vendor providers or attach private extras.
+    val (mode, approvedBusiness) = if (attempt == LiveDeliveryAttempt.STANDARD) {
+        LivePresentation.STANDARD to null
+    } else LiveAndroidBackend.detect(ctx, nm)
+
+    // Always have a complete standard notification. If a vendor or API enhancement
+    // fails, the student still receives a time and room in the regular shade.
+    fun standard(): Notification = NotificationCompat.Builder(ctx, LIVE_CHANNEL)
         .setSmallIcon(R.drawable.ic_stat_live)
         .setContentTitle(title)
         .setContentText(detail)
         .setStyle(NotificationCompat.BigTextStyle().bigText(detail))
-        .setSubText(headerText)
+        .setSubText(status)
         .setOngoing(true)
         .setOnlyAlertOnce(true)
         .setContentIntent(launch)
         .setDeleteIntent(dismiss)
         .setCategory(NotificationCompat.CATEGORY_PROGRESS)
         .setSilent(true)
+        .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
         .setWhen(timing.deadlineMillis)
         .setShowWhen(countdownEnabled)
         .setUsesChronometer(countdownEnabled)
         .setChronometerCountDown(countdownEnabled)
-        .setProgress(100, pct, false)
-        .setColor(blue)
+        .setProgress(100, timing.progressPercent, false)
+        .setColor(accent)
         .setTimeoutAfter(timing.remainingMillis)
-    return builder.build()
+        .build()
+
+    // AOSP 16 (API36) standard API is also the ColorOS16 native Fluid Cloud path.
+    // Never request a promoted chip when the user/ROM has disabled that permission.
+    val notification = if (Build.VERSION.SDK_INT >= 36 && attempt != LiveDeliveryAttempt.STANDARD) {
+        run {
+            val done = timing.progressPercent.coerceIn(0, 100)
+            val segments = buildList {
+                if (done > 0) add(Notification.ProgressStyle.Segment(done).setColor(accent))
+                if (done < 100) add(Notification.ProgressStyle.Segment(100 - done).setColor(track))
+            }
+            val style = Notification.ProgressStyle().setStyledByProgress(true)
+                .setProgress(done).setProgressSegments(segments)
+                .setProgressTrackerIcon(android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_live_now))
+                .setProgressStartIcon(android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_live_start))
+                .setProgressEndIcon(android.graphics.drawable.Icon.createWithResource(ctx, R.drawable.ic_live_end))
+            val builder = Notification.Builder(ctx, LIVE_CHANNEL)
+                .setSmallIcon(R.drawable.ic_stat_live)
+                .setContentTitle(title)
+                .setContentText(detail)
+                .setStyle(style)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setContentIntent(launch)
+                .setDeleteIntent(dismiss)
+                .setCategory(Notification.CATEGORY_PROGRESS)
+                .setColor(accent)
+                .setColorized(false)
+                .setVisibility(Notification.VISIBILITY_PRIVATE)
+                .setWhen(timing.deadlineMillis)
+                .setShowWhen(countdownEnabled)
+                .setUsesChronometer(countdownEnabled)
+                .setChronometerCountDown(countdownEnabled)
+                .setSubText(status)
+                // Stable short chip label; the system's chronometer advances without
+                // waking our process. Previously the text froze if the OEM froze us.
+                // Android's chip prefers shortCriticalText over the chronometer.
+                // Null lets SystemUI show a moving countdown without app wakeups.
+                .setShortCriticalText(if (countdownEnabled) null else status)
+                .setTimeoutAfter(timing.remainingMillis)
+            if (mode != LivePresentation.STANDARD &&
+                runCatching { nm.canPostPromotedNotifications() }.getOrDefault(false)
+            ) {
+                // Even on approved HyperOS, request the AOSP live chip as a fallback.
+                builder.addExtras(Bundle().apply { putBoolean("android.requestPromotedOngoing", true) })
+            }
+            builder.build()
+        }
+    } else standard()
+    if (mode == LivePresentation.HYPEROS_ISLAND && approvedBusiness != null &&
+        attempt != LiveDeliveryAttempt.AOSP_NATIVE && attempt != LiveDeliveryAttempt.STANDARD) {
+        // Let the shared engine rebuild the native candidate if the vendor payload fails.
+        LiveAndroidBackend.attachIsland(ctx, notification, approvedBusiness, title, status, chip)
+    }
+    return notification
 }
 
 /** 发一条 Live 通知（前台服务路径也走 buildLiveNotification）。 */
@@ -506,19 +500,61 @@ actual fun notifyLiveClass(
     countdownEnabled: Boolean,
     nowMillis: Long,
 ): Boolean {
-    val notification = buildLiveNotification(
-        title = title,
-        detail = detail,
-        progress = progress,
-        etaMinutes = etaMinutes,
-        startMillis = startMillis,
-        endMillis = endMillis,
-        countdownEnabled = countdownEnabled,
-        nowMillis = nowMillis,
-    ) ?: return false
-    val manager = QingkeApp.app.getSystemService(NotificationManager::class.java) ?: return false
-    manager.notify(LIVE_ID, notification)
-    return true
+    val ctx = QingkeApp.app
+    val manager = ctx.getSystemService(NotificationManager::class.java) ?: return false
+    // SystemUI owns promotion, so successful notify() only proves the base
+    // notification was accepted. A rejected vendor/native build uses the next
+    // attempt with the SAME notification id, never a second concurrent alert.
+    val presentation = runCatching { LiveAndroidBackend.detect(ctx, manager).first }
+        .getOrDefault(LivePresentation.STANDARD)
+    var deliveryFailed = false
+    val posted = deliverLiveWithFallback(
+        attempts = liveFallbackChain(presentation, Build.VERSION.SDK_INT),
+        build = { attempt ->
+            runCatching {
+                buildLiveNotification(title, detail, progress, etaMinutes, startMillis, endMillis,
+                    countdownEnabled, nowMillis, attempt)
+            }.onFailure {
+                deliveryFailed = true
+                Log.w("QingkeLive", "Live build $attempt failed; trying fallback", it)
+            }
+                .getOrNull()
+        },
+        eligible = { attempt, candidate ->
+            if (attempt != LiveDeliveryAttempt.AOSP_NATIVE || Build.VERSION.SDK_INT < 36) true
+            else runCatching {
+                manager.canPostPromotedNotifications() && candidate.hasPromotableCharacteristics()
+            }.getOrDefault(false)
+        },
+        post = { attempt, candidate ->
+            runCatching { manager.notify(LIVE_ID, candidate) }
+                .onFailure {
+                    deliveryFailed = true
+                    Log.w("QingkeLive", "Live post $attempt rejected; trying fallback", it)
+                }
+                .isSuccess
+        },
+    )
+    val prefs = ctx.getSharedPreferences(LIVE_PREFS, Context.MODE_PRIVATE)
+    if (posted) {
+        prefs.edit().remove("post_fail_key").remove("post_fail_count").remove("post_retry_at").apply()
+    } else if (deliveryFailed) {
+        val key = "$title:$startMillis"
+        val failures = if (prefs.getString("post_fail_key", "") == key) prefs.getInt("post_fail_count", 0) else 0
+        val count = (failures + 1).coerceAtMost(3)
+        prefs.edit().putString("post_fail_key", key).putInt("post_fail_count", count)
+            .putLong("post_retry_at", livePostRetryAt(nowMillis, endMillis, count)).apply()
+    } else {
+        // Permission/channel disabled or dismissed: never retry against the user's choice.
+        prefs.edit().remove("post_retry_at").apply()
+    }
+    return posted
+}
+
+internal actual fun livePostFailureWake(title: String, startMillis: Long, endMillis: Long): Long {
+    val prefs = QingkeApp.app.getSharedPreferences(LIVE_PREFS, Context.MODE_PRIVATE)
+    if (prefs.getString("post_fail_key", "") != "$title:$startMillis") return endMillis
+    return prefs.getLong("post_retry_at", endMillis).coerceAtMost(endMillis)
 }
 
 actual fun cancelLiveClass() {
@@ -528,39 +564,32 @@ actual fun cancelLiveClass() {
     QingkeApp.app.getSystemService(NotificationManager::class.java)?.cancel(LIVE_ID)
 }
 
-// 精确闹钟兜底分钟和阶段切换；非精确降级可能延迟，前台服务是主刷新通道。
-// 电池白名单另算：进设置页「后台保活」里点。
+// Only one alarm per stage boundary, not once per minute and NEVER setAlarmClock().
+// setAlarmClock marks the task as the user's next real alarm and can surface an
+// alarm icon. Use exact-while-idle if authorized, then inexact as graceful fallback.
 actual fun scheduleLiveWake(atMillis: Long?) {
     if (!QingkeApp.ready()) return
     val ctx = QingkeApp.app
     val alarms = ctx.getSystemService(android.app.AlarmManager::class.java) ?: return
-    val pending = PendingIntent.getBroadcast(
-        ctx,
-        LIVE_ID,
+    val pending = PendingIntent.getBroadcast(ctx, LIVE_ID,
         Intent(ctx, LiveTickReceiver::class.java).setAction(ACTION_LIVE_TICK),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
-    if (atMillis == null) {
+    if (atMillis == null || (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)) {
         alarms.cancel(pending)
         return
     }
-    // 没通知权限排了也白排：tick 起来读完快照只能 no-op，还占一次叫醒。
-    if (Build.VERSION.SDK_INT >= 33 &&
-        ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-    ) {
-        alarms.cancel(pending)
-        return
+    val target = maxOf(atMillis, System.currentTimeMillis() + 1_000L)
+    val exact = runCatching {
+        if (canScheduleExact(ctx)) {
+            alarms.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, target, pending)
+            true
+        } else false
+    }.getOrDefault(false)
+    if (!exact) {
+        runCatching { alarms.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, target, pending) }
+            .onFailure { Log.w("QingkeLive", "Schedule boundary fallback failed", it) }
     }
-    // 全部唤醒统一走 setAlarmClock：系统把每次触发都当闹钟事件处理——
-    // 即使 app 进缓存/被冻结也必达，并自动获得 Doze 豁免。课表类应用
-    // 每分钟一次的开销可接受，可靠性优先。
-    val scheduled = runCatching {
-        alarms.setAlarmClock(
-            android.app.AlarmManager.AlarmClockInfo(atMillis, pending),
-            pending,
-        )
-    }
-    if (scheduled.isFailure) {
-        runCatching { alarms.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, atMillis, pending) }
-    }
+
 }

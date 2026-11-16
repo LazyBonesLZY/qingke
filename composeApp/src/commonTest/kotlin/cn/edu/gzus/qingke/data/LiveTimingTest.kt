@@ -4,10 +4,13 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.LocalTime
+import kotlinx.datetime.DatePeriod
+import kotlinx.datetime.plus
 
 class LiveTimingTest {
     @Test
@@ -75,7 +78,9 @@ class LiveTimingTest {
         val notice = snapshot.liveNotice(LocalDateTime(day, LocalTime(9, 55)), reminderAt)!!
         assertEquals(5, notice.etaMinutes)
         assertFalse(notice.inClass)
-        assertEquals(reminderAt + 60_000L, snapshot.nextLiveWake(LocalDateTime(day, LocalTime(9, 55)), reminderAt))
+        // 后台只在阶段边界唤醒；分钟变化仍由 liveTiming 的前台刷新延时驱动。
+        assertEquals(notice.startMillis, snapshot.nextLiveWake(LocalDateTime(day, LocalTime(9, 55)), reminderAt))
+        assertEquals(60_000L, liveTiming(reminderAt, notice.startMillis, notice.endMillis)!!.refreshDelayMillis)
     }
 
     @Test
@@ -133,10 +138,91 @@ class LiveTimingTest {
             assertTrue(timing.deadlineMillis > nowMs, "deadline passed at $nowMs")
             assertTrue(notice.etaMinutes >= 1, "eta ${notice.etaMinutes} at $nowMs")
             val wake = snapshot.nextLiveWake(dateTimeAt(nowMs), nowMs)!!
-            assertTrue(wake in (nowMs + 1)..timing.deadlineMillis, "wake $wake at $nowMs")
+            assertEquals(timing.deadlineMillis, wake, "wake $wake at $nowMs")
             nowMs += 1_000L
         }
         assertNull(snapshot.liveNotice(dateTimeAt(secondEnd), secondEnd))
+    }
+
+    @Test
+    fun consecutiveCoursesSwitchAtExactBoundaryAndAfterSuspension() {
+        val base = snapshot()
+        // 同名连堂也要靠时间窗口区分，不能只靠课名识别。
+        val snapshot = base.copy(
+            settings = base.settings.copy(periodTimeOverrides = mapOf(
+                "1-2" to "10:00-10:40", "3-4" to "10:40-11:20", "5-6" to "11:20-12:00",
+            )),
+            slots = listOf(slot("1-2"), slot("3-4"), slot("5-6")).map { it.copy(courseName = "连续课程") },
+        )
+        val boundary = combineMillis(day, "10:40")
+        val before = snapshot.liveNotice(dateTimeAt(boundary - 1), boundary - 1)!!
+        val after = snapshot.liveNotice(dateTimeAt(boundary), boundary)!!
+        assertEquals("1-2", before.slot.period)
+        assertEquals("3-4", after.slot.period)
+        assertTrue(after.inClass)
+        assertEquals(40, after.etaMinutes)
+        assertEquals(boundary, snapshot.nextLiveWake(dateTimeAt(boundary - 1), boundary - 1))
+        assertEquals(after.endMillis, snapshot.nextLiveWake(dateTimeAt(boundary), boundary))
+        val resumed = combineMillis(day, "11:39")
+        assertEquals("5-6", snapshot.liveNotice(dateTimeAt(resumed), resumed)!!.slot.period)
+        assertEquals(21, snapshot.liveNotice(dateTimeAt(resumed), resumed)!!.etaMinutes)
+        val nextDay = combineMillis(day.plus(DatePeriod(days = 1)), "00:00")
+        assertNull(snapshot.liveNotice(dateTimeAt(nextDay), nextDay))
+    }
+
+    @Test
+    fun dismissCallbacksKeepOldStageIdentityDuringHandover() {
+        val start = combineMillis(day, "10:00")
+        val end = combineMillis(day, "10:40")
+        val nextEnd = combineMillis(day, "11:20")
+        val first = "同名课:$start"
+        val next = "同名课:$end"
+        // 预告→上课和前一节→下一节都要创建不同 PendingIntent（extras 本身不参与判等）。
+        assertNotEquals(liveDismissIdentity(first, start), liveDismissIdentity(first, end))
+        assertNotEquals(liveDismissIdentity(first, end), liveDismissIdentity(next, nextEnd))
+        assertEquals(liveDismissIdentity(first, end), liveDismissIdentity(first, end))
+        assertFalse(isLiveStageTimeout(end - 2_000L, end))
+        assertTrue(isLiveStageTimeout(end, end))
+        assertTrue(isLiveStageTimeout(end + 30_000L, end))
+        assertFalse(isLiveStageTimeout(end, nextEnd))
+        assertFalse(isLiveStageTimeout(end, 0L))
+    }
+
+    @Test
+    fun publishingAcrossBoundaryRefreshesImmediatelyInsteadOfWaitingForNextCourseMinute() {
+        val boundary = 100_003L
+        val frame = liveTiming(boundary - 1L, boundary - 80_000L, boundary)!!
+        val refreshAt = boundary - 1L + frame.refreshDelayMillis
+        assertEquals(boundary, refreshAt)
+        assertEquals(1L, liveRefreshDelayMillis(boundary, refreshAt))
+        assertEquals(1L, liveRefreshDelayMillis(boundary + 10L, refreshAt))
+        assertEquals(1L, liveRefreshDelayMillis(boundary + 120_000L, refreshAt))
+        assertEquals(10_000L, liveRefreshDelayMillis(boundary - 10_000L, refreshAt))
+        assertEquals(60_000L, liveRefreshDelayMillis(boundary - 120_000L, refreshAt))
+        assertEquals(60_000L, liveRefreshDelayMillis(boundary, null))
+    }
+
+    @Test
+    fun todayRefreshIsBoundedByCountdownProgressAndClockChanges() {
+        // 非整分钟的窗口同样在分钟文案变化和上下课的准确毫秒刷新。
+        val start = 100_003L
+        val end = 300_003L
+        val beforeStart = liveTiming(start - 1L, start, end)!!
+        assertEquals(1L, todayRefreshDelayMillis(start - 1L, beforeStart))
+        assertEquals(1L, todayRefreshDelayMillis(end - 1L, liveTiming(end - 1L, start, end)))
+        assertEquals(9_997L, todayRefreshDelayMillis(start, liveTiming(start, start, end)))
+        assertEquals(42_445L, todayRefreshDelayMillis(17_555L, null))
+        assertEquals(60_000L, todayRefreshDelayMillis(60_000L, null))
+        assertEquals(1L, todayRefreshDelayMillis(59_999L, null))
+        var now = start - 1_500L
+        while (now < end) {
+            val timing = liveTiming(now, start, end)!!
+            val delay = todayRefreshDelayMillis(now, timing)
+            assertTrue(delay in 1..60_000L)
+            assertTrue(now + delay <= timing.deadlineMillis)
+            now += delay
+        }
+        assertEquals(end, now)
     }
 
     @Test

@@ -103,7 +103,7 @@ fun AppSnapshot.liveNotice(now: LocalDateTime, nowMs: Long): LiveNotice? {
 
 /**
  * 下一次该叫醒后台更新通知的时刻，null 表示不用再叫。
- * 挂着通知时定期重推（让正文和进度条跟上）并在上下课那一刻切状态；
+ * 挂着通知时只安排上下课边界；分钟文案由前台循环刷新，秒级倒数由系统计时器刷新。
  * 没挂时等到下一节的提醒点，都过了也别断链，兜到明天 00:05。
  */
 fun AppSnapshot.nextLiveWake(now: LocalDateTime, nowMs: Long): Long? {
@@ -113,7 +113,7 @@ fun AppSnapshot.nextLiveWake(now: LocalDateTime, nowMs: Long): Long? {
     val notice = liveNotice(now, nowMs)
     if (notice != null) {
         val timing = liveTiming(nowMs, notice.startMillis, notice.endMillis) ?: return fallbackWake(now, nowMs, school)
-        return nowMs + timing.refreshDelayMillis
+        return timing.deadlineMillis
     }
     return fallbackWake(now, nowMs, school)
 }
@@ -127,7 +127,7 @@ private fun AppSnapshot.fallbackWake(now: LocalDateTime, nowMs: Long, school: Re
     if (next != null) {
         val start = combineMillis(now.date, school.periodStartOf(next.slot.period))
         val at = start - settings.resolvedRemindLead() * 60_000L
-        val wake = if (at > nowMs) at else start + 1_000L
+        val wake = if (at > nowMs) at else start
         if (wake > nowMs) return wake
     }
     return combineMillis(now.date.plus(DatePeriod(days = 1)), "00:05").takeIf { it > nowMs }

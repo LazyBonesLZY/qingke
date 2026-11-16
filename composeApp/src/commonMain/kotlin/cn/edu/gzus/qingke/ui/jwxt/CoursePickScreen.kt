@@ -59,9 +59,6 @@ import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
-/** 列表最多画多少门；再多就让人缩小关键词。 */
-private const val MaxOffersShown = 30
-
 /** 整宽表单按钮的高度；卡片内并排的小按钮用 [CompactButtonHeight]。 */
 private val FormButtonHeight = 44.dp
 private val CompactButtonHeight = 40.dp
@@ -78,10 +75,13 @@ fun CoursePickScreen(
     picked: List<CoursePickOffer>,
     scopesBusy: Boolean,
     searchBusy: Boolean,
+    moreBusy: Boolean,
+    hasMore: Boolean,
     sectionsBusy: Boolean,
     error: String?,
     onLoadScopes: () -> Unit,
     onSearch: (CoursePickScope, String) -> Unit,
+    onLoadMore: (CoursePickScope, String) -> Unit,
     onOpenSections: (CoursePickOffer) -> Unit,
     onSelectNow: (CoursePickOffer, CoursePickSection) -> Unit,
     onQueue: (CoursePickOffer, CoursePickSection) -> Unit,
@@ -93,6 +93,7 @@ fun CoursePickScreen(
     val queue = snapshot.settings.coursePickQueue
     val now = nowDateTime()
     var query by remember { mutableStateOf("") }
+    var appliedQuery by remember { mutableStateOf("") }
     var scopeIndex by remember(scopes.joinToString { it.id }) { mutableIntStateOf(0) }
     var openedId by remember { mutableStateOf("") }
     var clockTaskId by remember { mutableStateOf<String?>(null) }
@@ -111,7 +112,8 @@ fun CoursePickScreen(
     }
     LaunchedEffect(scope?.id) {
         val current = scope ?: return@LaunchedEffect
-        onSearch(current, query.trim())
+        appliedQuery = query.trim()
+        onSearch(current, appliedQuery)
         openedId = ""
     }
 
@@ -229,7 +231,8 @@ fun CoursePickScreen(
                     onClick = {
                         scope?.let {
                             openedId = ""
-                            onSearch(it, query.trim())
+                            appliedQuery = query.trim()
+                            onSearch(it, appliedQuery)
                         }
                     },
                     enabled = !searchBusy && !scopesBusy && scope != null,
@@ -254,7 +257,7 @@ fun CoursePickScreen(
                 )
             } else {
                 // 课程用分组列表；点开的那门拆出来单独一张卡，下面挂教学班和按钮
-                val shown = offers.take(MaxOffersShown)
+                val shown = offers
                 val openedIndex = shown.indexOfFirst { offerKey(it) == openedId }
                 val toRow: (CoursePickOffer) -> ListRow = { offer ->
                     val key = offerKey(offer)
@@ -296,14 +299,24 @@ fun CoursePickScreen(
                         ListGroup(after.map(toRow))
                     }
                 }
-                if (offers.size > MaxOffersShown) {
-                    Spacer(Modifier.height(Space.s))
-                    Text(
-                        "只显示前 $MaxOffersShown 门，缩小关键词再查。",
-                        modifier = Modifier.padding(horizontal = Inset.page),
-                        color = Tone.muted(),
-                        style = MiuixTheme.textStyles.footnote1,
-                    )
+                if (hasMore && scope != null) {
+                    Spacer(Modifier.height(Space.m))
+                    Button(
+                        onClick = { onLoadMore(scope, appliedQuery) },
+                        enabled = !moreBusy && !searchBusy && query.trim() == appliedQuery,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = Inset.page),
+                        minHeight = CompactButtonHeight,
+                    ) {
+                        if (moreBusy) {
+                            InfiniteProgressIndicator()
+                            Spacer(Modifier.width(Space.s))
+                        }
+                        Text(when {
+                            moreBusy -> "正在加载"
+                            query.trim() != appliedQuery -> "先点击查询以更新结果"
+                            else -> "加载更多课程"
+                        })
+                    }
                 }
             }
         }
@@ -402,8 +415,6 @@ private fun OfferPanel(
                     style = MiuixTheme.textStyles.main,
                     fontWeight = FontWeight.Medium,
                     color = MiuixTheme.colorScheme.primary,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
                 )
                 val brief = offer.brief()
                 if (brief.isNotBlank()) {
@@ -412,8 +423,6 @@ private fun OfferPanel(
                         brief,
                         style = MiuixTheme.textStyles.footnote1,
                         color = muted,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
@@ -450,19 +459,14 @@ private fun OfferPanel(
                 Box(Modifier.padding(horizontal = Space.l).fillMaxWidth().height(0.5.dp).background(divider))
                 val queued = queue.any { it.matches(offer, section) }
                 Column(Modifier.fillMaxWidth().padding(horizontal = Space.l, vertical = Space.m)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            section.name.ifBlank { offer.name },
-                            modifier = Modifier.weight(1f, fill = false),
-                            style = MiuixTheme.textStyles.main,
-                            color = MiuixTheme.colorScheme.onBackground,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        if (queued) {
-                            Spacer(Modifier.width(Space.s))
-                            StatusTag("已在队列")
-                        }
+                    Text(
+                        section.name.ifBlank { offer.name },
+                        style = MiuixTheme.textStyles.main,
+                        color = MiuixTheme.colorScheme.onBackground,
+                    )
+                    if (queued) {
+                        Spacer(Modifier.height(Space.xs))
+                        StatusTag("已在队列")
                     }
                     val brief = section.brief()
                     if (brief.isNotBlank()) {
@@ -471,8 +475,6 @@ private fun OfferPanel(
                             brief,
                             style = MiuixTheme.textStyles.footnote1,
                             color = muted,
-                            maxLines = 3,
-                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                     Spacer(Modifier.height(Space.m))
@@ -529,27 +531,22 @@ private fun QueueCard(
         modifier = Modifier.fillMaxWidth(),
         insideMargin = Inset.card,
     ) {
-        // 标题行：课名 + 状态胶囊；状态不再混在灰字里
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                task.courseName,
-                modifier = Modifier.weight(1f),
-                style = MiuixTheme.textStyles.main,
-                fontWeight = FontWeight.Medium,
-                color = MiuixTheme.colorScheme.onBackground,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(Modifier.width(Space.s))
-            StatusTag(coursePickStatusLabel(task.status), color = statusColor)
-        }
+        // Long course titles get full width; the status goes below rather than shrinking the title.
+        Text(
+            task.courseName,
+            style = MiuixTheme.textStyles.main,
+            fontWeight = FontWeight.Medium,
+            color = MiuixTheme.colorScheme.onBackground,
+        )
+        Spacer(Modifier.height(Space.xs))
+        StatusTag(coursePickStatusLabel(task.status), color = statusColor)
         val meta = listOf(
             task.className.ifBlank { task.teacher },
             if (task.fireAt > 0 && task.status == "waiting") formatCoursePickWhen(task.fireAt) else "",
         ).filter { it.isNotBlank() }.joinToString(" · ")
         if (meta.isNotBlank()) {
             Spacer(Modifier.height(Space.xs))
-            Text(meta, style = MiuixTheme.textStyles.footnote1, color = muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(meta, style = MiuixTheme.textStyles.footnote1, color = muted)
         }
         if (task.message.isNotBlank()) {
             Spacer(Modifier.height(Space.xs))
@@ -557,8 +554,6 @@ private fun QueueCard(
                 task.message,
                 style = MiuixTheme.textStyles.footnote1,
                 color = if (failed) Tone.danger() else muted,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
             )
         }
         Spacer(Modifier.height(Space.m))

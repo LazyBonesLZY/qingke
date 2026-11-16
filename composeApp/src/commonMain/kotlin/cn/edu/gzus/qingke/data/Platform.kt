@@ -38,6 +38,9 @@ expect fun notifyLiveClass(
     nowMillis: Long,
 ): Boolean
 
+/** Bounded retry shared by app, alarm and service; denied/dismissed notices wait until class end. */
+internal expect fun livePostFailureWake(title: String, startMillis: Long, endMillis: Long): Long
+
 expect fun refreshHomeWidgets()
 
 expect fun cancelLiveClass()
@@ -57,8 +60,6 @@ expect fun openLiveUpdateSettings()
 expect fun openUrl(url: String)
 
 expect fun copyToClipboard(text: String)
-
-expect fun openXiaoaiSchedule()
 
 expect fun clearCookieStore()
 

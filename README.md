@@ -16,10 +16,12 @@
 
 ## 更新
 
-当前发布版本 **1.8**（versionCode 86）。Android 8.0（API 26）及以上。广软调休默认从 qingke.lazzyy.cn 自动拉取；打开应用会检查更新，有新版本会提示。
+当前开发版本 **1.8.1**（versionCode 87）。Android 8.0（API 26）及以上。广软调休默认从 qingke.lazzyy.cn 自动拉取；打开应用会检查更新，有新版本会提示。
 
 - GitHub Release：应用里检查 `LazyBonesLZY/qingke` 最新版，再跳到 Release / APK
 - 网盘：浏览器打开 [https://storage.lazzyy.cn/@s/KB](https://storage.lazzyy.cn/@s/KB)
+
+1.8.1 整合课表翻页与提醒边界修复、默认折叠周末、选课账号隔离与分页、同步失败提示、长字段排版和可关闭的今日贴士；移除小爱导入。Live 通知按系统能力逐级回退到普通通知，HyperOS 私有岛仍需正式业务和签名审批。集成与验证记录见 [docs/integration-20261116.md](docs/integration-20261116.md)。
 
 ## 构建
 

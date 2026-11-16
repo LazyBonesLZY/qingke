@@ -23,7 +23,6 @@ import cn.edu.gzus.qingke.data.resolved
 import cn.edu.gzus.qingke.data.showsGzusHall
 import cn.edu.gzus.qingke.data.uniqueCourses
 import cn.edu.gzus.qingke.data.utilityBrief
-import cn.edu.gzus.qingke.data.xiaoaiImportSummary
 import cn.edu.gzus.qingke.nav.QingkeNavigator
 import cn.edu.gzus.qingke.nav.Route
 import cn.edu.gzus.qingke.nav.TabDest
@@ -114,7 +113,11 @@ fun JwxtScreen(
                 add(
                     ListRow(
                         title = "考试",
-                        summary = if (snapshot.exams.isEmpty()) "暂无安排" else "考场、座位号和时间",
+                        summary = when {
+                            snapshot.syncWarnings.any { it.startsWith("考试未更新") } -> "考试同步失败 · 可能显示上次结果"
+                            snapshot.exams.isEmpty() -> "暂无安排"
+                            else -> "考场、座位号和时间"
+                        },
                         badge = if (snapshot.exams.isEmpty()) "" else "${snapshot.exams.size} 场",
                         tone = BadgeTone.Accent,
                         onClick = { nav.open(Route.Exams) },
@@ -149,16 +152,6 @@ fun JwxtScreen(
                 }
             },
         )
-        SmallTitle(text = "工具")
-        ListGroup(
-            listOf(
-                ListRow(
-                    title = "导入小爱课程表",
-                    summary = xiaoaiImportSummary(snapshot),
-                    onClick = { nav.open(Route.XiaoaiImport) },
-                ),
-            ),
-        )
         if (courses.isNotEmpty() || snapshot.practices.isNotEmpty()) {
             SmallTitle(text = "已选课程 · ${courses.size + snapshot.practices.size} 门")
             ListGroup(
@@ -185,7 +178,7 @@ fun JwxtScreen(
 }
 
 /**
- * 服务二级页共用的确认框：提交选课、提交请假、覆盖小爱课表这类发出去就收不回的操作，
+ * 服务二级页共用的确认框：提交选课、提交请假这类发出去就收不回的操作，
  * 先让人看一眼要提交什么再点。文案放 [message]，多行用换行分开。
  * 样式统一走 [ConfirmDialog]，这里只保留旧名字给各二级页调用。
  */

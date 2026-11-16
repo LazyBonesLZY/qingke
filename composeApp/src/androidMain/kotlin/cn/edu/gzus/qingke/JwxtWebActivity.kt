@@ -82,10 +82,15 @@ class JwxtWebActivity : ComponentActivity() {
                                 webView = this
                                 CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                                 settings.javaScriptEnabled = true
+                                // Keep JavaScript for official portals, but never expose local files.
+                                settings.allowFileAccess = false
+                                settings.allowContentAccess = false
+                                settings.allowFileAccessFromFileURLs = false
+                                settings.allowUniversalAccessFromFileURLs = false
                                 settings.domStorageEnabled = true
                                 settings.useWideViewPort = true
                                 settings.loadWithOverviewMode = true
-                                settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                                settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                                 settings.userAgentString =
                                     "Mozilla/5.0 (Linux; Android 15; Qingke) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
                                 webViewClient = object : WebViewClient() {

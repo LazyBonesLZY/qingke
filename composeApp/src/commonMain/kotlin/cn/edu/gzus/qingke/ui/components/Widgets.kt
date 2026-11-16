@@ -406,30 +406,28 @@ fun FactGrid(
     fields: List<Pair<String, String>>,
     modifier: Modifier = Modifier,
 ) {
-    val items = fields.filter { it.second.isNotBlank() }
+    val rows = responsiveFactRows(fields)
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(TileGap)) {
-        items.chunked(2).forEach { row ->
+        rows.forEach { row ->
             Row(
                 modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min),
                 horizontalArrangement = Arrangement.spacedBy(TileGap),
             ) {
                 row.forEach { (label, value) ->
                     Card(
-                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                        modifier = (if (row.size == 1) Modifier.fillMaxWidth() else Modifier.weight(1f))
+                            .fillMaxHeight(),
                         insideMargin = PaddingValues(Space.m),
                     ) {
-                        Text(
-                            label,
-                            style = MiuixTheme.textStyles.footnote1,
-                            color = Tone.muted(),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        Text(label, style = MiuixTheme.textStyles.footnote1, color = Tone.muted())
                         Spacer(Modifier.height(Space.xs))
-                        ScrollText(value, style = MiuixTheme.textStyles.body2, color = MiuixTheme.colorScheme.onBackground)
+                        Text(
+                            value,
+                            style = MiuixTheme.textStyles.body2,
+                            color = MiuixTheme.colorScheme.onBackground,
+                        )
                     }
                 }
-                if (row.size == 1) Spacer(Modifier.weight(1f))
             }
         }
     }
@@ -532,12 +530,11 @@ private fun ListRowItem(row: ListRow) {
                 row.title,
                 style = MiuixTheme.textStyles.main,
                 color = MiuixTheme.colorScheme.onBackground,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                // Lists may grow taller, rather than discarding important academic text.
             )
             if (row.summary.isNotBlank()) {
                 Spacer(Modifier.height(Space.xs))
-                Text(row.summary, style = MiuixTheme.textStyles.footnote1, color = muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(row.summary, style = MiuixTheme.textStyles.footnote1, color = muted)
             }
         }
         if (row.badge.isNotBlank()) {

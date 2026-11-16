@@ -11,12 +11,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
-import kotlinx.coroutines.isActive
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import cn.edu.gzus.qingke.data.periodStartOf
@@ -31,14 +29,17 @@ import cn.edu.gzus.qingke.data.combineMillis
 import cn.edu.gzus.qingke.data.examSortKey
 import cn.edu.gzus.qingke.data.forDate
 import cn.edu.gzus.qingke.data.liveTiming
+import cn.edu.gzus.qingke.data.liveRefreshDelayMillis
 import cn.edu.gzus.qingke.data.greeting
+import cn.edu.gzus.qingke.data.dailyCareHint
 import cn.edu.gzus.qingke.data.hasTermStart
 import cn.edu.gzus.qingke.data.isLow
 import cn.edu.gzus.qingke.data.lowPower
 import cn.edu.gzus.qingke.data.termStartMonday
 import cn.edu.gzus.qingke.data.nextExam
 import cn.edu.gzus.qingke.data.nextLesson
-import cn.edu.gzus.qingke.data.nowDateTime
+import cn.edu.gzus.qingke.data.dateTimeAt
+import cn.edu.gzus.qingke.data.todayRefreshDelayMillis
 import cn.edu.gzus.qingke.data.resolvedCurrentWeek
 import cn.edu.gzus.qingke.data.resolved
 import cn.edu.gzus.qingke.data.isLeave
@@ -68,13 +69,10 @@ fun TodayScreen(
     contentPadding: PaddingValues,
     onSync: () -> Unit,
 ) {
-    // 首页显示的是「下一节还有几分钟」「还剩几分」和上课进度，必须自己按时间重算。
-    // 以前 now 只在 composition 时取一次，整屏就冻住了（切 tab 或跨天才刷新）。
-    var tick by remember { mutableIntStateOf(0) }
-    // 从后台切回来立刻推一次：帧时钟在后台是停的，回来虽然也会自己推进，
-    // 但显式再推一次能保证第一帧就是当前时间，不会闪一下旧数据。
-    QingkeOnResume { tick++ }
-    val now = remember(tick) { nowDateTime() }
+    // 判课和倒数共享同一次采样，避免连堂边界上「上一节课 + 下一节时间」混在一帧。
+    var nowMs by remember { mutableLongStateOf(Clock.System.now().toEpochMilliseconds()) }
+    QingkeOnResume { nowMs = Clock.System.now().toEpochMilliseconds() }
+    val now = remember(nowMs) { dateTimeAt(nowMs) }
     val week = resolvedCurrentWeek(snapshot.settings, now.date)
     val weekCount = snapshot.settings.resolvedWeekCount(snapshot.slots)
     val weekday = weekdayIndex(now.date)
@@ -106,20 +104,14 @@ fun TodayScreen(
     val remain = next?.second
     val startMillis = if (hasClock) hero?.let { combineMillis(now.date, school.periodStartOf(it.period)) } ?: 0L else 0L
     val endMillis = if (hasClock) hero?.let { combineMillis(now.date, school.periodEndOf(it.period)) } ?: 0L else 0L
-    val nowMs = remember(tick) { Clock.System.now().toEpochMilliseconds() }
     val timing = if (hasClock && hero != null) liveTiming(nowMs, startMillis, endMillis) else null
     val inClass = timing?.inClass == true
-    // 页面上没有秒：分钟文案、问候语、日期都只在整分钟变（作息都是整分钟），
-    // 只有上课进度条要更细，上课时每 10 秒推一次就够看。以前每秒整页重组。
-    // 用对齐的 delay 而不是 withFrameNanos：帧时钟循环会让前台每个 vsync 都产一帧。
-    val inClassNow by rememberUpdatedState(inClass)
-    LaunchedEffect(Unit) {
-        while (isActive) {
-            val ms = Clock.System.now().toEpochMilliseconds()
-            val step = if (inClassNow) 10_000L else 60_000L
-            delay(step - ms % step)
-            tick++
-        }
+    // 每次换课、改作息或回前台都重新排下一跳；delay 以后采真实时间，不累计固定步长。
+    // 即使后台挂起跨过多节课，恢复时也直接选当前课，不逐节补播旧倒数。
+    LaunchedEffect(nowMs, snapshot) {
+        val nextRefresh = nowMs + todayRefreshDelayMillis(nowMs, timing)
+        delay(liveRefreshDelayMillis(Clock.System.now().toEpochMilliseconds(), nextRefresh))
+        nowMs = Clock.System.now().toEpochMilliseconds()
     }
     val progress = when {
         !inClass || endMillis <= startMillis -> 0f
@@ -250,6 +242,21 @@ fun TodayScreen(
                 actionText = "去登录",
                 onAction = { nav.goTab(TabDest.Mine) },
             )
+        }
+        // 不制造新的提醒压力：仅在确有帮助时显示，不弹窗、不震动、不联网。
+        if (snapshot.settings.dailyCareEnabled && snapshot.settings.hasTermStart() && snapshot.hasTimetable) {
+            val hint = dailyCareHint(
+                today = todaySlots,
+                upcoming = if (inClass) null else hero,
+                school = school,
+                nowMinutes = now.hour * 60 + now.minute,
+                upcomingExamName = soonestExam?.first?.courseName,
+                daysUntilExam = soonestExam?.second,
+            )
+            if (hint != null) {
+                Spacer(Modifier.height(Space.m))
+                TodayCareCard(hint)
+            }
         }
         // 今天没课时上面的空状态已经说清楚了，这里不再重复一张空卡。
         if (todaySlots.isNotEmpty()) {

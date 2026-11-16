@@ -79,6 +79,7 @@ import cn.edu.gzus.qingke.ui.components.ConfirmDialog
 import cn.edu.gzus.qingke.ui.components.InfoCard
 import cn.edu.gzus.qingke.ui.components.Inset
 import cn.edu.gzus.qingke.ui.components.Radius
+import cn.edu.gzus.qingke.ui.components.RowChevron
 import cn.edu.gzus.qingke.ui.components.ScreenHeader
 import cn.edu.gzus.qingke.ui.components.Space
 import cn.edu.gzus.qingke.ui.components.StatusTag
@@ -162,6 +163,7 @@ fun MineScreen(
     onLiveTest: () -> Unit,
     onStopLiveTest: () -> Unit,
     onToggleCountdown: (Boolean) -> Unit = {},
+    onToggleDailyCare: (Boolean) -> Unit = {},
 ) {
     val focusTermStart = remember { nav.consumeTermStartFocus() }
     var pickingDate by remember { mutableStateOf(focusTermStart) }
@@ -206,10 +208,10 @@ fun MineScreen(
         if (snapshot.session.loggedIn) {
             AccountHeader(
                 name = snapshot.profile.name.ifBlank { snapshot.session.studentId }.ifBlank { "已登录" },
-                lines = listOf(
-                    listOf(snapshot.profile.studentId.ifBlank { snapshot.session.studentId }, snapshot.profile.className),
-                    listOf(snapshot.profile.major, snapshot.profile.campus),
-                ).map { row -> row.filter { it.isNotBlank() }.joinToString(" · ") }.filter { it.isNotBlank() },
+                studentId = snapshot.profile.studentId.ifBlank { snapshot.session.studentId },
+                className = snapshot.profile.className,
+                major = snapshot.profile.major,
+                campus = snapshot.profile.campus,
                 sync = formatSync(snapshot.session.lastSyncAt),
                 busy = busy,
                 onSync = onSync,
@@ -217,7 +219,7 @@ fun MineScreen(
         }
         SmallTitle(text = if (snapshot.session.loggedIn) "账号" else "登录")
         Card(modifier = GroupModifier, insideMargin = PaddingValues(0.dp)) {
-            ArrowPreference(
+            ReadableArrowPreference(
                 title = "当前学校",
                 summary = school.label,
                 onClick = {
@@ -332,13 +334,30 @@ fun MineScreen(
                     title = "自动拉取调休",
                     summary = when {
                         !on -> "仅使用手动调课"
-                        !snapshot.settings.hasTermStart() -> "需先设置第1周周一，补课才能对上周次"
-                        pulled.fetchedAt == 0L -> "从 qingke.lazzyy.cn 获取放假与补课安排"
+                        !snapshot.settings.hasTermStart() -> "需设置第1周周一"
+                        pulled.fetchedAt == 0L -> "等待拉取调休安排"
                         else -> "${pulled.title.ifBlank { "已拉取" }} · 放假 ${pulled.offs.size} 天 · 补课 ${pulled.shifts.size} 条"
                     },
                     checked = on,
                     onCheckedChange = onToggleScheduleAdjust,
                 )
+                // Miuix SwitchPreference keeps summaries compact. When the explanation is long,
+                // show it below the row in the same typography instead of hiding it behind an ellipsis.
+                if (on) {
+                    val fullStatus = when {
+                        !snapshot.settings.hasTermStart() -> "需先设置第1周周一，补课才能对上周次"
+                        pulled.fetchedAt == 0L -> "从 qingke.lazzyy.cn 获取放假与补课安排"
+                        else -> "${pulled.title.ifBlank { "已拉取" }} · 放假 ${pulled.offs.size} 天 · 补课 ${pulled.shifts.size} 条"
+                    }
+                    Text(
+                        fullStatus,
+                        modifier = Modifier.fillMaxWidth().padding(
+                            start = Inset.page, end = Inset.page, bottom = Space.m,
+                        ),
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = Tone.muted(),
+                    )
+                }
             }
             val shifts = snapshot.settings.scheduleShifts.size
             ArrowPreference(
@@ -365,6 +384,7 @@ fun MineScreen(
             onLiveTest = onLiveTest,
             onStopLiveTest = onStopLiveTest,
             onToggleCountdown = onToggleCountdown,
+            onToggleDailyCare = onToggleDailyCare,
         )
         SmallTitle(text = "外观")
         Card(modifier = GroupModifier, insideMargin = PaddingValues(0.dp)) {
@@ -861,6 +881,7 @@ private fun RemindBlock(
     onLiveTest: () -> Unit,
     onStopLiveTest: () -> Unit,
     onToggleCountdown: (Boolean) -> Unit = {},
+    onToggleDailyCare: (Boolean) -> Unit = {},
 ) {
     val lead = snapshot.settings.resolvedRemindLead()
     val liveStatus = liveUpdateStatus(lead)
@@ -898,13 +919,19 @@ private fun RemindBlock(
                 }
             }
             if (platform() != Platform.Desktop) {
-                ArrowPreference(
+                ReadableArrowPreference(
                     title = "后台保活",
                     summary = liveKeepaliveStatus(),
                     onClick = { openKeepaliveSettings() },
                 )
             }
         }
+        SwitchPreference(
+            title = "今日贴士",
+            summary = "只在换教室、近期考试或课程较满时显示；不发送额外通知",
+            checked = snapshot.settings.dailyCareEnabled,
+            onCheckedChange = onToggleDailyCare,
+        )
         if (school.hasPeriodClock || liveTesting) {
             ArrowPreference(
                 title = if (liveTesting) "停止 Live 测试" else "测试 Live 通知",
@@ -1018,7 +1045,7 @@ private fun DeveloperBlock(
     val fieldModifier = Modifier.fillMaxWidth().padding(horizontal = Inset.page)
     SmallTitle(text = "开发者")
     Card(modifier = GroupModifier, insideMargin = PaddingValues(0.dp)) {
-        ArrowPreference(
+        ReadableArrowPreference(
             title = "自定义教务",
             summary = if (origin.isBlank()) "未配置 · 支持正方、强智、联奕" else "$kindLabel · $origin",
             onClick = { expanded = !expanded },
@@ -1284,45 +1311,47 @@ private fun UpdateBlock(
     }
 }
 
-/** 账号头卡：头像首字、姓名、学号班级；同步状态和最常用的「同步」按钮放在一眼能点到的位置。 */
+/**
+ * 账号卡只调整信息布局，保持现有 Miuix Card、圆角、背景和文字层级。
+ * 身份信息单独占行：教学班/专业再长也不挤在学号后面被省略。
+ */
 @Composable
-private fun AccountHeader(name: String, lines: List<String>, sync: String, busy: Boolean, onSync: () -> Unit) {
+private fun AccountHeader(
+    name: String,
+    studentId: String,
+    className: String,
+    major: String,
+    campus: String,
+    sync: String,
+    busy: Boolean,
+    onSync: () -> Unit,
+) {
     val primary = MiuixTheme.colorScheme.primary
     val divider = MiuixTheme.colorScheme.outline.copy(alpha = 0.35f)
     Card(modifier = GroupModifier, insideMargin = PaddingValues(0.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(Inset.card),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                Modifier.size(48.dp).clip(CircleShape).background(primary.copy(alpha = 0.12f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(name.take(1), style = MiuixTheme.textStyles.title3, fontWeight = FontWeight.Medium, color = primary)
-            }
-            Spacer(Modifier.width(Space.m))
-            Column(Modifier.weight(1f)) {
+        Column(Modifier.fillMaxWidth().padding(Inset.card)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(48.dp).clip(CircleShape).background(primary.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(name.take(1), style = MiuixTheme.textStyles.title3, fontWeight = FontWeight.Medium, color = primary)
+                }
+                Spacer(Modifier.width(Space.m))
                 Text(
                     name,
+                    modifier = Modifier.weight(1f),
                     style = MiuixTheme.textStyles.title3,
                     fontWeight = FontWeight.Medium,
                     color = MiuixTheme.colorScheme.onBackground,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
-                lines.forEach { line ->
-                    Spacer(Modifier.height(Space.xs / 2))
-                    Text(
-                        line,
-                        style = MiuixTheme.textStyles.footnote1,
-                        color = Tone.muted(),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
             }
+            Spacer(Modifier.height(Space.m))
+            AccountFact("学号", studentId)
+            AccountFact("教学班", className)
+            AccountFact("专业", major)
+            AccountFact("校区", campus)
         }
-        // 细分割线把「身份」和「同步状态」分开，和 ListGroup 的行分割同一规格。
         Box(Modifier.padding(horizontal = Inset.page).fillMaxWidth().height(0.5.dp).background(divider))
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = Inset.page, vertical = Space.m),
@@ -1333,8 +1362,6 @@ private fun AccountHeader(name: String, lines: List<String>, sync: String, busy:
                 modifier = Modifier.weight(1f).padding(end = Space.s),
                 style = MiuixTheme.textStyles.footnote1,
                 color = Tone.muted(),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 if (busy) "同步中" else "立即同步",
@@ -1348,5 +1375,40 @@ private fun AccountHeader(name: String, lines: List<String>, sync: String, busy:
                 color = if (busy) primary.copy(alpha = 0.6f) else primary,
             )
         }
+    }
+}
+
+@Composable
+private fun AccountFact(label: String, value: String) {
+    if (value.isBlank()) return
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = Space.xs),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(label, modifier = Modifier.width(52.dp), style = MiuixTheme.textStyles.footnote1, color = Tone.muted())
+        Spacer(Modifier.width(Space.s))
+        Text(value, modifier = Modifier.weight(1f), style = MiuixTheme.textStyles.body2,
+            color = MiuixTheme.colorScheme.onBackground)
+    }
+}
+
+/** ArrowPreference-like row with a multiline summary for the few settings that need it. */
+@Composable
+private fun ReadableArrowPreference(title: String, summary: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().heightIn(min = Inset.rowMin)
+            .clickable(onClick = onClick)
+            .padding(horizontal = Inset.page, vertical = Space.m),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MiuixTheme.textStyles.main, color = MiuixTheme.colorScheme.onBackground)
+            if (summary.isNotBlank()) {
+                Spacer(Modifier.height(Space.xs))
+                Text(summary, style = MiuixTheme.textStyles.footnote1, color = Tone.muted())
+            }
+        }
+        Spacer(Modifier.width(Space.s))
+        RowChevron()
     }
 }

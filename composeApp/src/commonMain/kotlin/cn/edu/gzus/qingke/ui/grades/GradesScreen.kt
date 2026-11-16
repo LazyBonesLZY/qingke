@@ -96,6 +96,17 @@ fun GradesScreen(
             },
         )
         Spacer(Modifier.height(Space.m))
+        // A failed fetch is different from a valid empty grade list. Never mislead students.
+        val gradeWarning = snapshot.syncWarnings.firstOrNull { it.startsWith("成绩未更新") }
+        if (gradeWarning != null) {
+            Card(modifier = Modifier.fillMaxWidth().padding(horizontal = Inset.page), insideMargin = Inset.card) {
+                Column {
+                    Text(gradeWarning, color = Tone.warning(), style = MiuixTheme.textStyles.body2)
+                    Text("以下可能是上次保存的成绩，稍后可重试同步。", style = MiuixTheme.textStyles.footnote1, color = Tone.muted())
+                }
+            }
+            Spacer(Modifier.height(Space.s))
+        }
         GpaHero(
             value = gpa.weighted?.let { formatGpa(it) },
             summary = when {

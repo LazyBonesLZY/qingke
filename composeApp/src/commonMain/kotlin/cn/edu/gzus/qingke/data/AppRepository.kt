@@ -25,7 +25,6 @@ class AppRepository(
     private val zhku: ZhkuClient = ZhkuClient(),
     private val gzist: GzistClient = GzistClient(),
     private val gdsty: GdstyClient = GdstyClient(),
-    private val xiaoai: XiaoaiClient = XiaoaiClient(),
     private val holidays: HolidayClient = HolidayClient(),
     private val updates: UpdateClient = UpdateClient(),
     private val scheduleAdjustClient: ScheduleAdjustClient = ScheduleAdjustClient(),
@@ -77,6 +76,8 @@ class AppRepository(
     private var testStartMillis = 0L
     private var testEndMillis = 0L
     private var liveWidgetKey = ""
+    // 保存刚发布那一帧的绝对刷新点，避免发通知后再次判课跨过边界、跳过下一节第一帧。
+    private var liveRefreshAtMillis: Long? = null
     private val pickMutex = Mutex()
 
     init {
@@ -102,13 +103,18 @@ class AppRepository(
             writeStore(STORE, json.encodeToString(AppSnapshot.serializer(), empty))
             return empty
         }
-        val migrated = parsed.withLiveCountdownMigration().withInterruptedCoursePicks()
-        if (migrated !== parsed) {
-            // 这里只落盘、不调 persist()：load() 跑在构造期（_state 还没赋值），
-            // persist 会同步刷新 4 类小组件位图，拖慢首帧。小组件等后续正常 commit 再刷。
-            writeStore(STORE, json.encodeToString(AppSnapshot.serializer(), migrated))
+        val migrated = parsed.withLiveCountdownMigration().withInterruptedCoursePicks().let { snap ->
+            if (snap.session.cookies.isEmpty()) snap else snap.copy(session = snap.session.copy(cookies = emptyMap()))
         }
-        return migrated
+        // 旧版队列没有账号归属信息，无法确认归属时必须禁止自动提交。
+        val cleaned = if (!migrated.canRunQueuedPicks()) {
+            migrated.copy(settings = migrated.settings.copy(coursePickQueue = emptyList(), coursePickOwner = ""))
+        } else migrated
+        // 从旧版删除的小爱授权字段也要立刻从存档中抹掉。
+        if (cleaned !== parsed || raw.contains("\"xiaoaiEditUrl\"")) {
+            writeStore(STORE, json.encodeToString(AppSnapshot.serializer(), cleaned))
+        }
+        return cleaned
     }
 
     private var widgetSignature = 0
@@ -202,7 +208,30 @@ class AppRepository(
             captchaHint = next.captchaHint.trim(),
             pathsText = next.pathsText.trim(),
         )
-        updateSettings { it.copy(customJwxt = cleaned) }
+        val before = _state.value
+        val oldCustom = before.settings.customJwxt
+        val changesActivePortal = before.settings.school() == School.Custom && (
+            oldCustom.originClean() != cleaned.originClean() ||
+                oldCustom.normalizedKind() != cleaned.normalizedKind() ||
+                oldCustom.casOrigin != cleaned.casOrigin ||
+                oldCustom.casService != cleaned.casService ||
+                oldCustom.pathsText != cleaned.pathsText ||
+                oldCustom.loginUrl != cleaned.loginUrl
+        )
+        if (changesActivePortal) {
+            ++sessionGeneration
+            clearReloginSecret()
+            clearCookieStore()
+            _captcha.value = null
+            _captchaError.value = null
+            cancelLiveClass()
+            commit { old ->
+                AppSnapshot(settings = old.settings.copy(customJwxt = cleaned, coursePickQueue = emptyList(), coursePickOwner = ""),
+                    holidays = old.holidays, scheduleAdjust = old.scheduleAdjust)
+            }
+        } else {
+            updateSettings { it.copy(customJwxt = cleaned) }
+        }
         if (apply && _state.value.settings.school() != School.Custom) {
             setSchool(School.Custom)
         }
@@ -223,6 +252,8 @@ class AppRepository(
                 settings = it.settings.copy(
                     schoolId = School.Gzus.id,
                     gzusLoginChannel = next,
+                    coursePickQueue = emptyList(),
+                    coursePickOwner = "",
                 ),
                 session = SessionState(studentId = it.session.studentId),
                 hall = HallSnapshot(),
@@ -282,13 +313,31 @@ class AppRepository(
     }
 
     private fun markLoggedIn(studentId: String) {
-        commit {
-            it.copy(
+        val normalized = studentId.trim()
+        commit { previous ->
+            val oldStudent = previous.session.studentId.trim()
+            val switchedAccount = oldStudent.isNotBlank() && normalized.isNotBlank() && oldStudent != normalized
+            val nextSettings = if (switchedAccount) previous.settings.copy(
+                coursePickQueue = emptyList(), coursePickOwner = "",
+                scheduleShifts = emptyList(), courseAliases = emptyMap(), roomAliases = emptyMap(),
+                utilityBind = UtilityBind(), utilityBuilding = "", utilityRoom = "",
+            ) else previous.settings
+            previous.copy(
+                settings = nextSettings,
+                profile = if (switchedAccount) StudentProfile() else previous.profile,
+                slots = if (switchedAccount) emptyList() else previous.slots,
+                practices = if (switchedAccount) emptyList() else previous.practices,
+                grades = if (switchedAccount) emptyList() else previous.grades,
+                exams = if (switchedAccount) emptyList() else previous.exams,
+                notices = if (switchedAccount) emptyList() else previous.notices,
+                rooms = if (switchedAccount) emptyList() else previous.rooms,
+                hall = if (switchedAccount) HallSnapshot() else previous.hall,
+                utility = if (switchedAccount) UtilitySnapshot() else previous.utility,
                 session = SessionState(
                     loggedIn = true,
-                    cookies = currentCookies().toMap(),
-                    lastSyncAt = it.session.lastSyncAt,
-                    studentId = studentId.ifBlank { it.session.studentId },
+                    cookies = emptyMap(),
+                    lastSyncAt = if (switchedAccount) 0L else previous.session.lastSyncAt,
+                    studentId = normalized.ifBlank { oldStudent },
                 ),
             )
         }
@@ -416,11 +465,17 @@ class AppRepository(
         val year = calendar?.yearCode?.ifBlank { null } ?: snap.settings.yearCode
         val term = calendar?.termCode?.ifBlank { null } ?: snap.settings.termCode
         val (profile, slots, practices) = source.fetchTimetable(year, term)
-        val grades = activeRequest { source.fetchGrades() }.getOrElse {
+        val gradeResult = activeRequest { source.fetchGrades() }
+        val grades = gradeResult.getOrElse {
             if (keepGradesIfFail) snap.grades else emptyList()
         }
-        val exams = activeRequest { source.fetchExams(year, term) }.getOrElse {
+        val examResult = activeRequest { source.fetchExams(year, term) }
+        val exams = examResult.getOrElse {
             if (keepGradesIfFail) snap.exams else emptyList()
+        }
+        val syncWarnings = buildList {
+            gradeResult.exceptionOrNull()?.let { add("成绩未更新：${it.friendlyNetworkMessage()}") }
+            examResult.exceptionOrNull()?.let { add("考试未更新：${it.friendlyNetworkMessage()}") }
         }
         // 拉的这几秒里换了学校或退出了登录，这份结果就不要了。
         if (!_state.value.sameSync(school)) throw kotlinx.coroutines.CancellationException("Account changed")
@@ -432,20 +487,22 @@ class AppRepository(
                 practices = practices,
                 grades = grades,
                 exams = exams,
+                syncWarnings = syncWarnings,
                 settings = it.settings.mergeCalendar(calendar).copy(
                     yearCode = profile.yearCode.ifBlank { year },
                     termCode = profile.termCode.ifBlank { term },
                 ),
                 session = SessionState(
                     loggedIn = true,
-                    cookies = currentCookies().toMap(),
+                    cookies = emptyMap(),
                     lastSyncAt = nowMillis(),
                     studentId = studentId.ifBlank { it.session.studentId },
                 ),
                 seeded = false,
             )
         }
-        val notices = activeRequest { mergeNoticeCache(source.fetchNotices(), snap.notices) }.getOrElse {
+        val noticesResult = activeRequest { mergeNoticeCache(source.fetchNotices(), snap.notices) }
+        val notices = noticesResult.getOrElse {
             if (keepGradesIfFail) snap.notices else emptyList()
         }.mapIndexed { index, item ->
             if (index >= 5 || item.content.isNotBlank() || item.id.startsWith("msg:")) item
@@ -455,7 +512,16 @@ class AppRepository(
             }
         }
         if (!_state.value.sameSync(school)) throw kotlinx.coroutines.CancellationException("Account changed")
-        commit { if (!it.sameSync(school)) it else it.copy(notices = notices) }
+        commit {
+            if (!it.sameSync(school)) it else it.copy(
+                notices = notices,
+                syncWarnings = it.syncWarnings + listOfNotNull(
+                    noticesResult.exceptionOrNull()?.let { failed ->
+                        "通知未更新：${failed.friendlyNetworkMessage()}"
+                    },
+                ),
+            )
+        }
         val hall = pullHall(keepGradesIfFail)
         if (!_state.value.sameSync(school)) throw kotlinx.coroutines.CancellationException("Account changed")
         commit { if (!it.sameSync(school)) it else it.copy(hall = hall) }
@@ -509,28 +575,6 @@ class AppRepository(
         }
         if (!bind.hasRoom()) return UtilitySnapshot(error = "未绑定宿舍")
         return ecard.balance(bind)
-    }
-
-    fun saveXiaoaiEditUrl(url: String) {
-        val token = parseXiaoaiToken(url) ?: error("这不是小爱 UserInfo，也不是旧的 PC 编辑链接")
-        if (token.expired()) error("这份授权看起来过期了。去小爱课程表重新复制一份 UserInfo。")
-        updateSettings { it.copy(xiaoaiEditUrl = url.trim()) }
-    }
-
-    fun clearXiaoaiEditUrl() {
-        updateSettings { it.copy(xiaoaiEditUrl = "") }
-    }
-
-    fun xiaoaiOfficialJson(): String =
-        encodeXiaoaiOfficial(convertQingkeToXiaoai(_state.value).official)
-
-    suspend fun importToXiaoai(): String {
-        val snap = _state.value
-        val converted = convertQingkeToXiaoai(snap)
-        if (converted.apiCourses.isEmpty()) error("还没有能导入的课。先同步课表。实践课没有节次，不会进去。")
-        val token = parseXiaoaiToken(snap.settings.xiaoaiEditUrl)
-            ?: error("先粘贴小爱课程表的 UserInfo")
-        return xiaoai.replaceCourses(token, converted.apiCourses)
     }
 
     suspend fun queryRooms(weekday: String, start: String, end: String): List<FreeRoom> {
@@ -697,6 +741,7 @@ class AppRepository(
         commit {
             it.copy(
                 session = SessionState(studentId = it.session.studentId),
+                settings = it.settings.copy(coursePickQueue = emptyList(), coursePickOwner = ""),
                 hall = HallSnapshot(),
             )
         }
@@ -711,6 +756,7 @@ class AppRepository(
         commit {
             it.copy(
                 session = SessionState(studentId = it.session.studentId),
+                settings = it.settings.copy(coursePickQueue = emptyList(), coursePickOwner = ""),
                 grades = emptyList(),
                 exams = emptyList(),
                 rooms = emptyList(),
@@ -802,10 +848,21 @@ class AppRepository(
         }
     }
 
+    private fun currentPickOwner(): String =
+        _state.value.coursePickOwnerKey() ?: error("登录后才能添加选课任务")
+
+    private fun verifyPickOwner() {
+        if (_state.value.canRunQueuedPicks()) return
+        updateSettings { it.copy(coursePickQueue = emptyList(), coursePickOwner = "") }
+        error("账号或学期已变化，旧选课队列已清除，请重新添加")
+    }
+
     fun queueCoursePick(offer: CoursePickOffer, section: CoursePickSection): CoursePickTask {
+        val owner = currentPickOwner()
         val task = coursePickTaskOf(offer, section)
         updateSettings { settings ->
-            settings.copy(coursePickQueue = settings.coursePickQueue.filterNot { it.id == task.id } + task)
+            val existing = if (settings.coursePickOwner == owner) settings.coursePickQueue else emptyList()
+            settings.copy(coursePickOwner = owner, coursePickQueue = existing.filterNot { it.id == task.id } + task)
         }
         return task
     }
@@ -817,6 +874,7 @@ class AppRepository(
     }
 
     fun scheduleCoursePick(id: String, fireAt: Long) {
+        verifyPickOwner()
         if (fireAt <= nowMillis()) error("请选择未来的日期和时间")
         if (_state.value.settings.coursePickQueue.none { it.id == id }) error("队列里没有这门课")
         patchCoursePick(id) {
@@ -828,8 +886,14 @@ class AppRepository(
         requireCoursePick().fetchCoursePickScopes()
     }
 
-    suspend fun searchCoursePicks(scope: CoursePickScope, keyword: String): List<CoursePickOffer> = withLiveSession {
-        requireCoursePick().fetchCoursePickOffers(scope, keyword.trim())
+    suspend fun searchCoursePicks(
+        scope: CoursePickScope,
+        keyword: String,
+        start: Int = 0,
+        pageSize: Int = 30,
+    ): List<CoursePickOffer> = withLiveSession {
+        require(start >= 0) { "分页偏移无效" }
+        requireCoursePick().fetchCoursePickOffers(scope, keyword.trim(), start, pageSize.coerceIn(1, 50))
     }
 
     suspend fun loadCoursePickSections(offer: CoursePickOffer): List<CoursePickSection> = withLiveSession {
@@ -851,12 +915,14 @@ class AppRepository(
     }
 
     suspend fun runQueuedCoursePick(id: String): String = pickMutex.withLock {
+        verifyPickOwner()
         val task = _state.value.settings.coursePickQueue.firstOrNull { it.id == id }
             ?: error("队列里没有这门课")
         runQueuedTask(task, attempts = 3)
     }
 
     suspend fun runDueCoursePicks(): List<String> = pickMutex.withLock {
+        verifyPickOwner()
         val now = nowMillis()
         val due = _state.value.settings.coursePickQueue
             .filter { it.status == "waiting" && it.fireAt > 0L && it.fireAt <= now }
@@ -922,9 +988,12 @@ class AppRepository(
     ): String {
         var last = ""
         val portal = requireCoursePick()
+        val expected = stamp()
         val times = attempts.coerceIn(1, 5)
         repeat(times) { index ->
+            if (!_state.value.sameSync(expected)) throw kotlinx.coroutines.CancellationException("Account changed")
             val result = activeRequest { portal.selectCoursePick(offer, section) }
+            if (!_state.value.sameSync(expected)) throw kotlinx.coroutines.CancellationException("Account changed")
             result.onSuccess { return it }
             last = result.exceptionOrNull()?.message.orEmpty()
             if (isSessionLost(last)) throw result.exceptionOrNull()!!
@@ -1028,20 +1097,12 @@ class AppRepository(
         refreshLive()
     }
 
-    /** Sleep until the displayed minute changes or the current stage ends. */
-    fun liveRefreshDelayMs(): Long {
-        val nowMs = nowMillis()
-        val timing = if (testEndMillis > nowMs) {
-            liveTiming(nowMs, testStartMillis, testEndMillis)
-        } else {
-            val notice = _state.value.liveNotice(dateTimeAt(nowMs), nowMs) ?: return LIVE_STEP_MILLIS
-            liveTiming(nowMs, notice.startMillis, notice.endMillis)
-        }
-        return timing?.refreshDelayMillis ?: LIVE_STEP_MILLIS
-    }
+    /** Sleep relative to the frame just posted, including when posting crossed a class boundary. */
+    fun liveRefreshDelayMs(): Long = liveRefreshDelayMillis(nowMillis(), liveRefreshAtMillis)
 
     fun refreshLive(): Boolean {
         val nowMs = nowMillis()
+        liveRefreshAtMillis = null
         if (testEndMillis > nowMs) {
             val timing = liveTiming(nowMs, testStartMillis, testEndMillis) ?: return false
             val progress = when {
@@ -1060,12 +1121,10 @@ class AppRepository(
                 countdownEnabled = _state.value.settings.liveCountdownEnabled,
                 nowMillis = nowMs,
             )
+            liveRefreshAtMillis = if (posted) nowMs + timing.refreshDelayMillis
+                else livePostFailureWake("课程提醒（测试）", testStartMillis, testEndMillis)
             setLiveForeground(posted)
-            if (posted) {
-                scheduleLiveWake(nowMs + timing.refreshDelayMillis)
-            } else {
-                scheduleLiveWake(testEndMillis + 1_000L)
-            }
+            scheduleLiveWake(if (posted) timing.deadlineMillis else liveRefreshAtMillis)
             return posted
         }
         if (testEndMillis > 0L && nowMs >= testEndMillis) {
@@ -1079,7 +1138,8 @@ class AppRepository(
         val notice = snap.liveNotice(now, nowMs)
         if (notice == null) {
             cancelLiveClass()
-            scheduleLiveWake(snap.nextLiveWake(now, nowMs))
+            liveRefreshAtMillis = snap.nextLiveWake(now, nowMs)
+            scheduleLiveWake(liveRefreshAtMillis)
             if (liveWidgetKey.isNotEmpty()) {
                 liveWidgetKey = ""
                 refreshHomeWidgets()
@@ -1104,12 +1164,10 @@ class AppRepository(
         )
         // 服务只在通知真的挂出来时跑：被划掉 / 没权限时 buildLiveNotification
         // 返回 null，这时起服务只会「冷启动→判 null→自停」空转。
+        liveRefreshAtMillis = if (posted) nowMs + (liveTiming(nowMs, notice.startMillis, notice.endMillis)?.refreshDelayMillis ?: LIVE_STEP_MILLIS)
+            else livePostFailureWake(notice.title, notice.startMillis, notice.endMillis)
         setLiveForeground(posted)
-        if (posted) {
-            scheduleLiveWake(snap.nextLiveWake(now, nowMs))
-        } else {
-            scheduleLiveWake(notice.endMillis + 1_000L)
-        }
+        scheduleLiveWake(if (posted) snap.nextLiveWake(now, nowMs) else liveRefreshAtMillis)
         return posted
     }
 

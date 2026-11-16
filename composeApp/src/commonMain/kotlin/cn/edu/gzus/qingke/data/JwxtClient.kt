@@ -231,10 +231,11 @@ class JwxtClient(
                 // 含年份时数字 2 会误判，必须按学期字精确匹配。
                 val name = xs.str("XQMMC")
                 when {
-                    termCode == "12" || termCode == "2" || name == "2" ||
-                        name.contains("第二学期") || name.contains("第2学期") -> "第2学期"
-                    termCode == "3" || name == "3" ||
-                        name.contains("第三学期") || name.contains("第3学期") -> "第3学期"
+                    name.contains("第三学期") || name.contains("第3学期") -> "第3学期"
+                    name.contains("第二学期") || name.contains("第2学期") -> "第2学期"
+                    name.contains("第一学期") || name.contains("第1学期") -> "第1学期"
+                    termCode == "16" || name == "3" -> "第3学期"
+                    termCode == "12" || termCode == "2" || name == "2" -> "第2学期"
                     else -> "第1学期"
                 }
             },

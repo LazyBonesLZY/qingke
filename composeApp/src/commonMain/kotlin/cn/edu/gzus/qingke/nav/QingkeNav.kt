@@ -14,7 +14,6 @@ sealed class Route(val transition: Transition) {
     data class Course(val courseId: String) : Route(Transition.SlideIn)
     data object EmptyRoom : Route(Transition.SlideIn)
     data object Exams : Route(Transition.SlideIn)
-    data object XiaoaiImport : Route(Transition.SlideIn)
     data object Notices : Route(Transition.SlideIn)
     data object Hall : Route(Transition.SlideIn)
     data object Leave : Route(Transition.SlideIn)

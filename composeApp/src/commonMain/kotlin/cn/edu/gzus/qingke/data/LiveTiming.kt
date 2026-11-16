@@ -17,6 +17,28 @@ internal data class LiveTiming(
         get() = minOf(remainingMillis, (remainingMillis - 1L) % LIVE_STEP_MILLIS + 1L)
 }
 
+/**
+ * deleteIntent 的身份必须同时包含课次和阶段。PendingIntent 的 extras 不参与判等，
+ * 只复用 requestCode 会让旧阶段的超时回调带上下一节课刚更新的 extras。
+ */
+internal fun liveDismissIdentity(courseKey: String, deadlineMillis: Long): String =
+    "cn.edu.gzus.qingke.LIVE_DISMISS:$courseKey:$deadlineMillis"
+
+internal fun isLiveStageTimeout(nowMillis: Long, deadlineMillis: Long): Boolean =
+    deadlineMillis > 0L && nowMillis >= deadlineMillis - 1_000L
+
+/** 按刚发布内容的绝对边界等候；发送/渲染耗时跨过边界时立即校正，而不是再等完整一分钟。 */
+internal fun liveRefreshDelayMillis(nowMillis: Long, refreshAtMillis: Long?): Long =
+    refreshAtMillis?.let { (it - nowMillis).coerceIn(1L, LIVE_STEP_MILLIS) } ?: LIVE_STEP_MILLIS
+
+/** 首页只刷新可见的分钟、上下课边界和每 10 秒的上课进度，不做逐秒整页刷新。 */
+internal fun todayRefreshDelayMillis(nowMillis: Long, timing: LiveTiming?): Long {
+    val clockMinute = LIVE_STEP_MILLIS - nowMillis.mod(LIVE_STEP_MILLIS)
+    val countdown = timing?.refreshDelayMillis ?: clockMinute
+    val progress = if (timing?.inClass == true) 10_000L - nowMillis.mod(10_000L) else clockMinute
+    return minOf(clockMinute, countdown, progress).coerceAtLeast(1L)
+}
+
 internal fun liveTiming(nowMillis: Long, startMillis: Long, endMillis: Long): LiveTiming? {
     if (endMillis <= startMillis || nowMillis >= endMillis) return null
     val inClass = nowMillis >= startMillis

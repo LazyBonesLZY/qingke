@@ -1,9 +1,11 @@
 package cn.edu.gzus.qingke.ui.timetable
 
+import androidx.compose.foundation.MutatePriority
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -36,15 +38,17 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.key
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import cn.edu.gzus.qingke.QingkeOnResume
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.lerp
@@ -85,6 +89,7 @@ import cn.edu.gzus.qingke.data.resolvedWeekCount
 import cn.edu.gzus.qingke.data.teachingWeekOn
 import cn.edu.gzus.qingke.data.weekdayIndex
 import cn.edu.gzus.qingke.data.weeksInUse
+import cn.edu.gzus.qingke.data.visibleTimetableDays
 import cn.edu.gzus.qingke.nav.QingkeNavigator
 import cn.edu.gzus.qingke.nav.Route
 import cn.edu.gzus.qingke.nav.TabDest
@@ -98,6 +103,7 @@ import cn.edu.gzus.qingke.ui.components.StatusTag
 import cn.edu.gzus.qingke.ui.components.Tone
 import cn.edu.gzus.qingke.ui.components.Type
 import cn.edu.gzus.qingke.ui.components.tabPagePadding
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.datetime.DatePeriod
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.minus
@@ -113,6 +119,10 @@ import top.yukonga.miuix.kmp.icon.extended.ChevronBackward
 import top.yukonga.miuix.kmp.icon.extended.ChevronForward
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.PressFeedbackType
+import top.yukonga.miuix.kmp.utils.PagerGestureNestedScrollConnection
+import top.yukonga.miuix.kmp.utils.PagerInterceptionMode
+import top.yukonga.miuix.kmp.utils.pagerGestureOverride
+import top.yukonga.miuix.kmp.utils.springAnimateToPage
 
 private val CourseTintsLight = listOf(
     Color(0xFFDCE9FF),
@@ -157,6 +167,9 @@ private val MonthCellHeight = 58.dp
 /** 格子圆角：常规取 Radius.small 的 8dp，紧凑模式格子窄，收到 6dp。卡片内边距按同心关系配（见 WeekGrid）。 */
 private val CellRadius = 8.dp
 private val CellRadiusCompact = 6.dp
+
+/** 每次点击都是独立请求，避免 A→B→A 时旧 A 的 finally 清除新 A。 */
+private class WeekNavigationRequest(val week: Int)
 
 /**
  * 课表网格专用字号。网格一格只有四十来 dp 宽，Type.tiny（11sp）放教室会挤掉课名，
@@ -261,6 +274,7 @@ fun TimetableScreen(
     nav: QingkeNavigator,
     contentPadding: PaddingValues,
     onSync: () -> Unit = {},
+    onShowWeekendChange: (Boolean) -> Unit = {},
 ) {
     // 从后台切回来时重组一次：跨过零点后「今天」高亮、本周和月历才会跟着换天。
     var resumeTick by remember { mutableIntStateOf(0) }
@@ -285,28 +299,47 @@ fun TimetableScreen(
             conflictRequester.bringIntoView()
         }
     }
-    var viewWeek by remember(currentWeek, weekLo, weekHi) {
-        mutableIntStateOf(currentWeek.coerceIn(weekLo, weekHi))
+    // 周范围/实际周次改变时重建，平常的重组、翻月和周/月切换保留同一份分页位置。
+    // target 用于立即反馈按钮选择；手势时则直接读 PagerState，只有一个真实滚动位置。
+    val pagerState = key(currentWeek, weekLo, weekHi) {
+        rememberPagerState(initialPage = currentWeek.coerceIn(weekLo, weekHi) - weekLo) {
+            weekHi - weekLo + 1
+        }
+    }
+    var navigationRequest by remember(pagerState) { mutableStateOf<WeekNavigationRequest?>(null) }
+    // 翻过半页时 currentPage 就会变；标题、课次数和实践列表等元信息等落稳再切换，
+    // 避免半路反向/短拖回弹时把整屏内容来回重算，网格位移仍由 Pager 独立跟手。
+    val viewWeek = navigationRequest?.week ?: (pagerState.settledPage + weekLo).coerceIn(weekLo, weekHi)
+    val pickWeek: (Int) -> Unit = { requested ->
+        navigationRequest = WeekNavigationRequest(requested.coerceIn(weekLo, weekHi))
+        conflict = null
+    }
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.currentPage }.collect { conflict = null }
     }
     var monthAnchor by remember(today) { mutableStateOf(LocalDate(today.year, today.monthNumber, 1)) }
     var selectedDate by remember(today) { mutableStateOf(today) }
 
     val monday = mondayOfTeachingWeek(viewWeek.coerceAtLeast(1), settings, today)
-    val sunday = monday.plus(DatePeriod(days = 6))
-    // 只跟数据和所看的周有关，别每次重组都把整张课表过七遍。
-    val weekSessions = remember(snapshot.slots, monday, settings, today, snapshot.scheduleAdjust) {
-        (0..6).sumOf { offset ->
+    val visibleDays = visibleTimetableDays(settings.showWeekend)
+    val visibleEnd = monday.plus(DatePeriod(days = visibleDays.last - 1))
+    // 缓存全部七天的节数：折叠周末时总数只统计可见列，按钮提醒隐藏的周末课程。
+    val sessionsPerDay = remember(snapshot.slots, monday, settings, today, snapshot.scheduleAdjust) {
+        (1..7).map { weekday ->
             snapshot.slots.forDate(
-                monday.plus(DatePeriod(days = offset)),
+                monday.plus(DatePeriod(days = weekday - 1)),
                 settings,
                 today,
                 snapshot.scheduleAdjust,
             ).size
         }
     }
+    val weekSessions = visibleDays.sumOf { sessionsPerDay[it - 1] }
+    val weekendSessions = sessionsPerDay.drop(5).sum()
     val weekPractices = remember(snapshot.practices, viewWeek) { snapshot.practices.filter { it.activeIn(viewWeek) } }
     val dated = settings.hasTermStart()
     val wide = LocalQingkeWide.current
+    val weekPagerVisible by rememberUpdatedState(wide || mode == 0)
     // 所看的周次、日期范围、年月在翻页器里都有，标题下只说「现在是第几周」，翻到别处也知道今天在哪。
     val subtitle = when {
         !snapshot.hasTimetable -> if (snapshot.session.loggedIn) "同步后再看整周网格" else "登录后从${school.jwxtName}同步"
@@ -353,27 +386,8 @@ fun TimetableScreen(
             )
             Spacer(Modifier.height(Space.s))
         }
-        val prevWeek = { if (viewWeek > weekLo) { viewWeek -= 1; conflict = null } }
-        val nextWeek = { if (viewWeek < weekHi) { viewWeek += 1; conflict = null } }
-        // pointerInput 只按 weekLo/weekHi 重建，里面必须拿最新的回调：
-        // viewWeek 的状态会随 currentWeek 重建，旧闭包改的是已经丢掉的那份，滑了没反应。
-        val latestPrev by rememberUpdatedState(prevWeek)
-        val latestNext by rememberUpdatedState(nextWeek)
-        // 只挂在网格上：挂在整列上会和周次条的横向滚动抢手势，滚到头再滑就误翻周。
-        val swipeWeeks = Modifier.pointerInput(weekLo, weekHi) {
-            // 左右滑换周：累计位移过阈值才算，竖向滚动和点格子不受影响。
-            var dragged = 0f
-            detectHorizontalDragGestures(
-                onDragStart = { dragged = 0f },
-                onDragEnd = {
-                    val threshold = 64.dp.toPx()
-                    if (dragged > threshold) latestPrev() else if (dragged < -threshold) latestNext()
-                },
-            ) { change, amount ->
-                dragged += amount
-                change.consume()
-            }
-        }
+        val prevWeek = { pickWeek(viewWeek - 1) }
+        val nextWeek = { pickWeek(viewWeek + 1) }
         Row(
             Modifier
                 .fillMaxWidth()
@@ -391,14 +405,30 @@ fun TimetableScreen(
                         weekLo = weekLo,
                         weekHi = weekHi,
                         currentWeek = currentWeek,
-                        range = formatMonthDayRange(monday, sunday),
+                        range = formatMonthDayRange(monday, visibleEnd),
                         sessions = weekSessions,
                         used = used,
                         onPrev = prevWeek,
                         onNext = nextWeek,
-                        onPick = { viewWeek = it; conflict = null },
-                        onToday = { viewWeek = currentWeek.coerceIn(weekLo, weekHi); conflict = null },
+                        onPick = pickWeek,
+                        onToday = { pickWeek(currentWeek) },
                     )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = Inset.page, vertical = Space.xs),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        PillAction(
+                            text = when {
+                                settings.showWeekend -> "隐藏周末"
+                                weekendSessions > 0 -> "显示周末 · $weekendSessions 节课"
+                                else -> "显示周末"
+                            },
+                            onClick = {
+                                conflict = null
+                                onShowWeekendChange(!settings.showWeekend)
+                            },
+                        )
+                    }
                     Spacer(Modifier.height(Space.s))
                     if (wide && weekPractices.isNotEmpty()) {
                         Text(
@@ -410,28 +440,97 @@ fun TimetableScreen(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    WeekGrid(
-                        slots = snapshot.slots,
-                        monday = monday,
-                        today = today,
-                        holidays = snapshot.holidays,
-                        aliases = settings.courseAliases,
-                        blocks = school.periodBlocks,
-                        hasClock = school.hasPeriodClock,
-                        settings = settings,
-                        adjust = snapshot.scheduleAdjust,
-                        fit = wide,
-                        compact = !wide && settings.compactTimetable,
-                        modifier = swipeWeeks,
-                        onOpen = { picked ->
-                            // 同一门课在一格里有多条（单双周拆开、教务重复给）不算冲突，直接打开。
-                            if (picked.distinctBy { it.courseKey() }.size == 1) {
-                                nav.open(Route.Course(picked.first().courseId))
-                            } else {
-                                conflict = picked
+                    // 仅在周网格存在时消费导航请求。月模式里点击日期先保留请求，
+                    // 回周模式、Pager 完成首轮 layout 后再动画，避免无布局时丢掉目标。
+                    // collectLatest 取消旧导航；Miuix 的 UserInput mutation 允许新触摸从当前位置接管。
+                    LaunchedEffect(pagerState) {
+                        var firstEmission = true
+                        snapshotFlow { navigationRequest }.collectLatest { request ->
+                            val restoreInterruptedGesture = firstEmission && request == null
+                            firstEmission = false
+                            if (request != null) {
+                                try {
+                                    val targetPage = request.week - weekLo
+                                    // Miuix 的 springAnimateToPage 不会像原生 animateScrollToPage
+                                    // 预跳远距离；一次跨十几周会在动画帧内构建沿途每张网格。
+                                    // 远跳先移到目标相邻页，仅对最后一页保留 Miuix 弹簧过渡。
+                                    timetablePreJumpPage(pagerState.currentPage, targetPage)?.let { adjacent ->
+                                        pagerState.scroll(MutatePriority.UserInput) {
+                                            with(pagerState) { updateCurrentPage(adjacent) }
+                                        }
+                                    }
+                                    pagerState.springAnimateToPage(targetPage)
+                                } finally {
+                                    // 新点击不被旧任务收尾覆盖；切月取消时保留尚未到达的目标。
+                                    // 手势（甚至只按下）接管时清除旧请求，让标题跟随实际页面。
+                                    if (weekPagerVisible && navigationRequest === request) navigationRequest = null
+                                }
+                            } else if (restoreInterruptedGesture &&
+                                kotlin.math.abs(pagerState.currentPageOffsetFraction) > 0.001f
+                            ) {
+                                // 切月会卸载 Miuix 手势节点并取消吸附，但 PagerState 仍保留半页偏移。
+                                // 再显示时补完最近页的吸附；只在初次进入此分支恢复，避免抢走正在拖动的手势。
+                                pagerState.springAnimateToPage(pagerState.currentPage)
                             }
-                        },
-                    )
+                        }
+                    }
+                    // Pager 自己负责位移，Miuix 负责跟手/弹簧；禁用原生手势避免双重消费。
+                    // weight 仍是外层 Column 的直接子节点，页面内再建 Column 保留宽屏网格自适应高度。
+                    HorizontalPager(
+                        state = pagerState,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(if (wide) Modifier.weight(1f) else Modifier)
+                            .clipToBounds()
+                            .pagerGestureOverride(
+                                pagerState = pagerState,
+                                mode = PagerInterceptionMode.CrossAxisInterceptor,
+                                onTriggered = {
+                                    navigationRequest = null
+                                    conflict = null
+                                },
+                            ),
+                        userScrollEnabled = false,
+                        pageNestedScrollConnection = PagerGestureNestedScrollConnection,
+                        // Precompose the adjacent week so entering it does not allocate its whole grid mid-drag.
+                        beyondViewportPageCount = 1,
+                        verticalAlignment = Alignment.Top,
+                    ) { page ->
+                        val pageWeek = page + weekLo
+                        val pageMonday = mondayOfTeachingWeek(pageWeek, settings, today)
+                        Column(
+                            Modifier.fillMaxWidth().then(if (wide) Modifier.fillMaxHeight() else Modifier),
+                        ) {
+                            WeekGrid(
+                                slots = snapshot.slots,
+                                monday = pageMonday,
+                                today = today,
+                                holidays = snapshot.holidays,
+                                aliases = settings.courseAliases,
+                                blocks = school.periodBlocks,
+                                hasClock = school.hasPeriodClock,
+                                settings = settings,
+                                adjust = snapshot.scheduleAdjust,
+                                fit = wide,
+                                compact = !wide && settings.compactTimetable,
+                                onOpen = { picked ->
+                                    // Miuix 从按下就持有滚动 mutation，正常点课时 isScrollInProgress
+                                    // 也可能为 true。用实际偏移判定落稳，拖动中的点击则由手势消费。
+                                    if (page == pagerState.currentPage &&
+                                        kotlin.math.abs(pagerState.currentPageOffsetFraction) < 0.001f &&
+                                        navigationRequest == null
+                                    ) {
+                                        // 同一门课在一格里有多条（单双周拆开、教务重复给）不算冲突，直接打开。
+                                        if (picked.distinctBy { it.courseKey() }.size == 1) {
+                                            nav.open(Route.Course(picked.first().courseId))
+                                        } else {
+                                            conflict = picked
+                                        }
+                                    }
+                                },
+                            )
+                        }
+                    }
                     conflict?.let { picked ->
                         Spacer(Modifier.height(Space.m))
                         ConflictPanel(
@@ -445,8 +544,10 @@ fun TimetableScreen(
                     if (!wide && weekSessions == 0 && weekPractices.isEmpty()) {
                         Spacer(Modifier.height(Space.m))
                         EmptyState(
-                            title = "这一周没有理论课",
-                            detail = "左右滑动网格换周，或切到「月」看整月",
+                            title = if (!settings.showWeekend && weekendSessions > 0) "工作日没有理论课" else "这一周没有理论课",
+                            detail = if (!settings.showWeekend && weekendSessions > 0)
+                                "周末有 $weekendSessions 节课，点「显示周末」查看"
+                            else "左右滑动网格换周，或切到「月」看整月",
                         )
                     }
                     if (!wide && weekPractices.isNotEmpty()) {
@@ -493,10 +594,13 @@ fun TimetableScreen(
                         holidays = snapshot.holidays,
                         onSelect = { date ->
                             selectedDate = date
+                            // 宽屏同时展示周/月：从月历点周末时自动展开对应的周课表列。
+                            if (wide && weekdayIndex(date) >= 6 && !settings.showWeekend) {
+                                onShowWeekendChange(true)
+                            }
                             val pickedWeek = teachingWeekOn(date, settings, today)
                             if (pickedWeek in weekLo..weekHi && pickedWeek != viewWeek) {
-                                viewWeek = pickedWeek
-                                conflict = null
+                                pickWeek(pickedWeek)
                             }
                             if (date.monthNumber != monthAnchor.monthNumber || date.year != monthAnchor.year) {
                                 monthAnchor = LocalDate(date.year, date.monthNumber, 1)
@@ -914,14 +1018,15 @@ private fun ColumnScope.WeekGrid(
     val cellHeight = if (compact) WeekCellHeightCompact else WeekCellHeight
     val headSize = if (compact) GridType.headCompact else GridType.head
     val metaSize = if (compact) GridType.metaCompact else GridType.meta
-    // 一周七列，每列算一次就够。原来是每个格子都把整张课表过一遍。
+    val visibleDays = visibleTimetableDays(settings.showWeekend)
+    // 只计算可见的周课表列；显示周末后沿用同一套数据及调课规则。
     val dayColumns = remember(slots, monday, settings, today, adjust) {
-        (0..6).map { offset -> slots.forDate(monday.plus(DatePeriod(days = offset)), settings, today, adjust) }
+        visibleDays.map { weekday -> slots.forDate(monday.plus(DatePeriod(days = weekday - 1)), settings, today, adjust) }
     }
-    // 表头每天最多一个标记（节假日优先，其次调课/放假），整周有标记时七列都留这一行，表头高度一致。
+    // 表头每天最多一个标记（节假日优先，其次调课/放假），可见列保持等高。
     val dayMarks = remember(monday, holidays, settings, adjust, today) {
-        (0..6).map { offset ->
-            val date = monday.plus(DatePeriod(days = offset))
+        visibleDays.map { weekday ->
+            val date = monday.plus(DatePeriod(days = weekday - 1))
             val holiday = holidays.lookup(date)
             val mark = adjustDayLabel(date, settings, adjust, today)
             when {
@@ -974,7 +1079,7 @@ private fun ColumnScope.WeekGrid(
                     horizontalArrangement = Arrangement.spacedBy(cellGap),
                 ) {
                     Spacer(Modifier.width(slotCol))
-                    WeekdayNames.forEachIndexed { index, name ->
+                    WeekdayNames.take(visibleDays.last).forEachIndexed { index, name ->
                         val date = monday.plus(DatePeriod(days = index))
                         val isToday = date == today
                         val weekend = index >= 5
@@ -1030,7 +1135,7 @@ private fun ColumnScope.WeekGrid(
                 }
                 // 连课合并：同一门课连着占多个节次块时合成一条长块。
                 val dayRuns = remember(dayColumns, blocks) {
-                    (0..6).map { index -> runsForDay(dayColumns[index], blocks) }
+                    dayColumns.map { runsForDay(it, blocks) }
                 }
                 // 行高按**实测**的网格体高度反算。表头会因节假日/调课标记变高，
                 // 拿估算值去减会把最后一行挤出去，所以这里用 weight 拿到真实剩余高度。
@@ -1100,7 +1205,7 @@ private fun ColumnScope.WeekGrid(
                                 }
                             }
                         }
-                        for (weekday in 1..7) {
+                        for (weekday in visibleDays) {
                             val date = monday.plus(DatePeriod(days = weekday - 1))
                             // 当天整列铺一层主色浅底（和表头连成一条），比描边更安静，也不和课程色块抢。
                             val isTodayCol = date == today

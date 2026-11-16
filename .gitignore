@@ -23,3 +23,6 @@ gradle/native/*.so
 /qingke-seven-stage-live-fallback-integrated-20261116.zip
 /qingke-private-live-adapters-20261116.zip
 *:Zone.Identifier
+
+# 本地构建产物（APK / 说明），不入库
+dist/

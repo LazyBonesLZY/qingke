@@ -45,6 +45,15 @@ enum class School(
         supportsFreeRooms = false,
         hasPeriodClock = true,
     ),
+    Zsc(
+        id = "zsc",
+        label = "电子科技大学中山学院",
+        jwxtName = "中山学院教务",
+        loginUrl = ZSC_LOGIN_URL,
+        changePasswordUrl = ZSC_CHANGE_PASSWORD_URL,
+        supportsFreeRooms = false,
+        hasPeriodClock = true,
+    ),
     Custom(
         id = "custom",
         label = "自定义教务",
@@ -60,6 +69,7 @@ enum class School(
             Gzus, Gzist, Custom -> MajorPeriods
             Zhku -> ZhkuPeriods
             Gdsty -> GdstyPeriods
+            Zsc -> ZscPeriods
         }
 
     val showsCaptcha: Boolean
@@ -73,7 +83,7 @@ enum class School(
             Gzist -> "门户算术验证码，填得数"
             Gzus -> "教务验证码，登录多了会要"
             Gdsty -> "综合系统验证码，4 位数字"
-            Zhku, Custom -> ""
+            Zhku, Zsc, Custom -> ""
         }
 
     companion object {
@@ -103,6 +113,21 @@ val GdstyPeriods = listOf(
     PeriodBlock(7, "11-12", "20:10", "21:40", "晚上"),
 )
 
+/**
+ * 电子科技大学中山学院：作息来自校方公布的时间表（早读 07:20–08:00，晚修 19:30–21:10）。
+ *
+ * 一号楼和四号楼共用一套时间；课表按 1-2 / 3-4 / 5-6 / 7-8 / 9-10 / 11-12 这六个大节排，
+ * 所以块按大节切，起止取该大节第一节开始到第二节下课。
+ */
+val ZscPeriods = listOf(
+    PeriodBlock(1, "1-2", "08:00", "09:40", "上午"),
+    PeriodBlock(2, "3-4", "10:00", "11:40", "上午"),
+    PeriodBlock(3, "5-6", "14:30", "16:10", "下午"),
+    PeriodBlock(4, "7-8", "16:20", "18:00", "下午"),
+    PeriodBlock(5, "9-10", "18:40", "20:20", "晚上"),
+    PeriodBlock(6, "11-12", "20:30", "22:10", "晚上"),
+)
+
 fun AppSettings.school(): School = School.of(schoolId)
 
 fun AppSnapshot.school(): School = settings.school()
@@ -111,9 +136,10 @@ fun AppSettings.gzusUsesCas(): Boolean = school() == School.Gzus && gzusLoginCha
 
 /**
  * 会话会自己过期的门户，前台要隔几分钟打一下。
- * 广软是 CAS 票，广生态是强智 jsxsd 的 JSESSIONID。
+ * 广软是 CAS 票，广生态和中山学院是强智 jsxsd 的 JSESSIONID。
  */
-fun AppSettings.needsKeepAlive(): Boolean = gzusUsesCas() || school() == School.Gdsty
+fun AppSettings.needsKeepAlive(): Boolean =
+    gzusUsesCas() || school() == School.Gdsty || school() == School.Zsc
 
 fun AppSnapshot.showsGzusHall(): Boolean = settings.school() == School.Gzus
 
@@ -176,6 +202,7 @@ private fun AppSettings.resolvedBase(): ResolvedSchool {
                 School.Zhku -> "kingosoft"
                 School.Gzist -> "lyuap"
                 School.Gdsty -> "kingosoft"
+                School.Zsc -> "kingosoft"
                 else -> "zhengfang"
             },
             origin = when (item) {
@@ -183,6 +210,7 @@ private fun AppSettings.resolvedBase(): ResolvedSchool {
                 School.Zhku -> "https://edu-admin.zhku.edu.cn"
                 School.Gzist -> GZIST_JWXT_ORIGIN
                 School.Gdsty -> GDTSY_JWXT_ORIGIN
+                School.Zsc -> ZSC_ORIGIN
                 School.Custom -> ""
             },
             loginName = item.jwxtName,

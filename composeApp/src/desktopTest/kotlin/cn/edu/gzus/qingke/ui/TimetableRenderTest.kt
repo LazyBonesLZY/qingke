@@ -8,6 +8,9 @@ import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerType
+import androidx.compose.ui.semantics.SemanticsNode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.unit.Density
 import cn.edu.gzus.qingke.QingkeTheme
 import cn.edu.gzus.qingke.data.AppSettings
@@ -449,18 +452,33 @@ class TimetableRenderTest {
             pointer(PointerEventType.Release, point)
         }
 
-        // 400×900、Density(1f) 固定夹具下的控件中心，和网格的动态色块定位分开。
-        fun nextWeek() = click(Offset(372f, 172f))
-        fun previousWeek() = click(Offset(28f, 172f))
+        // 导航控件按真实语义边界点击，避免不同宿主字体改变文字宽度后点到相邻周次。
+        fun nextWeek() = clickControl("下一周")
+        fun previousWeek() = clickControl("上一周")
         fun pickWeek(week: Int) {
             require(week in 1..6)
-            click(Offset(38f + (week - 1) * 53f, 217f))
+            clickControl("${week}周")
         }
-        // 1800px wide 夹具下1..16周完整可见，双位数胶囊稍宽。
-        fun pickLastWeek() = click(Offset(879f, 144f))
-        fun returnToCurrentWeek() = click(Offset(268f, 187f))
-        fun showMonth() = click(Offset(290f, 115f))
-        fun showWeek() = click(Offset(110f, 115f))
+        fun pickLastWeek() = clickControl("16周")
+        fun returnToCurrentWeek() = clickControl("回到本周")
+        fun showMonth() = clickControl("月")
+        fun showWeek() = clickControl("周")
+
+        private fun clickControl(label: String) {
+            fun descendants(node: SemanticsNode): Sequence<SemanticsNode> = sequence {
+                yield(node)
+                node.children.forEach { yieldAll(descendants(it)) }
+            }
+            val node = scene.semanticsOwners.asSequence()
+                .flatMap { descendants(it.unmergedRootSemanticsNode) }
+                .firstOrNull { candidate ->
+                    val config = candidate.config
+                    val matches = config.getOrNull(SemanticsProperties.Text)?.any { it.text == label } == true ||
+                        config.getOrNull(SemanticsProperties.ContentDescription)?.contains(label) == true
+                    matches && candidate.boundsInRoot.width > 0f && candidate.boundsInRoot.height > 0f
+                } ?: error("未找到可见导航控件：$label")
+            click(node.boundsInRoot.center)
+        }
         fun selectDateInCurrentMonth(date: LocalDate) {
             val today = nowDateTime().date
             require(date.year == today.year && date.monthNumber == today.monthNumber)

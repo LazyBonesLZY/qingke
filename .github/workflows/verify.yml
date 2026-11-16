@@ -17,6 +17,9 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
       - name: Logic tests
         run: ./gradlew :composeApp:desktopTest --max-workers=2 -Dorg.gradle.java.home="$JAVA_HOME"
       - name: Debug APK (does not require signing secrets)
@@ -32,3 +35,14 @@ jobs:
           java-version: '21'
       - name: Render tests (JDK21)
         run: ./gradlew :composeApp:desktopTest --max-workers=2 -Dorg.gradle.java.home="$JAVA_HOME"
+      - name: Failed render diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-test-diagnostics
+          path: |
+            composeApp/build/reports/tests/desktopTest/
+            composeApp/build/test-results/desktopTest/
+            composeApp/build/ui-preview/
+            build/ui-preview/
+          retention-days: 7

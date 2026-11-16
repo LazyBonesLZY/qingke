@@ -1,8 +1,31 @@
 import java.util.Properties
+import groovy.json.JsonOutput
 
 plugins {
     alias(libs.plugins.androidApplication)
 }
+
+// Only use values issued for Qingke's actual package/signature; empty builds retain Android notifications.
+val qingkeHyperOsBusiness = providers.gradleProperty("qingkeHyperOsBusiness").orElse("").get().trim()
+val qingkeOppoConfig = linkedMapOf(
+    "IntentName" to providers.gradleProperty("qingkeOppoIntentName").orElse("").get().trim(),
+    "IntentVersion" to providers.gradleProperty("qingkeOppoIntentVersion").orElse("1.0.0").get().trim(),
+    "IntentDescription" to providers.gradleProperty("qingkeOppoIntentDescription").orElse("青课课程实时进度").get().trim(),
+    "ServiceIds" to providers.gradleProperty("qingkeOppoServiceIds").orElse("").get().trim(),
+    "MilestoneUpcoming" to providers.gradleProperty("qingkeOppoMilestoneUpcoming").orElse("-1").get().trim(),
+    "MilestoneOngoing" to providers.gradleProperty("qingkeOppoMilestoneOngoing").orElse("-1").get().trim(),
+    "MilestoneEnded" to providers.gradleProperty("qingkeOppoMilestoneEnded").orElse("-1").get().trim(),
+)
+val qingkeOppoConfigured = qingkeOppoConfig.getValue("IntentName").isNotBlank() &&
+    qingkeOppoConfig.getValue("IntentVersion").isNotBlank() &&
+    qingkeOppoConfig.getValue("ServiceIds").split(',', ';').any { it.isNotBlank() } &&
+    listOf("MilestoneUpcoming", "MilestoneOngoing", "MilestoneEnded").all {
+        qingkeOppoConfig.getValue(it).toIntOrNull()?.let { code -> code >= 0 } == true
+    }
+
+fun androidConfigString(value: String): String = "\"" + value
+    .replace("\\", "\\\\").replace("\"", "\\\"").replace("'", "\\'")
+    .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t") + "\""
 
 val keystoreProps = Properties().apply {
     val file = rootProject.file("keystore.properties")
@@ -12,12 +35,20 @@ val keystoreProps = Properties().apply {
 android {
     namespace = "cn.edu.gzus.qingke"
     compileSdk = 37
+    buildFeatures { resValues = true }
     defaultConfig {
         applicationId = "cn.edu.gzus.qingke"
         minSdk = 26
         targetSdk = 36
-        versionCode = 87
-        versionName = "1.8.1"
+        versionCode = 88
+        versionName = "1.8.2"
+        resValue("string", "qingke_hyperos_business", androidConfigString(qingkeHyperOsBusiness))
+        qingkeOppoConfig.forEach { (key, value) ->
+            // String resources prevent numeric service IDs from being parsed as manifest integers.
+            val resource = "qingke_oppo_" + key.lowercase()
+            resValue("string", resource, androidConfigString(value))
+            manifestPlaceholders["qingkeOppo$key"] = "@string/$resource"
+        }
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
@@ -68,4 +99,28 @@ android {
 
 dependencies {
     implementation(project(":composeApp"))
+}
+
+abstract class GenerateOppoIntentConfig : DefaultTask() {
+    @get:Input abstract val registration: Property<String>
+    @get:OutputDirectory abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction fun generate() {
+        val output = outputDirectory.get().file("intelligent_intent_config.json").asFile
+        output.parentFile.mkdirs()
+        output.writeText(registration.get() + "\n", Charsets.UTF_8)
+    }
+}
+
+val generateOppoIntentConfig = tasks.register<GenerateOppoIntentConfig>("generateOppoIntentConfig") {
+    outputDirectory.set(layout.buildDirectory.dir("generated/oppo-intent-assets"))
+    val entries = if (qingkeOppoConfigured) listOf(mapOf(
+        "intentName" to qingkeOppoConfig.getValue("IntentName"),
+        "intentVersion" to qingkeOppoConfig.getValue("IntentVersion"),
+        "description" to listOf(qingkeOppoConfig.getValue("IntentDescription")),
+    )) else emptyList()
+    registration.set(JsonOutput.toJson(mapOf("intelligentIntents" to entries)))
+}
+androidComponents.onVariants { variant ->
+    variant.sources.assets?.addGeneratedSourceDirectory(generateOppoIntentConfig, GenerateOppoIntentConfig::outputDirectory)
 }

@@ -5,8 +5,8 @@ import kotlin.test.assertEquals
 
 class LiveBackendPolicyTest {
     private fun s(rom: LiveRom, sdk: Int, promote: Boolean = false,
-                  protocol: Int = 0, focus: Boolean = false, approved: Boolean = false) =
-        LiveSignals(rom, sdk, promote, protocol, focus, approved)
+                  protocol: Int = 0, focus: Boolean = false, approved: Boolean = false, island: Boolean = true) =
+        LiveSignals(rom, sdk, promote, protocol, focus, approved, island)
 
     @Test fun android36PromotesOnlyWhenGranted() {
         assertEquals(LivePresentation.AOSP_PROMOTED, chooseLivePresentation(s(LiveRom.AOSP, 36, true)))
@@ -22,9 +22,11 @@ class LiveBackendPolicyTest {
     @Test fun xiaomiNeverClaimsIslandFromRomNameAlone() {
         assertEquals(LivePresentation.STANDARD, chooseLivePresentation(s(LiveRom.HYPEROS, 35, protocol = 3)))
         assertEquals(LivePresentation.STANDARD, chooseLivePresentation(s(LiveRom.HYPEROS, 35, protocol = 3, focus = true)))
-        assertEquals(LivePresentation.STANDARD, chooseLivePresentation(s(LiveRom.HYPEROS, 35, protocol = 2, focus = true, approved = true)))
+        assertEquals(LivePresentation.HYPEROS_FOCUS, chooseLivePresentation(s(LiveRom.HYPEROS, 35, protocol = 2, focus = true, approved = true)))
         assertEquals(LivePresentation.STANDARD, chooseLivePresentation(s(LiveRom.HYPEROS, 35, protocol = 3, approved = true)))
         assertEquals(LivePresentation.HYPEROS_ISLAND, chooseLivePresentation(s(LiveRom.HYPEROS, 35, protocol = 3, focus = true, approved = true)))
+        assertEquals(LivePresentation.HYPEROS_FOCUS, chooseLivePresentation(s(LiveRom.HYPEROS, 35,
+            protocol = 3, focus = true, approved = true, island = false)))
     }
 
     @Test fun hyperOsCanStillUseAospPromotedWhenAvailable() {

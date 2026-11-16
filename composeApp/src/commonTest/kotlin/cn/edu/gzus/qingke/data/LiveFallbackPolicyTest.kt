@@ -9,6 +9,8 @@ class LiveFallbackPolicyTest {
             LiveDeliveryAttempt.STANDARD), liveFallbackChain(LivePresentation.HYPEROS_ISLAND,36))
         assertEquals(listOf(LiveDeliveryAttempt.HYPEROS_PRIVATE, LiveDeliveryAttempt.STANDARD),
             liveFallbackChain(LivePresentation.HYPEROS_ISLAND,35))
+        assertEquals(liveFallbackChain(LivePresentation.HYPEROS_ISLAND, 36),
+            liveFallbackChain(LivePresentation.HYPEROS_FOCUS, 36))
     }
     @Test fun nativeAndColorosHaveReliableStandardFallback() {
         for (rom in listOf(LivePresentation.COLOROS_FLUID, LivePresentation.AOSP_PROMOTED)) {

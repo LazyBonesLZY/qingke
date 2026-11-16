@@ -1,6 +1,5 @@
 package cn.edu.gzus.qingke.data
 
-import android.app.Notification
 import android.app.NotificationManager
 import android.content.Context
 import android.net.Uri
@@ -8,16 +7,13 @@ import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
-import android.graphics.drawable.Icon
-import cn.edu.gzus.qingke.shared.R
-import org.json.JSONObject
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Only public Android APIs and Xiaomi's documented notification protocol are used.
- * OPPO ColorOS 16+ uses the Android 16 Live Updates API; no guessed Oplus extras.
+ * Routes Android native notifications and Xiaomi's documented focus/island protocol.
+ * The optional OPPO local adapter runs after an Android fallback has been accepted.
  * Xiaomi requires official business/scenario and signature approval in addition to
  * the OS/user permission checks. With no configured approved business ID, we NEVER
  * attach vendor extras and always retain the standard Android notification.
@@ -88,11 +84,12 @@ internal object LiveAndroidBackend {
             runCatching { Settings.System.getInt(ctx.contentResolver, FOCUS_KEY, 0) }.getOrDefault(0)
         } else 0
         // Do not call Xiaomi's slow provider unless the approved business is present.
-        val focus = protocol >= 3 && business != null && hasFocusPermission(ctx)
+        val focus = protocol > 0 && business != null && hasFocusPermission(ctx)
         val promoted = Build.VERSION.SDK_INT >= 36 &&
             runCatching { nm.canPostPromotedNotifications() }.getOrDefault(false)
         val mode = chooseLivePresentation(
-            LiveSignals(rom, Build.VERSION.SDK_INT, promoted, protocol, focus, business != null),
+            LiveSignals(rom, Build.VERSION.SDK_INT, promoted, protocol, focus, business != null,
+                protocol >= 3 && systemPropertyBoolean("persist.sys.feature.island", false)),
         )
         return mode to business
     }
@@ -101,6 +98,7 @@ internal object LiveAndroidBackend {
         val (mode, _) = detect(ctx, nm)
         return when (mode) {
             LivePresentation.HYPEROS_ISLAND -> "超级岛协议与用户授权已就绪；能否上岛仍由小米系统审核决定"
+            LivePresentation.HYPEROS_FOCUS -> "焦点通知协议与授权已就绪；当前使用焦点通知模板"
             LivePresentation.COLOROS_FLUID -> "当前系统可请求 ColorOS 流体云（Android Live Updates）"
             LivePresentation.AOSP_PROMOTED -> "当前系统允许请求 Android 原生实时更新"
             LivePresentation.STANDARD -> {
@@ -116,44 +114,7 @@ internal object LiveAndroidBackend {
         }
     }
 
-    /**
-     * Xiaomi's published OS3 demo template; NOT enabled without an approved scene.
-     * The approval/business name MUST match the actual verified developer grant.
-     * Standard AOSP notification remains complete when the ROM rejects the extras.
-     */
-    fun attachIsland(
-        ctx: Context,
-        notification: Notification,
-        approvedBusiness: String,
-        title: String,
-        status: String,
-        countdown: String,
-    ) {
-        val text = JSONObject().put("frontTitle", status).put("title", countdown)
-            .put("content", title).put("useHighLight", false)
-        val pic = JSONObject().put("type", 1).put("pic", "miui.focus.pic_imageText")
-        val big = JSONObject().put("imageTextInfoLeft", JSONObject()
-            .put("type", 1).put("picInfo", pic)
-            .put("miui.focus.paramtextInfo", text))
-            .put("picInfo", pic)
-        val small = JSONObject().put("picInfo", pic)
-        val island = JSONObject().put("islandProperty", 1)
-            .put("bigIslandArea", big).put("smallIslandArea", small)
-        val v2 = JSONObject().put("protocol", 1)
-            .put("business", approvedBusiness)
-            .put("updatable", true)
-            .put("enableFloat", false)
-            .put("filterWhenNoPermission", false)
-            .put("ticker", status)
-            .put("aodTitle", status)
-            .put("param_island", island)
-            .put("baseInfo", JSONObject().put("title", title).put("content", countdown).put("type", 2))
-        val pics = Bundle().apply {
-            putParcelable("miui.focus.pic_imageText", Icon.createWithResource(ctx, R.drawable.ic_live_now))
-        }
-        notification.extras.putBundle("miui.focus.pics", pics)
-        notification.extras.putString("miui.focus.param", JSONObject().put("param_v2", v2).toString())
-    }
+
 }
 
 /** Encapsulate API 33 package-info overload to avoid a deprecation in newer SDKs. */

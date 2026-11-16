@@ -7,6 +7,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
+    <uses-permission android:name="intelligent.permission.SHARE_INTENT" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- All vendors share one foreground Live refresh service and notification. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -21,6 +22,8 @@
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 
     <queries>
+        <provider android:authorities="miui.statusbar.notification.public" />
+        <provider android:authorities="IntelligentIntent" />
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="https" />
@@ -39,6 +42,14 @@
         android:theme="@style/Theme.Qingke"
         android:networkSecurityConfig="@xml/network_security_config"
         android:usesCleartextTraffic="false">
+        <meta-data android:name="IntelligentIntentConfig" android:value="assets/intelligent_intent_config.json" />
+        <meta-data android:name="cn.edu.gzus.qingke.HYPER_ISLAND_APPROVED_BUSINESS" android:value="@string/qingke_hyperos_business" />
+        <meta-data android:name="cn.edu.gzus.qingke.OPPO_FLUID_CLOUD_INTENT_NAME" android:value="${qingkeOppoIntentName}" />
+        <meta-data android:name="cn.edu.gzus.qingke.OPPO_FLUID_CLOUD_INTENT_VERSION" android:value="${qingkeOppoIntentVersion}" />
+        <meta-data android:name="cn.edu.gzus.qingke.OPPO_FLUID_CLOUD_SERVICE_IDS" android:value="${qingkeOppoServiceIds}" />
+        <meta-data android:name="cn.edu.gzus.qingke.OPPO_MILESTONE_UPCOMING" android:value="${qingkeOppoMilestoneUpcoming}" />
+        <meta-data android:name="cn.edu.gzus.qingke.OPPO_MILESTONE_ONGOING" android:value="${qingkeOppoMilestoneOngoing}" />
+        <meta-data android:name="cn.edu.gzus.qingke.OPPO_MILESTONE_ENDED" android:value="${qingkeOppoMilestoneEnded}" />
         <activity
             android:name="cn.edu.gzus.qingke.MainActivity"
             android:exported="true"

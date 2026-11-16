@@ -342,7 +342,7 @@ actual fun liveUpdateStatus(leadMinutes: Int): String {
     ) {
         return "上课提醒通知已关闭，可到系统设置开启"
     }
-    return (nm?.let { LiveAndroidBackend.status(ctx, it) } ?: "通知服务暂不可用") +
+    return (oppoLiveStatus(ctx) ?: nm?.let { LiveAndroidBackend.status(ctx, it) } ?: "通知服务暂不可用") +
         " · 提前 $leadMinutes 分钟"
 }
 
@@ -481,10 +481,11 @@ internal fun buildLiveNotification(
             builder.build()
         }
     } else standard()
-    if (mode == LivePresentation.HYPEROS_ISLAND && approvedBusiness != null &&
+    if (mode in setOf(LivePresentation.HYPEROS_ISLAND, LivePresentation.HYPEROS_FOCUS) && approvedBusiness != null &&
         attempt != LiveDeliveryAttempt.AOSP_NATIVE && attempt != LiveDeliveryAttempt.STANDARD) {
         // Let the shared engine rebuild the native candidate if the vendor payload fails.
-        LiveAndroidBackend.attachIsland(ctx, notification, approvedBusiness, title, status, chip)
+        attachHyperOsFocusExtras(ctx, notification, title, detail, chip, progress, startMillis,
+            endMillis, nowMillis, approvedBusiness, mode == LivePresentation.HYPEROS_ISLAND, countdownEnabled)
     }
     return notification
 }
@@ -507,6 +508,8 @@ actual fun notifyLiveClass(
     // attempt with the SAME notification id, never a second concurrent alert.
     val presentation = runCatching { LiveAndroidBackend.detect(ctx, manager).first }
         .getOrDefault(LivePresentation.STANDARD)
+    val deadline = liveTiming(nowMillis, startMillis, endMillis)?.deadlineMillis ?: endMillis
+    val oppoTicket = beginOppoLive(ctx, title, startMillis, deadline)
     var deliveryFailed = false
     val posted = deliverLiveWithFallback(
         attempts = liveFallbackChain(presentation, Build.VERSION.SDK_INT),
@@ -548,6 +551,8 @@ actual fun notifyLiveClass(
         // Permission/channel disabled or dismissed: never retry against the user's choice.
         prefs.edit().remove("post_retry_at").apply()
     }
+    if (posted) publishOppoLive(ctx, oppoTicket, title, detail, startMillis, endMillis, countdownEnabled)
+    else endOppoFluidCloud(ctx)
     return posted
 }
 
@@ -560,6 +565,7 @@ internal actual fun livePostFailureWake(title: String, startMillis: Long, endMil
 actual fun cancelLiveClass() {
     // 撤通知的同时把常驻服务也停掉：退出登录 / 会话过期 / 换登录通道这些路径
     // 只调 cancelLiveClass，不停服务的话下一分钟服务会把通知推回来。
+    endOppoFluidCloud(QingkeApp.app)
     setLiveForeground(false)
     QingkeApp.app.getSystemService(NotificationManager::class.java)?.cancel(LIVE_ID)
 }

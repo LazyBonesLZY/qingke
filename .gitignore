@@ -21,4 +21,5 @@ gradle/native/*.so
 /work-tmp/
 /.agent-teams/
 /qingke-seven-stage-live-fallback-integrated-20261116.zip
+/qingke-private-live-adapters-20261116.zip
 *:Zone.Identifier

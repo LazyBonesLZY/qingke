@@ -5,7 +5,7 @@ internal enum class LiveDeliveryAttempt { HYPEROS_PRIVATE, AOSP_NATIVE, STANDARD
 
 /** No private path is attempted without the prior ROM/permission/approval checks. */
 internal fun liveFallbackChain(mode: LivePresentation, sdk: Int): List<LiveDeliveryAttempt> = when (mode) {
-    LivePresentation.HYPEROS_ISLAND -> buildList {
+    LivePresentation.HYPEROS_FOCUS, LivePresentation.HYPEROS_ISLAND -> buildList {
         add(LiveDeliveryAttempt.HYPEROS_PRIVATE)
         if (sdk >= 36) add(LiveDeliveryAttempt.AOSP_NATIVE)
         add(LiveDeliveryAttempt.STANDARD)

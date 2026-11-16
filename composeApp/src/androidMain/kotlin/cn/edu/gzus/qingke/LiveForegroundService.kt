@@ -16,6 +16,7 @@ import androidx.core.content.ContextCompat
 import cn.edu.gzus.qingke.data.LIVE_ID
 import cn.edu.gzus.qingke.data.LIVE_STEP_MILLIS
 import cn.edu.gzus.qingke.data.notifyLiveClass
+import cn.edu.gzus.qingke.data.endOppoFluidCloud
 import cn.edu.gzus.qingke.data.livePostFailureWake
 import cn.edu.gzus.qingke.data.liveTiming
 import cn.edu.gzus.qingke.data.liveRefreshDelayMillis
@@ -164,7 +165,10 @@ class LiveForegroundService : Service() {
         }
         try {
             // 上课通知不再随前台服务一起撤：没课可挂了就显式撤掉（被划掉的那条本来就没了）。
-            if (params == null) getSystemService(NotificationManager::class.java)?.cancel(LIVE_ID)
+            if (params == null) {
+                endOppoFluidCloud(this)
+                getSystemService(NotificationManager::class.java)?.cancel(LIVE_ID)
+            }
             scheduleLiveWake(nextWake)
         } finally {
             releaseWakeLock()

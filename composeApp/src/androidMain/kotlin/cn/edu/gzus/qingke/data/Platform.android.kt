@@ -534,12 +534,17 @@ actual fun notifyLiveClass(
             }.getOrDefault(false)
         },
         post = { attempt, candidate ->
-            runCatching { manager.notify(LIVE_ID, candidate) }
+            runCatching {
+                postLiveWhileEnabled(::liveMasterEnabled,
+                    post = { manager.notify(LIVE_ID, candidate) },
+                    cancel = { manager.cancel(LIVE_ID) },
+                )
+            }
                 .onFailure {
                     deliveryFailed = true
                     Log.w("QingkeLive", "Live post $attempt rejected; trying fallback", it)
                 }
-                .isSuccess
+                .getOrDefault(false)
         },
     )
     val prefs = ctx.getSharedPreferences(LIVE_PREFS, Context.MODE_PRIVATE)

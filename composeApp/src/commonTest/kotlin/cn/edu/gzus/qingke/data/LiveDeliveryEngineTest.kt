@@ -6,6 +6,22 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class LiveDeliveryEngineTest {
+    @Test fun disablingWhileSystemPostIsInFlightRetractsItAndReportsFailure() {
+        var enabled = false
+        var posts = 0
+        var cancellations = 0
+        assertFalse(postLiveWhileEnabled({ enabled }, { posts++ }, { cancellations++ }))
+        assertEquals(0, posts)
+        enabled = true
+        assertFalse(postLiveWhileEnabled({ enabled }, { posts++; enabled = false }, { cancellations++ }))
+        assertEquals(1, posts)
+        assertEquals(1, cancellations)
+        enabled = true
+        assertTrue(postLiveWhileEnabled({ enabled }, { posts++ }, { cancellations++ }))
+        assertEquals(2, posts)
+        assertEquals(1, cancellations)
+    }
+
     @Test fun nullBuildAndEligibilityExceptionStillReachStandard() {
         val tried = mutableListOf<LiveDeliveryAttempt>()
         assertTrue(deliverLiveWithFallback(liveFallbackChain(LivePresentation.HYPEROS_ISLAND, 36),

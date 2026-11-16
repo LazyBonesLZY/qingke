@@ -45,6 +45,40 @@ import kotlinx.datetime.plus
 /** 真实离屏分页交互回归；无需 compose-ui-test 依赖，JDK 21+ 运行。 */
 class TimetableRenderTest {
     @Test
+    fun hiddenWeekendsKeepTheSevenDayColumnWidthAndCenterTheGrid() = onUiThread {
+        for (wide in listOf(false, true)) {
+            var visible = emptyList<IntRange>()
+            var hidden = emptyList<IntRange>()
+            fun columns(ui: TimetableScene): List<IntRange> {
+                val image = ui.snapshot()
+                val top = ui.coursePoint(image).y.toInt() - 6
+                val colored = (0 until ui.weekPaneWidth).map { x ->
+                    (top until (top + 38).coerceAtMost(image.height)).count { y ->
+                        (image.getRGB(x, y) and 0xFFFFFF) == 0x78B56B
+                    } >= 4
+                }
+                val runs = mutableListOf<IntRange>()
+                var start: Int? = null
+                for (x in 0..colored.size) {
+                    if (x < colored.size && colored[x]) {
+                        if (start == null) start = x
+                    } else start?.let { runs += it until x; start = null }
+                }
+                return runs
+            }
+            withTimetable(wide = wide, showWeekend = true) { visible = columns(it) }
+            withTimetable(wide = wide, showWeekend = false) { hidden = columns(it) }
+            assertEquals(7, visible.size)
+            assertEquals(5, hidden.size)
+            assertTrue(abs(hidden.first().count() - visible.first().count()) <= 1,
+                "隐藏周末不应拉伸单日宽度: seven=$visible, five=$hidden")
+            assertTrue(abs((hidden.first().first + hidden.last().last) -
+                (visible.first().first + visible.last().last)) <= 2,
+                "隐藏周末后课程列仍应居中: seven=$visible, five=$hidden")
+        }
+    }
+
+    @Test
     fun gridFollowsTheFingerAndHoldsItsOffsetBeforeRelease() = onUiThread {
         withTimetable { ui ->
             val before = ui.snapshot()
@@ -518,11 +552,13 @@ class TimetableRenderTest {
         dense: Boolean = false,
         varyingPractices: Boolean = false,
         compositionReads: CourseCompositionReads? = null,
+        showWeekend: Boolean = false,
         pullRefresh: Boolean = false,
         onRefresh: () -> Unit = {},
         block: (TimetableScene) -> Unit,
     ) {
-        val snapshot = sample(initialWeek, dense, varyingPractices, compositionReads)
+        val base = sample(initialWeek, dense, varyingPractices, compositionReads)
+        val snapshot = base.copy(settings = base.settings.copy(showWeekend = showWeekend))
         val nav = QingkeNavigator(TabDest.Timetable)
         val scene = ImageComposeScene(width = width, height = height, density = Density(1f)) {
             QingkeTheme(snapshot.settings) {

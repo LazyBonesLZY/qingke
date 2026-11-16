@@ -395,11 +395,15 @@ fun App() {
             snapshot.profile.periodTimes, snapshot.settings.scheduleShifts,
             snapshot.settings.autoPullScheduleAdjust, snapshot.scheduleAdjust, calendarDay, liveTick, liveResumeTick,
         ) {
-            if (snapshot.settings.remindBeforeClass) requestLiveUpdatePermission()
+            if (snapshot.settings.remindBeforeClass && snapshot.settings.liveCountdownEnabled) {
+                requestLiveUpdatePermission()
+            }
             while (isActive) {
                 repo.refreshLive()
                 val testing = repo.hasLiveTest()
-                if (!snapshot.settings.remindBeforeClass && !testing) {
+                if (!snapshot.settings.liveCountdownEnabled ||
+                    (!snapshot.settings.remindBeforeClass && !testing)
+                ) {
                     cancelLiveClass()
                     break
                 }
@@ -725,8 +729,9 @@ fun App() {
                                 repo.updateSettings {
                                     it.copy(liveCountdownEnabled = on, liveCountdownMigrated = true)
                                 }
-                                // 立刻重推一次，别让用户等下一轮分钟边界才看到形态变化。
-                                repo.refreshLive()
+                                // 关闭时清掉测试窗口、撤销所有通知并停止后台服务；
+                                // 开启时立即按当前课表恢复 Live 通知。
+                                if (on) repo.refreshLive() else repo.stopLiveTest()
                             },
                         )
                         }

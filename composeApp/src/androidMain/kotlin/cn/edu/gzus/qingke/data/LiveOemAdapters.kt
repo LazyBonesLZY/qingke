@@ -158,6 +158,7 @@ internal fun beginOppoLive(context: Context, title: String, startMillis: Long, d
 }
 
 private fun canShowLive(context: Context, key: String): Boolean {
+    if (!liveMasterEnabled()) return false
     if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context,
             Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return false
     if (context.getSharedPreferences(cn.edu.gzus.qingke.LIVE_PREFS, Context.MODE_PRIVATE)

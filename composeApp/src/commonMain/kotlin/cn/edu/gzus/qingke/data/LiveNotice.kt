@@ -22,6 +22,21 @@ internal const val LIVE_STEP_MILLIS = 60_000L
 
 /** 测试用的假课次窗口落盘用的键。 */
 private const val LIVE_TEST_FILE = "qingke-live-test"
+internal const val LIVE_MASTER_FILE = "qingke-live-enabled"
+
+/** Persist the critical switch immediately; the full snapshot is written asynchronously. */
+internal fun writeLiveMasterEnabled(enabled: Boolean) = writeStore(LIVE_MASTER_FILE, enabled.toString())
+
+internal fun readLiveMasterPreference(): Boolean? = readStore(LIVE_MASTER_FILE)?.trim()?.toBooleanStrictOrNull()
+
+internal fun AppSnapshot.withLiveMasterPreference(): AppSnapshot = readLiveMasterPreference()?.let {
+    if (settings.liveCountdownEnabled == it) this
+    else copy(settings = settings.copy(liveCountdownEnabled = it, liveCountdownMigrated = true))
+} ?: this
+
+/** Either a current disabled snapshot or a durable disabled switch stops stale callers. */
+internal fun liveMasterEnabled(): Boolean =
+    readSnapshotStore()?.settings?.liveCountdownEnabled != false && readLiveMasterPreference() != false
 
 /**
  * 读测试窗口。落盘是为了 App 被划掉之后，后台的 tick 还能接着刷新那条测试通知
@@ -57,14 +72,14 @@ private var parsedStore: Pair<String, AppSnapshot>? = null
 internal fun readSnapshotStore(): AppSnapshot? {
     committedSnapshot?.let { return it }
     val text = readStore(STORE) ?: return null
-    parsedStore?.let { (raw, snapshot) -> if (raw == text) return snapshot }
+    parsedStore?.let { (raw, snapshot) -> if (raw == text) return snapshot.withLiveMasterPreference() }
     val parsed = runCatching { snapshotJson.decodeFromString(AppSnapshot.serializer(), text) }.getOrNull()
         ?: return null
     // 后台只规范化内存态，不把旧快照整份写回，避免覆盖前台并发保存的新课表或设置。
     // 应用前台创建 AppRepository 时会负责一次性落盘迁移结果。
     val migrated = parsed.withLiveCountdownMigration()
     parsedStore = text to migrated
-    return migrated
+    return migrated.withLiveMasterPreference()
 }
 
 /** 现在该挂哪条上课通知；不该挂就返回 null。应用里的循环和后台闹钟共用这一份判断。 */
@@ -73,7 +88,7 @@ fun AppSnapshot.liveNotice(now: LocalDateTime, nowMs: Long): LiveNotice? {
     // 用错了会让提醒在错的时间弹。
     val school = resolved()
     if (!school.hasPeriodClock) return null
-    if (!settings.remindBeforeClass || slots.isEmpty()) return null
+    if (!settings.remindBeforeClass || !settings.liveCountdownEnabled || slots.isEmpty()) return null
     val next = nextLiveLesson(slots, now.date, settings, now.date, now.time, scheduleAdjust, school.periodBlocks)
         ?: return null
     val slot = next.slot
@@ -109,7 +124,7 @@ fun AppSnapshot.liveNotice(now: LocalDateTime, nowMs: Long): LiveNotice? {
 fun AppSnapshot.nextLiveWake(now: LocalDateTime, nowMs: Long): Long? {
     val school = resolved()
     if (!school.hasPeriodClock) return null
-    if (!settings.remindBeforeClass || slots.isEmpty()) return null
+    if (!settings.remindBeforeClass || !settings.liveCountdownEnabled || slots.isEmpty()) return null
     val notice = liveNotice(now, nowMs)
     if (notice != null) {
         val timing = liveTiming(nowMs, notice.startMillis, notice.endMillis) ?: return fallbackWake(now, nowMs, school)

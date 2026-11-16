@@ -4,7 +4,6 @@ import kotlinx.datetime.Instant
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.LocalTime
-import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.Serializable
@@ -150,7 +149,7 @@ fun defaultZfTermCode(today: LocalDate = nowDateTime().date): String =
 @Serializable
 data class AppSettings(
     val remindBeforeClass: Boolean = true,
-    /** 胶囊分钟倒计时：开=距上课/下课 XX 分，关=静态上课状态。 */
+    /** 上课实时通知总开关：关闭后不显示胶囊/课程通知，并停止后台刷新。 */
     val liveCountdownEnabled: Boolean = true,
     /** 一次性迁移标记，见 AppRepository.load()。落盘后就不再强制改用户的手动选择。 */
     val liveCountdownMigrated: Boolean = false,
@@ -723,7 +722,7 @@ fun seatsLabel(taken: String, capacity: String): String {
 
 fun formatCoursePickWhen(millis: Long): String {
     if (millis <= 0L) return ""
-    val dt = Instant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.currentSystemDefault())
+    val dt = Instant.fromEpochMilliseconds(millis).toLocalDateTime(APP_TIME_ZONE)
     val h = dt.hour.toString().padStart(2, '0')
     val m = dt.minute.toString().padStart(2, '0')
     val s = dt.second.toString().padStart(2, '0')
@@ -742,7 +741,7 @@ fun parseCoursePickWhen(date: String, time: String): Long {
     if (hour !in 0..23 || minute !in 0..59 || second !in 0..59) return 0L
     val clock = LocalTime(hour, minute, second)
     return runCatching {
-        LocalDateTime(day, clock).toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds()
+        LocalDateTime(day, clock).toInstant(APP_TIME_ZONE).toEpochMilliseconds()
     }.getOrDefault(0L)
 }
 

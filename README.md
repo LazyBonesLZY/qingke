@@ -17,7 +17,7 @@
 
 ## 更新
 
-当前开发版本 **1.8.2**（versionCode 88）。Android 8.0（API 26）及以上。广软调休默认从 qingke.lazzyy.cn 自动拉取；打开应用会检查更新，有新版本会提示。
+当前开发版本 **1.8.3**（versionCode 89）。Android 8.0（API 26）及以上。广软调休默认从 qingke.lazzyy.cn 自动拉取；打开应用会检查更新，有新版本会提示。
 
 - GitHub Release：应用里检查 `LazyBonesLZY/qingke` 最新版，再跳到 Release / APK
 - 网盘：浏览器打开 [https://storage.lazzyy.cn/@s/KB](https://storage.lazzyy.cn/@s/KB)
@@ -25,6 +25,8 @@
 1.8.1 整合课表翻页与提醒边界修复、默认折叠周末、选课账号隔离与分页、同步失败提示、长字段排版和可关闭的今日贴士；移除小爱导入。Live 通知按系统能力逐级回退到普通通知，HyperOS 私有岛仍需正式业务和签名审批。集成与验证记录见 [docs/integration-20261116.md](docs/integration-20261116.md)。
 
 1.8.2 接入可配置的小米焦点通知/超级岛与 ColorOS 本地流体云协议，增加异步取消和过期保护。未配置或未获授权时保留系统上课通知。配置及验证边界见 [docs/LIVE_OEM_PRIVATE_ADAPTERS.md](docs/LIVE_OEM_PRIVATE_ADAPTERS.md)。
+
+1.8.3 统一按北京时间计算课表、提醒及定时选课；恢复 Live 胶囊分钟文字，把「上课胶囊与通知」改为总开关，关闭后停止课程通知与后台唤醒。隐藏周末时保持原来七列布局的单日宽度并居中。记录见 [docs/live-beijing-integration-20261116.md](docs/live-beijing-integration-20261116.md)。
 
 ## 构建
 

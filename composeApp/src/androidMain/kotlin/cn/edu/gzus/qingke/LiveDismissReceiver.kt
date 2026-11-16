@@ -8,6 +8,7 @@ import cn.edu.gzus.qingke.data.livePostFailureWake
 import cn.edu.gzus.qingke.data.liveTiming
 import cn.edu.gzus.qingke.data.isLiveStageTimeout
 import cn.edu.gzus.qingke.data.liveNotice
+import cn.edu.gzus.qingke.data.liveMasterEnabled
 import cn.edu.gzus.qingke.data.nextLiveWake
 import cn.edu.gzus.qingke.data.notifyLiveClass
 import cn.edu.gzus.qingke.data.dateTimeAt
@@ -65,6 +66,15 @@ internal data class LiveParams(
  * 保证两条路算出的内容完全一致。
  */
 internal fun currentLiveParams(nowMs: Long): LiveParams? {
+    val snapshot = readSnapshotStore()
+    if (snapshot?.settings?.liveCountdownEnabled == false) {
+        writeLiveTestWindow(0L, 0L)
+        return null
+    }
+    if (!liveMasterEnabled()) {
+        writeLiveTestWindow(0L, 0L)
+        return null
+    }
     val test = readLiveTestWindow()
     if (test != null && test.second > nowMs) {
         val (start, end) = test
@@ -77,14 +87,14 @@ internal fun currentLiveParams(nowMs: Long): LiveParams? {
             startMillis = start,
             endMillis = end,
             // 读不到存档时按默认值 true 处理，和 AppSettings 的默认值保持一致。
-            countdownEnabled = readSnapshotStore()?.settings?.liveCountdownEnabled != false,
+            countdownEnabled = snapshot?.settings?.liveCountdownEnabled != false,
         )
     }
     if (test != null) {
         // 后台跑完的测试：清掉落盘窗口，别留永久陈旧文件。
         writeLiveTestWindow(0L, 0L)
     }
-    val snap = readSnapshotStore() ?: return null
+    val snap = snapshot ?: return null
     val notice = snap.liveNotice(dateTimeAt(nowMs), nowMs) ?: return null
     return LiveParams(
         title = notice.title,

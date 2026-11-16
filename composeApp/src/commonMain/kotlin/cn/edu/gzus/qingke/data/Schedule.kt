@@ -12,6 +12,9 @@ import kotlinx.datetime.plus
 import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
 
+/** All schedule dates and clock times use Beijing time, regardless of device timezone. */
+val APP_TIME_ZONE: TimeZone = TimeZone.of("Asia/Shanghai")
+
 /**
  * 周次串（"1-16周"、"3,5,7周(单)"）解析一次就缓存。
  * 课表网格一次重组会问上千次，每次都跑一遍替换加正则太亏。
@@ -112,11 +115,11 @@ fun periodToBlock(period: String): String {
 }
 
 fun nowDateTime(): LocalDateTime =
-    Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
+    Clock.System.now().toLocalDateTime(APP_TIME_ZONE)
 
-/** 毫秒时刻对应的本地时间。上课提醒判课和算倒数要用同一个时刻，不能各取一次表。 */
+/** 毫秒时刻对应的北京时间。上课提醒判课和算倒数要用同一个时刻，不能各取一次表。 */
 fun dateTimeAt(millis: Long): LocalDateTime =
-    Instant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.currentSystemDefault())
+    Instant.fromEpochMilliseconds(millis).toLocalDateTime(APP_TIME_ZONE)
 
 fun greeting(hour: Int): String = when (hour) {
     in 0..4 -> "夜深了"
@@ -499,7 +502,7 @@ fun combineMillis(date: LocalDate, hm: String): Long {
     val hour = clock.substringBefore(":").toInt()
     val minute = clock.substringAfter(":").toInt()
     return LocalDateTime(date, LocalTime(hour, minute, 0))
-        .toInstant(TimeZone.currentSystemDefault())
+        .toInstant(APP_TIME_ZONE)
         .toEpochMilliseconds()
 }
 

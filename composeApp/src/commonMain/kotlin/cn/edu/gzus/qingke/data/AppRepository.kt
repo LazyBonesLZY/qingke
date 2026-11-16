@@ -87,7 +87,9 @@ class AppRepository(
         // 不接的话 hasLiveTest() 恒 false（「停止测试」按钮消失、后台 receiver
         // 却还在每分钟重推测试通知），前台真实课次还会和它交替翻转同一条通知。
         val restored = readLiveTestWindow()
-        if (restored != null && restored.second > nowMillis()) {
+        if (!_state.value.settings.liveCountdownEnabled) {
+            writeLiveTestWindow(0L, 0L)
+        } else if (restored != null && restored.second > nowMillis()) {
             testStartMillis = restored.first
             testEndMillis = restored.second
         } else if (restored != null) {
@@ -98,14 +100,15 @@ class AppRepository(
     fun hasLiveTest(): Boolean = testEndMillis > nowMillis()
 
     private fun load(): AppSnapshot {
-        val raw = readStore(STORE) ?: return AppSnapshot()
-        val parsed = requestResult { json.decodeFromString<AppSnapshot>(raw) }.getOrNull() ?: return AppSnapshot()
+        val raw = readStore(STORE) ?: return AppSnapshot().withLiveMasterPreference()
+        val parsed = requestResult { json.decodeFromString<AppSnapshot>(raw) }.getOrNull()
+            ?: return AppSnapshot().withLiveMasterPreference()
         if (parsed.seeded) {
-            val empty = AppSnapshot()
+            val empty = AppSnapshot().withLiveMasterPreference()
             writeStore(STORE, json.encodeToString(AppSnapshot.serializer(), empty))
             return empty
         }
-        val migrated = parsed.withLiveCountdownMigration().withInterruptedCoursePicks().let { snap ->
+        val migrated = parsed.withLiveCountdownMigration().withInterruptedCoursePicks().withLiveMasterPreference().let { snap ->
             if (snap.session.cookies.isEmpty()) snap else snap.copy(session = snap.session.copy(cookies = emptyMap()))
         }
         // 旧版队列没有账号归属信息，无法确认归属时必须禁止自动提交。
@@ -128,6 +131,7 @@ class AppRepository(
 
     init {
         committedSnapshot = _state.value
+        writeLiveMasterEnabled(_state.value.settings.liveCountdownEnabled)
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
             for (snapshot in pendingWrites) {
                 runCatching { writeStore(STORE, json.encodeToString(AppSnapshot.serializer(), snapshot)) }
@@ -144,7 +148,9 @@ class AppRepository(
 
     private fun persist(snapshot: AppSnapshot) {
         // 先放进内存：同进程里的前台服务、闹钟和小组件直接读这一份，不用等文件写完。
+        val masterChanged = committedSnapshot?.settings?.liveCountdownEnabled != snapshot.settings.liveCountdownEnabled
         committedSnapshot = snapshot
+        if (masterChanged) writeLiveMasterEnabled(snapshot.settings.liveCountdownEnabled)
         pendingWrites.trySend(snapshot)
     }
 
@@ -1075,6 +1081,7 @@ class AppRepository(
     }
 
     fun startLiveTest(): String {
+        if (!_state.value.settings.liveCountdownEnabled || !liveMasterEnabled()) return "请先开启「上课胶囊与通知」"
         resetLiveDismiss()
         val now = nowMillis()
         testStartMillis = now + 60_000L
@@ -1106,6 +1113,14 @@ class AppRepository(
     fun refreshLive(): Boolean {
         val nowMs = nowMillis()
         liveRefreshAtMillis = null
+        if (!_state.value.settings.liveCountdownEnabled) {
+            testStartMillis = 0L
+            testEndMillis = 0L
+            writeLiveTestWindow(0L, 0L)
+            cancelLiveClass()
+            scheduleLiveWake(null)
+            return false
+        }
         if (testEndMillis > nowMs) {
             val timing = liveTiming(nowMs, testStartMillis, testEndMillis) ?: return false
             val progress = when {

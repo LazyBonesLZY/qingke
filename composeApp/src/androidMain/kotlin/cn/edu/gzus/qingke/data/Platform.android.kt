@@ -54,7 +54,7 @@ private val storeLock = Any()
 
 actual fun setLiveForeground(active: Boolean) {
     if (!QingkeApp.ready()) return
-    cn.edu.gzus.qingke.LiveForegroundService.sync(QingkeApp.app, active)
+    cn.edu.gzus.qingke.LiveForegroundService.sync(QingkeApp.app, active && liveMasterEnabled())
 }
 
 actual fun createHttpClient(): HttpClient = HttpClient(OkHttp) {
@@ -368,6 +368,7 @@ internal fun buildLiveNotification(
     nowMillis: Long = System.currentTimeMillis(),
     attempt: LiveDeliveryAttempt? = null,
 ): Notification? {
+    if (!liveMasterEnabled()) return null
     val ctx = QingkeApp.app
     if (Build.VERSION.SDK_INT >= 33 &&
         ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -466,11 +467,8 @@ internal fun buildLiveNotification(
                 .setUsesChronometer(countdownEnabled)
                 .setChronometerCountDown(countdownEnabled)
                 .setSubText(status)
-                // Stable short chip label; the system's chronometer advances without
-                // waking our process. Previously the text froze if the OEM froze us.
-                // Android's chip prefers shortCriticalText over the chronometer.
-                // Null lets SystemUI show a moving countdown without app wakeups.
-                .setShortCriticalText(if (countdownEnabled) null else status)
+                // Compact chip uses the minute label; expanded content retains its chronometer.
+                .setShortCriticalText(chip)
                 .setTimeoutAfter(timing.remainingMillis)
             if (mode != LivePresentation.STANDARD &&
                 runCatching { nm.canPostPromotedNotifications() }.getOrDefault(false)
@@ -501,6 +499,12 @@ actual fun notifyLiveClass(
     countdownEnabled: Boolean,
     nowMillis: Long,
 ): Boolean {
+    if (!liveMasterEnabled()) {
+        writeLiveTestWindow(0L, 0L)
+        cancelLiveClass()
+        scheduleLiveWake(null)
+        return false
+    }
     val ctx = QingkeApp.app
     val manager = ctx.getSystemService(NotificationManager::class.java) ?: return false
     // SystemUI owns promotion, so successful notify() only proves the base
@@ -581,7 +585,7 @@ actual fun scheduleLiveWake(atMillis: Long?) {
         Intent(ctx, LiveTickReceiver::class.java).setAction(ACTION_LIVE_TICK),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
-    if (atMillis == null || (Build.VERSION.SDK_INT >= 33 &&
+    if (atMillis == null || !liveMasterEnabled() || (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)) {
         alarms.cancel(pending)
         return

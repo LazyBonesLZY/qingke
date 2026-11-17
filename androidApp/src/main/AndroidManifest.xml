@@ -72,6 +72,9 @@
         <receiver
             android:name="cn.edu.gzus.qingke.LiveTickReceiver"
             android:exported="false" />
+        <receiver
+            android:name="cn.edu.gzus.qingke.TomorrowReminderReceiver"
+            android:exported="false" />
         <!-- Active only during a reminder window; minute and stage updates share one timer. -->
         <service
             android:name="cn.edu.gzus.qingke.LiveForegroundService"

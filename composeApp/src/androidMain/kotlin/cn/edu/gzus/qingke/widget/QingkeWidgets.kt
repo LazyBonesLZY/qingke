@@ -836,6 +836,7 @@ class WidgetClockReceiver : android.content.BroadcastReceiver() {
                     try {
                         runCatching { QingkeWidgets.refreshAll(context.applicationContext) }
                         runCatching { cn.edu.gzus.qingke.runLiveTick() }
+                        runCatching { cn.edu.gzus.qingke.restoreTomorrowReminder() }
                     } finally {
                         pending.finish()
                     }

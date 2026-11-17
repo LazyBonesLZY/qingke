@@ -1,7 +1,7 @@
 package cn.edu.gzus.qingke.data
 
 /** A switch changed during a synchronous system post must also retract that in-flight notice. */
-internal fun postLiveWhileEnabled(enabled: () -> Boolean, post: () -> Unit, cancel: () -> Unit): Boolean {
+internal fun postNotificationWhileEnabled(enabled: () -> Boolean, post: () -> Unit, cancel: () -> Unit): Boolean {
     if (!enabled()) return false
     post()
     if (!enabled()) {

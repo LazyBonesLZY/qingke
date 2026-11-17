@@ -163,6 +163,8 @@ data class AppSettings(
     val showWeekend: Boolean = false,
     /** 首页轻提示：换教室、临近考试、课程较满时才出现；不产生通知和网络请求。 */
     val dailyCareEnabled: Boolean = true,
+    /** 独立于 Live 课程通知，每晚北京时间 20:30 提醒明日课程。 */
+    val tomorrowReminderEnabled: Boolean = false,
     /** 界面整体缩放，0.7~1.4，越界由 QingkeTheme 夹紧。 */
     val uiScale: Float = 1f,
     /** 课程色块自定义底色，空串表示跟随系统配色。 */

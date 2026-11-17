@@ -164,6 +164,7 @@ fun MineScreen(
     onStopLiveTest: () -> Unit,
     onToggleCountdown: (Boolean) -> Unit = {},
     onToggleDailyCare: (Boolean) -> Unit = {},
+    onToggleTomorrowReminder: (Boolean) -> Unit = {},
 ) {
     val focusTermStart = remember { nav.consumeTermStartFocus() }
     var pickingDate by remember { mutableStateOf(focusTermStart) }
@@ -385,6 +386,7 @@ fun MineScreen(
             onStopLiveTest = onStopLiveTest,
             onToggleCountdown = onToggleCountdown,
             onToggleDailyCare = onToggleDailyCare,
+            onToggleTomorrowReminder = onToggleTomorrowReminder,
         )
         SmallTitle(text = "外观")
         Card(modifier = GroupModifier, insideMargin = PaddingValues(0.dp)) {
@@ -882,6 +884,7 @@ private fun RemindBlock(
     onStopLiveTest: () -> Unit,
     onToggleCountdown: (Boolean) -> Unit = {},
     onToggleDailyCare: (Boolean) -> Unit = {},
+    onToggleTomorrowReminder: (Boolean) -> Unit = {},
 ) {
     val lead = snapshot.settings.resolvedRemindLead()
     val liveStatus = liveUpdateStatus(lead)
@@ -932,10 +935,18 @@ private fun RemindBlock(
         }
         SwitchPreference(
             title = "今日贴士",
-            summary = "只在换教室、近期考试或课程较满时显示；不发送额外通知",
+            summary = "显示换教室、考试和晚间明日课程等贴士",
             checked = snapshot.settings.dailyCareEnabled,
             onCheckedChange = onToggleDailyCare,
         )
+        if (platform() != Platform.Desktop) {
+            SwitchPreference(
+                title = "明日课程提醒",
+                summary = "每天北京时间 20:30 提醒明天的课程；没有课时不发送",
+                checked = snapshot.settings.tomorrowReminderEnabled,
+                onCheckedChange = onToggleTomorrowReminder,
+            )
+        }
         if (school.hasPeriodClock || liveTesting) {
             ArrowPreference(
                 title = if (liveTesting) "停止 Live 测试" else "测试 Live 通知",

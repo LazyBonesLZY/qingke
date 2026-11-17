@@ -32,6 +32,7 @@ import cn.edu.gzus.qingke.data.liveTiming
 import cn.edu.gzus.qingke.data.liveRefreshDelayMillis
 import cn.edu.gzus.qingke.data.greeting
 import cn.edu.gzus.qingke.data.dailyCareHint
+import cn.edu.gzus.qingke.data.tomorrowCareHint
 import cn.edu.gzus.qingke.data.hasTermStart
 import cn.edu.gzus.qingke.data.isLow
 import cn.edu.gzus.qingke.data.lowPower
@@ -252,6 +253,7 @@ fun TodayScreen(
                 nowMinutes = now.hour * 60 + now.minute,
                 upcomingExamName = soonestExam?.first?.courseName,
                 daysUntilExam = soonestExam?.second,
+                tomorrow = if (now.hour >= 19) tomorrowCareHint(snapshot, now.date) else null,
             )
             if (hint != null) {
                 Spacer(Modifier.height(Space.m))

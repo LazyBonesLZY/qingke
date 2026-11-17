@@ -1060,21 +1060,9 @@ private fun ColumnScope.WeekGrid(
             ((bodyAvail - cellGap * (blocks.size - 1)) / blocks.size).coerceAtLeast(0.dp)
         }
         val useFit = fit && bySpace >= minReadable
-        // 隐藏周末时不要让 5 列直接瓜分原来 7 列的宽度，否则课程块会显得又宽又矮。
-        // 以七列布局的单日宽度为基准，保留五列的自然比例并让卡片居中。
-        val gridAvailableWidth = (maxWidth - inside * 2).coerceAtLeast(0.dp)
-        val referenceDayWidth = ((gridAvailableWidth - slotCol - cellGap * 7) / 7).coerceAtLeast(1.dp)
-        val gridContentWidth = if (settings.showWeekend) {
-            gridAvailableWidth
-        } else {
-            (slotCol + referenceDayWidth * visibleDays.last + cellGap * visibleDays.last)
-                .coerceAtMost(gridAvailableWidth)
-        }
-        val gridCardWidth = gridContentWidth + inside * 2
         Card(
             modifier = Modifier
-                .width(gridCardWidth)
-                .align(Alignment.Center)
+                .fillMaxWidth()
                 .then(if (fit) Modifier.fillMaxHeight() else Modifier),
             insideMargin = PaddingValues(inside),
         ) {

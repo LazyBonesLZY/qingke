@@ -40,8 +40,8 @@ android {
         applicationId = "cn.edu.gzus.qingke"
         minSdk = 26
         targetSdk = 36
-        versionCode = 89
-        versionName = "1.8.3"
+        versionCode = 90
+        versionName = "1.8.4"
         resValue("string", "qingke_hyperos_business", androidConfigString(qingkeHyperOsBusiness))
         qingkeOppoConfig.forEach { (key, value) ->
             // String resources prevent numeric service IDs from being parsed as manifest integers.

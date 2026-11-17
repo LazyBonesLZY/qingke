@@ -149,7 +149,7 @@ actual fun copyToClipboard(text: String) {
     clipboard.setContents(java.awt.datatransfer.StringSelection(text), null)
 }
 
-actual fun requestLiveUpdatePermission() = Unit
+actual fun requestLiveUpdatePermission(fromUser: Boolean) = Unit
 
 actual fun liveKeepaliveStatus(): String = "桌面端常驻运行，无需保活"
 
@@ -171,6 +171,8 @@ actual fun refreshHomeWidgets() = Unit
 actual fun cancelLiveClass() = Unit
 
 actual fun scheduleLiveWake(atMillis: Long?) = Unit
+
+actual fun scheduleTomorrowReminder(enabled: Boolean) = Unit
 
 actual fun setLiveForeground(active: Boolean) = Unit
 

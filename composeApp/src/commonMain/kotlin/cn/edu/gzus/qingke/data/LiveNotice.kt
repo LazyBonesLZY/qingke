@@ -72,14 +72,16 @@ private var parsedStore: Pair<String, AppSnapshot>? = null
 internal fun readSnapshotStore(): AppSnapshot? {
     committedSnapshot?.let { return it }
     val text = readStore(STORE) ?: return null
-    parsedStore?.let { (raw, snapshot) -> if (raw == text) return snapshot.withLiveMasterPreference() }
+    parsedStore?.let { (raw, snapshot) ->
+        if (raw == text) return snapshot.withLiveMasterPreference().withTomorrowReminderPreference()
+    }
     val parsed = runCatching { snapshotJson.decodeFromString(AppSnapshot.serializer(), text) }.getOrNull()
         ?: return null
     // 后台只规范化内存态，不把旧快照整份写回，避免覆盖前台并发保存的新课表或设置。
     // 应用前台创建 AppRepository 时会负责一次性落盘迁移结果。
     val migrated = parsed.withLiveCountdownMigration()
     parsedStore = text to migrated
-    return migrated.withLiveMasterPreference()
+    return migrated.withLiveMasterPreference().withTomorrowReminderPreference()
 }
 
 /** 现在该挂哪条上课通知；不该挂就返回 null。应用里的循环和后台闹钟共用这一份判断。 */

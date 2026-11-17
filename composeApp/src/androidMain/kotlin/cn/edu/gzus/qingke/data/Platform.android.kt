@@ -234,8 +234,8 @@ actual fun copyToClipboard(text: String) {
     cm.setPrimaryClip(ClipData.newPlainText("qingke", text))
 }
 
-actual fun requestLiveUpdatePermission() {
-    // Runtime prompt is issued from MainActivity on launch.
+actual fun requestLiveUpdatePermission(fromUser: Boolean) {
+    MainActivity.requestNotificationPermission(fromUser)
 }
 
 /**
@@ -535,7 +535,7 @@ actual fun notifyLiveClass(
         },
         post = { attempt, candidate ->
             runCatching {
-                postLiveWhileEnabled(::liveMasterEnabled,
+                postNotificationWhileEnabled(::liveMasterEnabled,
                     post = { manager.notify(LIVE_ID, candidate) },
                     cancel = { manager.cancel(LIVE_ID) },
                 )

@@ -48,6 +48,8 @@ expect fun cancelLiveClass()
 /** 排下一次后台更新上课通知的时刻；null 就撤掉。 */
 expect fun scheduleLiveWake(atMillis: Long?)
 
+expect fun scheduleTomorrowReminder(enabled: Boolean)
+
 /** Run the same foreground refresh service on every Android vendor while Live is active. */
 expect fun setLiveForeground(active: Boolean)
 
@@ -65,7 +67,7 @@ expect fun clearCookieStore()
 
 expect fun currentCookies(): List<Pair<String, String>>
 
-expect fun requestLiveUpdatePermission()
+expect fun requestLiveUpdatePermission(fromUser: Boolean = false)
 
 /** 后台保活状态文案：电池白名单 + 精确闹钟。 */
 expect fun liveKeepaliveStatus(): String

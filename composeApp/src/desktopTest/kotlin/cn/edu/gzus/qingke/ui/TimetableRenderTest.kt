@@ -45,7 +45,7 @@ import kotlinx.datetime.plus
 /** 真实离屏分页交互回归；无需 compose-ui-test 依赖，JDK 21+ 运行。 */
 class TimetableRenderTest {
     @Test
-    fun hiddenWeekendsKeepTheSevenDayColumnWidthAndCenterTheGrid() = onUiThread {
+    fun hiddenWeekendsFillTheSameGridWidth() = onUiThread {
         for (wide in listOf(false, true)) {
             var visible = emptyList<IntRange>()
             var hidden = emptyList<IntRange>()
@@ -70,11 +70,11 @@ class TimetableRenderTest {
             withTimetable(wide = wide, showWeekend = false) { hidden = columns(it) }
             assertEquals(7, visible.size)
             assertEquals(5, hidden.size)
-            assertTrue(abs(hidden.first().count() - visible.first().count()) <= 1,
-                "隐藏周末不应拉伸单日宽度: seven=$visible, five=$hidden")
-            assertTrue(abs((hidden.first().first + hidden.last().last) -
-                (visible.first().first + visible.last().last)) <= 2,
-                "隐藏周末后课程列仍应居中: seven=$visible, five=$hidden")
+            assertTrue(hidden.first().count() > visible.first().count(),
+                "五列应使用更宽的课程列: seven=$visible, five=$hidden")
+            assertTrue(abs(hidden.first().first - visible.first().first) <= 2 &&
+                abs(hidden.last().last - visible.last().last) <= 2,
+                "五列和七列应填满相同区域: seven=$visible, five=$hidden")
         }
     }
 

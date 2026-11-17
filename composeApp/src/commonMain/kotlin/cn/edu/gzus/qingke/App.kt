@@ -610,6 +610,10 @@ fun App() {
                             onToggleDailyCare = { on ->
                                 repo.updateSettings { it.copy(dailyCareEnabled = on) }
                             },
+                            onToggleTomorrowReminder = { on ->
+                                repo.updateSettings { it.copy(tomorrowReminderEnabled = on) }
+                                if (on) requestLiveUpdatePermission(fromUser = true)
+                            },
                             onToggleAutoSync = { on ->
                                 repo.updateSettings { it.copy(autoSyncOnStart = on) }
                                 toast(if (on) "已打开启动自动同步" else "已关闭启动自动同步")
@@ -630,7 +634,7 @@ fun App() {
                                 repo.updateSettings { it.copy(remindBeforeClass = on) }
                                 if (on) {
                                     resetLiveDismiss()
-                                    requestLiveUpdatePermission()
+                                    requestLiveUpdatePermission(fromUser = true)
                                 }
                                 repo.refreshLive()
                             },

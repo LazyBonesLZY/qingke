@@ -100,15 +100,16 @@ class AppRepository(
     fun hasLiveTest(): Boolean = testEndMillis > nowMillis()
 
     private fun load(): AppSnapshot {
-        val raw = readStore(STORE) ?: return AppSnapshot().withLiveMasterPreference()
+        val raw = readStore(STORE) ?: return AppSnapshot().withLiveMasterPreference().withTomorrowReminderPreference()
         val parsed = requestResult { json.decodeFromString<AppSnapshot>(raw) }.getOrNull()
-            ?: return AppSnapshot().withLiveMasterPreference()
+            ?: return AppSnapshot().withLiveMasterPreference().withTomorrowReminderPreference()
         if (parsed.seeded) {
-            val empty = AppSnapshot().withLiveMasterPreference()
+            val empty = AppSnapshot().withLiveMasterPreference().withTomorrowReminderPreference()
             writeStore(STORE, json.encodeToString(AppSnapshot.serializer(), empty))
             return empty
         }
-        val migrated = parsed.withLiveCountdownMigration().withInterruptedCoursePicks().withLiveMasterPreference().let { snap ->
+        val migrated = parsed.withLiveCountdownMigration().withInterruptedCoursePicks()
+            .withLiveMasterPreference().withTomorrowReminderPreference().let { snap ->
             if (snap.session.cookies.isEmpty()) snap else snap.copy(session = snap.session.copy(cookies = emptyMap()))
         }
         // 旧版队列没有账号归属信息，无法确认归属时必须禁止自动提交。
@@ -132,6 +133,8 @@ class AppRepository(
     init {
         committedSnapshot = _state.value
         writeLiveMasterEnabled(_state.value.settings.liveCountdownEnabled)
+        writeTomorrowReminderEnabled(_state.value.settings.tomorrowReminderEnabled)
+        scheduleTomorrowReminder(_state.value.settings.tomorrowReminderEnabled)
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
             for (snapshot in pendingWrites) {
                 runCatching { writeStore(STORE, json.encodeToString(AppSnapshot.serializer(), snapshot)) }
@@ -149,9 +152,12 @@ class AppRepository(
     private fun persist(snapshot: AppSnapshot) {
         // 先放进内存：同进程里的前台服务、闹钟和小组件直接读这一份，不用等文件写完。
         val masterChanged = committedSnapshot?.settings?.liveCountdownEnabled != snapshot.settings.liveCountdownEnabled
+        val tomorrowChanged = committedSnapshot?.settings?.tomorrowReminderEnabled != snapshot.settings.tomorrowReminderEnabled
         committedSnapshot = snapshot
         if (masterChanged) writeLiveMasterEnabled(snapshot.settings.liveCountdownEnabled)
+        if (tomorrowChanged) writeTomorrowReminderEnabled(snapshot.settings.tomorrowReminderEnabled)
         pendingWrites.trySend(snapshot)
+        scheduleTomorrowReminder(snapshot.settings.tomorrowReminderEnabled)
     }
 
     private fun commit(transform: (AppSnapshot) -> AppSnapshot) {

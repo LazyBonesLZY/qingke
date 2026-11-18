@@ -73,7 +73,6 @@ import cn.edu.gzus.qingke.data.compactRoomName
 import cn.edu.gzus.qingke.data.CloudScheduleAdjust
 import cn.edu.gzus.qingke.data.adjustDayLabel
 import cn.edu.gzus.qingke.data.HolidayCalendar
-import cn.edu.gzus.qingke.data.HolidayDay
 import cn.edu.gzus.qingke.data.chip
 import cn.edu.gzus.qingke.data.forDate
 import cn.edu.gzus.qingke.data.occupiesBlock
@@ -94,9 +93,11 @@ import cn.edu.gzus.qingke.nav.QingkeNavigator
 import cn.edu.gzus.qingke.nav.Route
 import cn.edu.gzus.qingke.nav.TabDest
 import cn.edu.gzus.qingke.ui.components.EmptyState
+import cn.edu.gzus.qingke.ui.components.HairlineDivider
 import cn.edu.gzus.qingke.ui.components.Inset
 import cn.edu.gzus.qingke.ui.components.LocalQingkeWide
 import cn.edu.gzus.qingke.ui.components.Radius
+import cn.edu.gzus.qingke.ui.components.RowChevron
 import cn.edu.gzus.qingke.ui.components.ScreenHeader
 import cn.edu.gzus.qingke.ui.components.Space
 import cn.edu.gzus.qingke.ui.components.StatusTag
@@ -522,7 +523,7 @@ fun TimetableScreen(
                                     ) {
                                         // 同一门课在一格里有多条（单双周拆开、教务重复给）不算冲突，直接打开。
                                         if (picked.distinctBy { it.courseKey() }.size == 1) {
-                                            nav.open(Route.Course(picked.first().courseId))
+                                            nav.open(Route.Course(picked.first().courseKey()))
                                         } else {
                                             conflict = picked
                                         }
@@ -653,7 +654,7 @@ fun TimetableScreen(
                                             .filter { it.isNotBlank() }
                                             .joinToString(" · "),
                                         accent = courseAccent(settings, slot.courseKey(), dark),
-                                        onClick = { nav.open(Route.Course(slot.courseId)) },
+                                        onClick = { nav.open(Route.Course(slot.courseKey())) },
                                     )
                                 },
                             )
@@ -712,7 +713,7 @@ private fun HintCard(
                 }
             }
             Spacer(Modifier.width(Space.s))
-            Text("›", style = MiuixTheme.textStyles.title3, color = Tone.muted().copy(alpha = 0.6f))
+            RowChevron()
         }
     }
 }
@@ -731,7 +732,6 @@ private class LessonRowData(
 @Composable
 private fun LessonGroup(rows: List<LessonRowData>, header: (@Composable () -> Unit)? = null, modifier: Modifier = Modifier) {
     if (rows.isEmpty()) return
-    val divider = MiuixTheme.colorScheme.outline.copy(alpha = 0.35f)
     Card(
         modifier = modifier.fillMaxWidth().padding(horizontal = Inset.page),
         insideMargin = PaddingValues(vertical = Space.xs),
@@ -739,12 +739,9 @@ private fun LessonGroup(rows: List<LessonRowData>, header: (@Composable () -> Un
         header?.invoke()
         rows.forEachIndexed { index, row ->
             if (index > 0 || header != null) {
-                Box(
-                    Modifier
-                        .padding(start = Inset.page + (if (row.accent != null) Space.m + 3.dp else 0.dp), end = Inset.page)
-                        .fillMaxWidth()
-                        .height(0.5.dp)
-                        .background(divider),
+                HairlineDivider(
+                    modifier = Modifier.padding(end = Inset.page),
+                    startIndent = Inset.page + (if (row.accent != null) Space.m + 3.dp else 0.dp),
                 )
             }
             LessonRow(row)
@@ -809,7 +806,7 @@ private fun LessonRow(row: LessonRowData) {
             StatusTag(row.tag, color = Tone.muted())
         } else if (row.onClick != null) {
             Spacer(Modifier.width(Space.s))
-            Text("›", style = MiuixTheme.textStyles.title3, color = Tone.muted().copy(alpha = 0.6f))
+            RowChevron()
         }
     }
 }
@@ -1357,6 +1354,18 @@ private fun MonthGrid(
             }
         }
     }
+    val marks = remember(month, settings, today, adjust, holidays) {
+        (0 until total).associate { index ->
+            val date = start.plus(DatePeriod(days = index))
+            val holiday = holidays.lookup(date)
+            val adjustMark = adjustDayLabel(date, settings, adjust, today)
+            date to when {
+                holiday != null -> holiday.chip() to holiday.off
+                adjustMark.isNotBlank() -> (if (adjustMark == "放假") "假" else "调") to (adjustMark == "放假")
+                else -> null
+            }
+        }
+    }
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = Inset.page),
         insideMargin = PaddingValues(Space.s),
@@ -1422,7 +1431,7 @@ private fun MonthGrid(
                             weekend = col >= 5,
                             isToday = date == today,
                             isSelected = date == selected,
-                            holiday = holidays.lookup(date),
+                            mark = marks[date],
                             dots = dots[date].orEmpty(),
                             modifier = Modifier.weight(1f).fillMaxHeight(),
                             onClick = { onSelect(date) },
@@ -1444,7 +1453,7 @@ private fun MonthCell(
     weekend: Boolean,
     isToday: Boolean,
     isSelected: Boolean,
-    holiday: HolidayDay?,
+    mark: Pair<String, Boolean>?,
     dots: List<Color>,
     modifier: Modifier,
     onClick: () -> Unit,
@@ -1486,15 +1495,15 @@ private fun MonthCell(
                 maxLines = 1,
             )
         }
-        // 休/班标记和课程点各占固定一行，不管有没有都不让下面的内容上下错位。
+        // 休/班/假/调标记和课程点各占固定一行，不管有没有都不让下面的内容上下错位。
         Box(Modifier.height(GridType.meta.value.dp + 4.dp), contentAlignment = Alignment.Center) {
-            if (inMonth && holiday != null) {
+            if (inMonth && mark != null) {
                 Text(
-                    if (holiday.off) "休" else "班",
+                    mark.first,
                     fontSize = GridType.meta,
                     lineHeight = GridType.meta * 1.2f,
                     fontWeight = FontWeight.Medium,
-                    color = if (holiday.off) Tone.success() else Tone.warning(),
+                    color = if (mark.second) Tone.success() else Tone.warning(),
                     maxLines = 1,
                 )
             }
@@ -1528,13 +1537,13 @@ private fun ConflictPanel(
     val dark = isSystemInDarkTheme()
     val count = slots.distinctBy { it.courseKey() }.size
     LessonGroup(
-        rows = slots.distinctBy { it.courseId to it.period }.map { slot ->
+        rows = slots.distinctBy { it.courseKey() to it.period }.map { slot ->
             LessonRowData(
                 title = slot.courseName,
                 meta = periodText(slot.period, slot.periodLabel),
                 detail = listOf(slot.room, slot.teacher, weeksText(slot.weeks)).filter { it.isNotBlank() }.joinToString(" · "),
                 accent = courseAccent(settings, slot.courseKey(), dark),
-                onClick = { onOpen(slot.courseId) },
+                onClick = { onOpen(slot.courseKey()) },
             )
         },
         modifier = modifier,

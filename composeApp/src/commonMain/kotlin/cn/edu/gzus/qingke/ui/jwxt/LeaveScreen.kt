@@ -240,11 +240,12 @@ fun LeaveScreen(
                 ) {
                     hall.leaves.forEach { item ->
                         val traceId = item.traceId()
-                        val open = openedTrace == traceId
+                        val open = traceId.isNotBlank() && openedTrace == traceId
                         LeaveCard(
                             item = item,
                             open = open,
                             onClick = {
+                                if (traceId.isBlank()) return@LeaveCard
                                 openedTrace = if (open) "" else traceId
                                 if (!open && traces[traceId] == null) onLoadTrace(traceId)
                             },

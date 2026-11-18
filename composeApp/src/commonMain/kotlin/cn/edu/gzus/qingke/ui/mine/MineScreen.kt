@@ -1183,14 +1183,20 @@ private fun DeveloperBlock(
             title = "显示验证码",
             summary = if (kind == "lyuap") "联奕门户固定需要" else "登录页有验证码图时开启",
             checked = showsCaptcha || kind == "lyuap",
-            onCheckedChange = { showsCaptcha = it },
+            onCheckedChange = {
+                showsCaptcha = it
+                if (!it) requiresCaptcha = false
+            },
             enabled = kind != "lyuap",
         )
         SwitchPreference(
             title = "必须填验证码",
             summary = if (kind == "lyuap") "联奕门户固定需要" else "不填也能登录时关闭",
             checked = requiresCaptcha || kind == "lyuap",
-            onCheckedChange = { requiresCaptcha = it },
+            onCheckedChange = {
+                requiresCaptcha = it
+                if (it) showsCaptcha = true
+            },
             enabled = kind != "lyuap",
         )
     }

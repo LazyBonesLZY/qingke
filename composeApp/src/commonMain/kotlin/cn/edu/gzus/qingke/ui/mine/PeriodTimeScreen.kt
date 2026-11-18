@@ -87,7 +87,10 @@ fun PeriodTimeScreen(
     val fetched = snapshot.profile.periodTimes
     // 不含手动覆盖的「默认值」，用于提示「清空后会回到什么」。
     val defaults = snapshot.settings.resolved().withFetchedPeriodTimes(fetched).periodBlocks
-        .associate { it.label to "${it.start}–${it.end}" }
+        .associate { block ->
+            val clock = if (block.start.isNotBlank() && block.end.isNotBlank()) "${block.start}–${block.end}" else ""
+            block.label to clock
+        }
     // 点「清除我的修改」时自增，让各行输入框重新取初值；平时不跟着快照重置，免得打字时被改写。
     var resetToken by remember { mutableStateOf(0) }
     var confirmClear by remember { mutableStateOf(false) }

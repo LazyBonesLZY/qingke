@@ -51,7 +51,7 @@ class LiveForegroundService : Service() {
     // 胶囊和卡片上的分钟数不会在用户看的时候慢一拍。
     private val screenOn = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            sync(context, true)
+            sync(context, active = true, alreadyPosted = false)
         }
     }
 
@@ -81,9 +81,9 @@ class LiveForegroundService : Service() {
             stopSelfResult(startId)
             return START_NOT_STICKY
         }
-        // 由循环首帧统一读取并发布；启动时额外构建/发送一次会重复通知，也会多出一个边界竞态。
-        // 即使启动过程中已下课，也先履行 startForeground 合约，再由循环收尾安排下一节。
-        loopJob = scope.launch { refreshLoop(runGeneration, startId) }
+        // 调用方刚发过当帧通知时跳过首帧重发，只接管后续分钟刷新，避免同帧双发。
+        val alreadyPosted = intent?.getBooleanExtra(EXTRA_ALREADY_POSTED, false) == true
+        loopJob = scope.launch { refreshLoop(runGeneration, startId, skipFirstPost = alreadyPosted) }
         return START_STICKY
     }
 
@@ -113,8 +113,9 @@ class LiveForegroundService : Service() {
             .build()
     }
 
-    private suspend fun refreshLoop(runGeneration: Long, startId: Int) {
+    private suspend fun refreshLoop(runGeneration: Long, startId: Int, skipFirstPost: Boolean = false) {
         var failureWake: Long? = null
+        var skipPost = skipFirstPost
         try {
             while (scope.isActive && generation == runGeneration) {
                 val nowMs = System.currentTimeMillis()
@@ -122,7 +123,9 @@ class LiveForegroundService : Service() {
                 val timing = liveTiming(nowMs, params.startMillis, params.endMillis) ?: return
                 // 判课、通知和下一次刷新共用同一帧。先发布再睡，跨过边界时不会
                 // 「还显示上一节，却按新一节的边界再等一分钟」。
-                if (!postCurrent(nowMs, params)) {
+                if (skipPost) {
+                    skipPost = false
+                } else if (!postCurrent(nowMs, params)) {
                     failureWake = livePostFailureWake(params.title, params.startMillis, params.endMillis)
                     return
                 }
@@ -195,9 +198,11 @@ class LiveForegroundService : Service() {
         private const val EDGE_HOLD_MILLIS = 2 * LIVE_STEP_MILLIS
         private const val KEEPALIVE_ID = LIVE_ID + 1
         private const val KEEPALIVE_CHANNEL = "qingke_live_keepalive"
+        private const val EXTRA_ALREADY_POSTED = "already_posted"
 
-        fun sync(context: Context, active: Boolean) {
+        fun sync(context: Context, active: Boolean, alreadyPosted: Boolean = true) {
             val intent = Intent(context, LiveForegroundService::class.java)
+                .putExtra(EXTRA_ALREADY_POSTED, alreadyPosted)
             runCatching {
                 if (active) ContextCompat.startForegroundService(context, intent)
                 else context.stopService(intent)

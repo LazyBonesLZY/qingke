@@ -71,7 +71,7 @@ import cn.edu.gzus.qingke.data.friendlyNetworkMessage
 import cn.edu.gzus.qingke.data.isSessionLost
 import cn.edu.gzus.qingke.data.resolved
 import cn.edu.gzus.qingke.data.cancelLiveClass
-import cn.edu.gzus.qingke.data.resolvedGpa
+import cn.edu.gzus.qingke.data.bestGradeForCourse
 import cn.edu.gzus.qingke.data.mondayOf
 import cn.edu.gzus.qingke.data.nowDateTime
 import cn.edu.gzus.qingke.data.openUrl
@@ -382,7 +382,16 @@ fun App() {
                         val message = failed.friendlyNetworkMessage()
                         if (isSessionLost(message)) loginError = message
                         toast(failText("自动选课", message))
-                        break
+                        val state = repo.state.value
+                        if (!state.session.loggedIn) break
+                        val after = state.settings.coursePickQueue
+                            .filter { it.status == "waiting" && it.fireAt > 0L }
+                        if (after == waiting) {
+                            repo.state.first { next ->
+                                !next.session.loggedIn ||
+                                    next.settings.coursePickQueue.filter { it.status == "waiting" && it.fireAt > 0L } != waiting
+                            }
+                        }
                     }
             }
         }
@@ -794,8 +803,7 @@ fun App() {
                                 blocks = snapshot.resolved().periodBlocks,
                                 today = nowDateTime().date,
                                 adjust = snapshot.scheduleAdjust,
-                                grade = snapshot.grades.filter { it.courseId == current.courseId }
-                                    .maxByOrNull { it.resolvedGpa() ?: -1.0 },
+                                grade = snapshot.bestGradeForCourse(current.courseId),
                             )
                             is Route.EmptyRoom -> EmptyRoomScreen(
                                 snapshot = snapshot,
@@ -1056,6 +1064,7 @@ fun App() {
                                     if (!pickMoreBusy && !pickSearchBusy && pickHasMore) {
                                         requests.launch("pickMore") {
                                             pickMoreBusy = true
+                                            pickError = null
                                             val before = pickOffers
                                             activeRequest {
                                                 repo.searchCoursePicks(item, keyword, start = pickPageOffset, pageSize = 30)
@@ -1080,6 +1089,7 @@ fun App() {
                                 onOpenSections = { offer ->
                                     requests.launch("pickSections") {
                                         pickSectionsBusy = true
+                                        pickError = null
                                         pickSections = emptyList()
                                         activeRequest { repo.loadCoursePickSections(offer) }
                                             .onSuccess { pickSections = it }

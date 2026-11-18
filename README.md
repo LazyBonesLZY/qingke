@@ -17,7 +17,7 @@
 
 ## 更新
 
-当前开发版本 **1.8.4**（versionCode 90）。Android 8.0（API 26）及以上。广软调休默认从 qingke.lazzyy.cn 自动拉取；打开应用会检查更新，有新版本会提示。
+当前开发版本 **1.8.5**（versionCode 91）。Android 8.0（API 26）及以上。广软调休默认从 qingke.lazzyy.cn 自动拉取；打开应用会检查更新，有新版本会提示。
 
 - GitHub Release：应用里检查 `LazyBonesLZY/qingke` 最新版，再跳到 Release / APK
 - 网盘：浏览器打开 [https://storage.lazzyy.cn/@s/KB](https://storage.lazzyy.cn/@s/KB)
@@ -29,6 +29,8 @@
 1.8.3 统一按北京时间计算课表、提醒及定时选课；恢复 Live 胶囊分钟文字，把「上课胶囊与通知」改为总开关，关闭后停止课程通知与后台唤醒。隐藏周末时保持原来七列布局的单日宽度并居中。记录见 [docs/live-beijing-integration-20261116.md](docs/live-beijing-integration-20261116.md)。
 
 1.8.4 五日课表改为铺满可用宽度；晚上显示明日课程贴士，并增加默认关闭、独立于 Live 的明日课程通知，按北京时间 20:30 提醒。记录见 [docs/partial-integration-20261117.md](docs/partial-integration-20261117.md)。
+
+1.8.5 修复课程名兜底关联绩点、部分作息实况筛选、自定义教务复用连接池、通知重复触发与跨天明日提醒、定时选课异常恢复及请假空追踪展开等问题；优化今日页、月历调休标记、全部桌面小组件排版（五日/周末自适应、溢出灰显、自定义色块对比度与精准上下课闹钟）及配置页交互。
 
 ## 构建
 

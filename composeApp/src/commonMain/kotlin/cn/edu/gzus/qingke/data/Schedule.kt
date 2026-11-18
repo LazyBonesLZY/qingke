@@ -212,14 +212,14 @@ fun ResolvedSchool.clockKnown(period: String): Boolean =
  * 「有别的学校的时间」，又变成两处对不上。
  */
 fun ResolvedSchool.periodStartOf(period: String): String {
-    val hit = blocksFor(periodBlocks, period).firstOrNull { it.start.isNotBlank() }
-    if (hit != null) return hit.start
+    val first = blocksFor(periodBlocks, period).firstOrNull()
+    if (first != null && first.start.isNotBlank()) return first.start
     return if (anyBlockHasClock()) "" else periodStart(period)
 }
 
 fun ResolvedSchool.periodEndOf(period: String): String {
-    val hit = blocksFor(periodBlocks, period).lastOrNull { it.end.isNotBlank() }
-    if (hit != null) return hit.end
+    val last = blocksFor(periodBlocks, period).lastOrNull()
+    if (last != null && last.end.isNotBlank()) return last.end
     return if (anyBlockHasClock()) "" else periodEnd(period)
 }
 
@@ -302,8 +302,8 @@ fun ResolvedSchool.sectionTime(index: Int): Pair<String, String>? {
 }
 
 fun ResolvedSchool.formatPeriod(period: String, periodLabel: String = "", hasClock: Boolean): String {
-    val label = periodLabel.ifBlank { period }
-    val clock = if (hasClock) clockRangeOf(period) else ""
+    val label = periodText(period, periodLabel)
+    val clock = if (hasClock) clockRangeOf(period).replace("-", "–") else ""
     return if (clock.isBlank()) label else "$label · $clock"
 }
 
@@ -356,14 +356,6 @@ fun nextLiveLesson(
     blocks: List<PeriodBlock> = emptyList(),
 ): LiveLesson? = liveLessonFrom(slots.forDate(date, settings, today, adjust), time, blocks)
 
-private fun blockStart(blocks: List<PeriodBlock>, period: String): String =
-    blocksFor(blocks, period).firstOrNull { it.start.isNotBlank() }?.start
-        ?: if (blocks.any { it.start.isNotBlank() && it.end.isNotBlank() }) "" else periodStart(period)
-
-private fun blockEnd(blocks: List<PeriodBlock>, period: String): String =
-    blocksFor(blocks, period).lastOrNull { it.end.isNotBlank() }?.end
-        ?: if (blocks.any { it.start.isNotBlank() && it.end.isNotBlank() }) "" else periodEnd(period)
-
 private fun liveLessonFrom(
     day: List<LessonSlot>,
     time: LocalTime,
@@ -371,9 +363,12 @@ private fun liveLessonFrom(
 ): LiveLesson? {
     // 按真实开课时间挑最早还没下课的一节，而不是按节次编号的第一个：
     // 「中午」这类没编号的块排序键是 99，按列表顺序会被下午的课抢先。
+    // 只有整段起止时间都已知的课才参与计算，避免半截时间把整节当成已下课或卡住后续提醒。
     return day.mapNotNull { slot ->
-        val toStart = minutesUntil(time, blockStart(blocks, slot.period)) ?: return@mapNotNull null
-        val toEnd = minutesUntil(time, blockEnd(blocks, slot.period)) ?: return@mapNotNull null
+        val range = clockRangeIn(slot.period, blocks)
+        if (!range.contains("-")) return@mapNotNull null
+        val toStart = minutesUntil(time, range.substringBefore("-")) ?: return@mapNotNull null
+        val toEnd = minutesUntil(time, range.substringAfter("-")) ?: return@mapNotNull null
         if (toEnd > 0) LiveLesson(slot, toStart, toEnd) else null
     }.minByOrNull { it.minutesToStart }
 }
@@ -412,7 +407,17 @@ fun uniqueRooms(slots: List<LessonSlot>): List<String> =
 fun resolveCourseDetail(snapshot: AppSnapshot, courseId: String): CourseDetail? {
     val fromSlots = snapshot.slots.toCourseDetail(courseId)
     if (fromSlots.slots.isNotEmpty()) return fromSlots
-    return snapshot.grades.firstOrNull { it.courseId == courseId }?.toCourseDetail()
+    val grade = snapshot.grades.firstOrNull { it.courseId == courseId }
+        ?: snapshot.grades.firstOrNull { it.courseName.isNotBlank() && it.courseName == courseId }
+        ?: return null
+    if (grade.courseName.isNotBlank()) {
+        val byName = snapshot.slots.filter { it.courseName == grade.courseName }
+        if (byName.isNotEmpty()) {
+            return byName.toCourseDetail(grade.courseName)
+                .copy(courseId = grade.courseId.ifBlank { courseId })
+        }
+    }
+    return grade.toCourseDetail()
 }
 
 fun GradeItem.toCourseDetail(): CourseDetail {
@@ -441,7 +446,9 @@ fun GradeItem.toCourseDetail(): CourseDetail {
 }
 
 fun List<LessonSlot>.toCourseDetail(courseId: String): CourseDetail {
-    val items = filter { it.courseId == courseId }
+    val items = filter { it.courseId == courseId }.ifEmpty {
+        if (courseId.isBlank()) emptyList() else filter { it.courseName == courseId }
+    }
     if (items.isEmpty()) {
         return CourseDetail(
             courseId = courseId,
@@ -840,5 +847,31 @@ fun examSortKey(time: String): Long {
     val month = match.groupValues[2].toIntOrNull() ?: return Long.MAX_VALUE
     val day = match.groupValues[3].toIntOrNull() ?: return Long.MAX_VALUE
     return runCatching { LocalDate(year, month, day).toEpochDays().toLong() }.getOrDefault(Long.MAX_VALUE)
+}
+
+/**
+ * 桌面小组件下一次需要重绘的时刻：
+ * 只看今天实际有课的上下课时间点；今天没课或已全部下课，则排到明天 00:05 跨日刷新。
+ */
+internal fun nextWidgetBoundaryMillis(snap: AppSnapshot, nowMs: Long): Long? {
+    val today = dateTimeAt(nowMs).date
+    val school = snap.resolved()
+    val next = if (school.hasPeriodClock && snap.slots.isNotEmpty()) {
+        val todaySlots = snap.slots.forDate(today, snap.settings, today, snap.scheduleAdjust)
+        todaySlots
+            .flatMap { slot ->
+                val range = school.clockRangeOf(slot.period)
+                if (range.contains("-")) listOf(range.substringBefore("-"), range.substringAfter("-"))
+                else emptyList()
+            }
+            .filter { it.isNotBlank() }
+            .mapNotNull { combineMillis(today, it).takeIf { ms -> ms > nowMs } }
+            .minOrNull()
+    } else {
+        null
+    }
+    if (next != null) return next + 5_000L
+    return combineMillis(today.plus(DatePeriod(days = 1)), "00:05")
+        .takeIf { it > nowMs }
 }
 

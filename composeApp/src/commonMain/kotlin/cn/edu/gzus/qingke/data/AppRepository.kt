@@ -42,15 +42,23 @@ class AppRepository(
         }
     }
 
+    private val customHttpClient by lazy { createHttpClient() }
+    @Volatile
+    private var cachedCustomPortal: Pair<CustomJwxt, SchoolPortal>? = null
+
     private fun customPortal(cfg: CustomJwxt): SchoolPortal {
         val origin = cfg.originClean()
         require(origin.isNotBlank()) { "先在开发者选项里填教务地址" }
         if (cfg.normalizedKind() == "lyuap") {
             require(cfg.casService.isNotBlank()) { "先在开发者选项里填统一认证的 service 地址" }
         }
-        return when (cfg.normalizedKind()) {
-            "kingosoft" -> ZhkuClient(origin = origin)
+        cachedCustomPortal?.let { (cachedCfg, portal) ->
+            if (cachedCfg == cfg) return portal
+        }
+        val created = when (cfg.normalizedKind()) {
+            "kingosoft" -> ZhkuClient(origin = origin, client = customHttpClient)
             "lyuap" -> GzistClient(
+                client = customHttpClient,
                 casOrigin = cfg.casOrigin.trim().trimEnd('/').ifBlank { origin },
                 casService = cfg.casService.trim(),
                 jwxtOrigin = origin,
@@ -58,10 +66,13 @@ class AppRepository(
             )
             else -> JwxtClient(
                 origin = origin,
+                client = customHttpClient,
                 supportsFreeRooms = cfg.supportsFreeRooms,
                 paths = cfg.pathMap(),
             )
         }
+        cachedCustomPortal = cfg to created
+        return created
     }
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private var sessionGeneration = 0L
@@ -157,7 +168,9 @@ class AppRepository(
         if (masterChanged) writeLiveMasterEnabled(snapshot.settings.liveCountdownEnabled)
         if (tomorrowChanged) writeTomorrowReminderEnabled(snapshot.settings.tomorrowReminderEnabled)
         pendingWrites.trySend(snapshot)
-        scheduleTomorrowReminder(snapshot.settings.tomorrowReminderEnabled)
+        if (tomorrowChanged || snapshot.settings.tomorrowReminderEnabled) {
+            scheduleTomorrowReminder(snapshot.settings.tomorrowReminderEnabled)
+        }
     }
 
     private fun commit(transform: (AppSnapshot) -> AppSnapshot) {
@@ -1293,6 +1306,8 @@ private fun AppSnapshot.widgetSignature(): Int {
     h = 31 * h + settings.customJwxt.hashCode()
     h = 31 * h + settings.courseAliases.hashCode()
     h = 31 * h + settings.roomAliases.hashCode()
+    h = 31 * h + settings.showWeekend.hashCode()
+    h = 31 * h + settings.courseTintHex.hashCode()
     h = 31 * h + settings.scheduleShifts.hashCode()
     h = 31 * h + settings.autoPullScheduleAdjust.hashCode()
     h = 31 * h + scheduleAdjust.offs.hashCode()

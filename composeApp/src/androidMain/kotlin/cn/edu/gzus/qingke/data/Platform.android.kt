@@ -51,10 +51,17 @@ import javax.crypto.spec.GCMParameterSpec
 internal const val LIVE_CHANNEL = "qingke_live_class"
 internal const val LIVE_ID = 1001
 private val storeLock = Any()
+@Volatile private var lastPostedFrameKey: String = ""
+@Volatile private var lastPostedAtMillis: Long = 0L
+
+internal fun clearLivePostedFrameCache() {
+    lastPostedFrameKey = ""
+    lastPostedAtMillis = 0L
+}
 
 actual fun setLiveForeground(active: Boolean) {
     if (!QingkeApp.ready()) return
-    cn.edu.gzus.qingke.LiveForegroundService.sync(QingkeApp.app, active && liveMasterEnabled())
+    cn.edu.gzus.qingke.LiveForegroundService.sync(QingkeApp.app, active && liveMasterEnabled(), alreadyPosted = true)
 }
 
 actual fun createHttpClient(): HttpClient = HttpClient(OkHttp) {
@@ -243,7 +250,7 @@ actual fun requestLiveUpdatePermission(fromUser: Boolean) {
  * 否则 12 以下直接能用，以上看用户给没给 SCHEDULE_EXACT_ALARM。
  * 注意 canScheduleExactAlarms() 只查 appop 位，OEM 上可能谎报，别当唯一依据。
  */
-private fun canScheduleExact(ctx: android.content.Context): Boolean {
+internal fun canScheduleExact(ctx: android.content.Context): Boolean {
     if (Build.VERSION.SDK_INT < 31) return true
     if (Build.VERSION.SDK_INT >= 33 &&
         androidx.core.content.ContextCompat.checkSelfPermission(
@@ -323,6 +330,7 @@ actual fun openLiveUpdateSettings() {
 }
 
 actual fun resetLiveDismiss() {
+    clearLivePostedFrameCache()
     QingkeApp.app.getSharedPreferences(LIVE_PREFS, android.content.Context.MODE_PRIVATE)
         .edit()
         .remove(LIVE_DISMISSED_KEY)
@@ -500,6 +508,7 @@ actual fun notifyLiveClass(
     nowMillis: Long,
 ): Boolean {
     if (!liveMasterEnabled()) {
+        clearLivePostedFrameCache()
         writeLiveTestWindow(0L, 0L)
         cancelLiveClass()
         scheduleLiveWake(null)
@@ -507,12 +516,30 @@ actual fun notifyLiveClass(
     }
     val ctx = QingkeApp.app
     val manager = ctx.getSystemService(NotificationManager::class.java) ?: return false
+    val timingNow = liveTiming(nowMillis, startMillis, endMillis)
+    val frameKey = if (timingNow != null) {
+        "$title|$detail|$startMillis|$endMillis|$countdownEnabled|${timingNow.inClass}|${timingNow.remainingMinutes}|${timingNow.progressPercent}"
+    } else ""
+    val dismissKey = "$title:$startMillis"
+    val prefs = ctx.getSharedPreferences(LIVE_PREFS, Context.MODE_PRIVATE)
+    if (frameKey.isNotEmpty() &&
+        frameKey == lastPostedFrameKey &&
+        nowMillis >= lastPostedAtMillis &&
+        nowMillis - lastPostedAtMillis < 1_500L &&
+        prefs.getString(LIVE_DISMISSED_KEY, "") != dismissKey &&
+        (Build.VERSION.SDK_INT < 33 ||
+            ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) &&
+        manager.areNotificationsEnabled() &&
+        manager.getNotificationChannel(LIVE_CHANNEL)?.importance != NotificationManager.IMPORTANCE_NONE
+    ) {
+        return true
+    }
     // SystemUI owns promotion, so successful notify() only proves the base
     // notification was accepted. A rejected vendor/native build uses the next
     // attempt with the SAME notification id, never a second concurrent alert.
     val presentation = runCatching { LiveAndroidBackend.detect(ctx, manager).first }
         .getOrDefault(LivePresentation.STANDARD)
-    val deadline = liveTiming(nowMillis, startMillis, endMillis)?.deadlineMillis ?: endMillis
+    val deadline = timingNow?.deadlineMillis ?: endMillis
     val oppoTicket = beginOppoLive(ctx, title, startMillis, deadline)
     var deliveryFailed = false
     val posted = deliverLiveWithFallback(
@@ -547,16 +574,19 @@ actual fun notifyLiveClass(
                 .getOrDefault(false)
         },
     )
-    val prefs = ctx.getSharedPreferences(LIVE_PREFS, Context.MODE_PRIVATE)
     if (posted) {
+        lastPostedFrameKey = frameKey
+        lastPostedAtMillis = nowMillis
         prefs.edit().remove("post_fail_key").remove("post_fail_count").remove("post_retry_at").apply()
     } else if (deliveryFailed) {
+        clearLivePostedFrameCache()
         val key = "$title:$startMillis"
         val failures = if (prefs.getString("post_fail_key", "") == key) prefs.getInt("post_fail_count", 0) else 0
         val count = (failures + 1).coerceAtMost(3)
         prefs.edit().putString("post_fail_key", key).putInt("post_fail_count", count)
             .putLong("post_retry_at", livePostRetryAt(nowMillis, endMillis, count)).apply()
     } else {
+        clearLivePostedFrameCache()
         // Permission/channel disabled or dismissed: never retry against the user's choice.
         prefs.edit().remove("post_retry_at").apply()
     }
@@ -574,6 +604,7 @@ internal actual fun livePostFailureWake(title: String, startMillis: Long, endMil
 actual fun cancelLiveClass() {
     // 撤通知的同时把常驻服务也停掉：退出登录 / 会话过期 / 换登录通道这些路径
     // 只调 cancelLiveClass，不停服务的话下一分钟服务会把通知推回来。
+    clearLivePostedFrameCache()
     endOppoFluidCloud(QingkeApp.app)
     setLiveForeground(false)
     QingkeApp.app.getSystemService(NotificationManager::class.java)?.cancel(LIVE_ID)

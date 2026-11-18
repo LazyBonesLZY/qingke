@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.ui.Modifier
@@ -32,6 +33,7 @@ class WidgetConfigActivity : ComponentActivity() {
             finish()
             return
         }
+        val current = QingkeWidgets.styleOf(this, id)
         setResult(RESULT_CANCELED, Intent().putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id))
         setContent {
             QingkeTheme {
@@ -40,6 +42,7 @@ class WidgetConfigActivity : ComponentActivity() {
                     Modifier
                         .fillMaxSize()
                         .padding(WindowInsets.statusBars.asPaddingValues())
+                        .padding(WindowInsets.navigationBars.asPaddingValues())
                         .padding(vertical = Space.xl),
                 ) {
                     ScreenHeader("", "小组件样式", "选择外观，放到桌面后可调整大小")
@@ -48,9 +51,20 @@ class WidgetConfigActivity : ComponentActivity() {
                         modifier = Modifier.padding(horizontal = Inset.page),
                         verticalArrangement = Arrangement.spacedBy(Space.s),
                     ) {
-                        InfoCard("纯色", "不透明，文字最清晰", height = null, onClick = { finishWith(id, WidgetStyle.Solid) })
-                        InfoCard("模糊", "半透明雾面，透出壁纸", height = null, onClick = { finishWith(id, WidgetStyle.Blur) })
-                        InfoCard("玻璃", "更通透，带一圈高光描边", height = null, onClick = { finishWith(id, WidgetStyle.Glass) })
+                        listOf(
+                            Triple(WidgetStyle.Solid, "纯色", "不透明，文字最清晰"),
+                            Triple(WidgetStyle.Blur, "模糊", "半透明雾面，透出壁纸"),
+                            Triple(WidgetStyle.Glass, "玻璃", "更通透，带一圈高光描边"),
+                        ).forEach { (style, name, desc) ->
+                            val active = current == style
+                            InfoCard(
+                                title = if (active) "$name · 当前使用" else name,
+                                summary = desc,
+                                height = null,
+                                tintTitle = active,
+                                onClick = { finishWith(id, style) },
+                            )
+                        }
                     }
                 }
             }

@@ -80,7 +80,14 @@ fun ScheduleShiftsScreen(
     val cloud = applicableAdjust(snapshot.settings, snapshot.scheduleAdjust)
     val cloudShifts = resolvedScheduleShifts(snapshot.settings, snapshot.scheduleAdjust, today)
         .filter { shift -> shifts.none { it.id == shift.id } }
-    val (offDays, makeupDays) = remember(snapshot.holidays, snapshot.settings.termStart, snapshot.slots) {
+    val (offDays, makeupDays) = remember(
+        snapshot.holidays,
+        snapshot.settings.termStart,
+        snapshot.settings.weekCount,
+        snapshot.settings.currentWeek,
+        snapshot.slots,
+        today,
+    ) {
         holidayShiftHints(snapshot.holidays, snapshot.settings, snapshot.slots, today)
     }
     var from by remember { mutableStateOf<LocalDate?>(null) }

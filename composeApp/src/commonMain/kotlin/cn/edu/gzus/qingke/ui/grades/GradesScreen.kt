@@ -28,6 +28,7 @@ import cn.edu.gzus.qingke.data.formatGpa
 import cn.edu.gzus.qingke.data.formatScore
 import cn.edu.gzus.qingke.data.gradeTermKey
 import cn.edu.gzus.qingke.data.inTerm
+import cn.edu.gzus.qingke.data.matchesCourse
 import cn.edu.gzus.qingke.data.numericScore
 import cn.edu.gzus.qingke.data.resolved
 import cn.edu.gzus.qingke.data.resolvedGpa
@@ -41,6 +42,7 @@ import cn.edu.gzus.qingke.ui.components.EmptyState
 import cn.edu.gzus.qingke.ui.components.Inset
 import cn.edu.gzus.qingke.ui.components.ListGroup
 import cn.edu.gzus.qingke.ui.components.ListRow
+import cn.edu.gzus.qingke.ui.components.ProgressTrack
 import cn.edu.gzus.qingke.ui.components.Radius
 import cn.edu.gzus.qingke.ui.components.ScreenHeader
 import cn.edu.gzus.qingke.ui.components.Space
@@ -70,8 +72,9 @@ fun GradesScreen(
     // 进度条要比的是本学期：拿全部学年的已修学分去除本学期计划学分没有意义。
     // 还要按学期筛：重修课本学期没出分时，上学期那条旧成绩不能算进「本学期」。
     val termGrades = remember(snapshot.grades, courses, snapshot.settings.yearCode, snapshot.settings.termCode) {
-        val ids = courses.mapNotNull { it.courseId.takeIf(String::isNotBlank) }.toSet()
-        snapshot.grades.filter { it.courseId in ids }.inTerm(snapshot.settings.currentTermKey())
+        snapshot.grades.filter { grade ->
+            courses.any { course -> grade.matchesCourse(course.courseId, course.courseName) }
+        }.inTerm(snapshot.settings.currentTermKey())
     }
     val termGpa = remember(termGrades) { summarizeGpa(termGrades) }
     val progress = if (planned <= 0.0) null else (termGpa.credits / planned).toFloat().coerceIn(0f, 1f)
@@ -151,7 +154,7 @@ fun GradesScreen(
             // 已出分的排前面，未出分的沉底，一眼看出还差几门。
             val termRows = courses
                 .map { course ->
-                    course to termGrades.filter { course.courseId.isNotBlank() && it.courseId == course.courseId }
+                    course to termGrades.filter { it.matchesCourse(course.courseId, course.courseName) }
                         .maxByOrNull { it.resolvedGpa() ?: -1.0 }
                 }
                 .sortedBy { (_, grade) -> if (grade?.score?.isNotBlank() == true) 0 else 1 }
@@ -169,8 +172,8 @@ fun GradesScreen(
                         ).joinToString(" · "),
                         badge = shown?.score ?: "未出分",
                         tone = shown?.let { scoreTone(it) } ?: BadgeTone.Muted,
-                        // 课程号为空时详情页一定是「没有这门课」，不如不让点。
-                        onClick = course.courseId.takeIf { it.isNotBlank() }?.let { id -> { nav.open(Route.Course(id)) } },
+                        // 课程号为空时退回课程名查询详情；两者都空才不让点。
+                        onClick = course.courseId.ifBlank { course.courseName }.takeIf { it.isNotBlank() }?.let { id -> { nav.open(Route.Course(id)) } },
                     )
                 },
             )
@@ -215,7 +218,7 @@ fun GradesScreen(
                             ).joinToString(" · "),
                             badge = item.score.ifBlank { "已出分" },
                             tone = scoreTone(item),
-                            onClick = item.courseId.takeIf { it.isNotBlank() }?.let { id -> { nav.open(Route.Course(id)) } },
+                            onClick = item.courseId.ifBlank { item.courseName }.takeIf { it.isNotBlank() }?.let { id -> { nav.open(Route.Course(id)) } },
                         )
                     },
                 )
@@ -289,21 +292,13 @@ private fun GpaHero(
         Text(summary, style = MiuixTheme.textStyles.body2, color = muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
         if (progress != null) {
             Spacer(Modifier.height(Space.m))
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(ProgressHeight)
-                    .clip(Radius.pill)
-                    .background(primary.copy(alpha = 0.16f)),
-            ) {
-                Box(
-                    Modifier
-                        .fillMaxHeight()
-                        .fillMaxWidth(progress)
-                        .clip(Radius.pill)
-                        .background(primary),
-                )
-            }
+            ProgressTrack(
+                progress = progress,
+                modifier = Modifier.fillMaxWidth(),
+                color = primary,
+                trackColor = primary.copy(alpha = 0.16f),
+                height = ProgressHeight,
+            )
             if (progressLabel.isNotBlank()) {
                 Spacer(Modifier.height(Space.s))
                 Text(

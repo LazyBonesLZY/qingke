@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import cn.edu.gzus.qingke.data.cancelLiveClass
+import cn.edu.gzus.qingke.data.clearLivePostedFrameCache
 import cn.edu.gzus.qingke.data.livePostFailureWake
 import cn.edu.gzus.qingke.data.liveTiming
 import cn.edu.gzus.qingke.data.isLiveStageTimeout
@@ -33,6 +34,7 @@ class LiveDismissReceiver : BroadcastReceiver() {
         val deadline = intent.getLongExtra(EXTRA_LIVE_DEADLINE, 0L)
         val timedOut = isLiveStageTimeout(System.currentTimeMillis(), deadline)
         if (!timedOut) {
+            clearLivePostedFrameCache()
             context.getSharedPreferences(LIVE_PREFS, Context.MODE_PRIVATE)
                 .edit()
                 .putString(LIVE_DISMISSED_KEY, key)

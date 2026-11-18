@@ -27,21 +27,23 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import cn.edu.gzus.qingke.ui.components.HairlineDivider
 import cn.edu.gzus.qingke.ui.components.Inset
+import cn.edu.gzus.qingke.ui.components.ProgressTrack
 import cn.edu.gzus.qingke.ui.components.Radius
+import cn.edu.gzus.qingke.ui.components.RowChevron
 import cn.edu.gzus.qingke.ui.components.Space
 import cn.edu.gzus.qingke.ui.components.StatusTag
 import cn.edu.gzus.qingke.ui.components.Tone
 import cn.edu.gzus.qingke.ui.components.Type
+import androidx.compose.ui.graphics.lerp
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.PressFeedbackType
 
-// 本文件里仅有的几个「非刻度」尺寸：都是图形元素（细线、色条、圆点），不是间距。
-/** 分割线粗细，与 ListGroup 一致。 */
-private val Hairline = 0.5.dp
+// 本文件里仅有的几个「非刻度」尺寸：都是图形元素（色条、圆点），不是间距。
 /** 时间线课程色条宽度。 */
 private val AccentBar = 4.dp
 /** 上课进度条高度。 */
@@ -167,21 +169,13 @@ internal fun NextLessonHero(model: HeroModel, onClick: () -> Unit) {
                 }
                 if (model.progress != null) {
                     Spacer(Modifier.height(Space.m))
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(ProgressBar)
-                            .clip(Radius.pill)
-                            .background(onPrimary.copy(alpha = 0.24f)),
-                    ) {
-                        Box(
-                            Modifier
-                                .fillMaxHeight()
-                                .fillMaxWidth(model.progress.coerceIn(0f, 1f))
-                                .clip(Radius.pill)
-                                .background(onPrimary),
-                        )
-                    }
+                    ProgressTrack(
+                        progress = model.progress,
+                        modifier = Modifier.fillMaxWidth(),
+                        color = onPrimary,
+                        trackColor = onPrimary.copy(alpha = 0.24f),
+                        height = ProgressBar,
+                    )
                     if (model.startClock.isNotBlank() || model.endClock.isNotBlank()) {
                         Spacer(Modifier.height(Space.xs))
                         Row(Modifier.fillMaxWidth()) {
@@ -278,13 +272,13 @@ internal data class TimelineRow(
 
 /** 今天的课：一张卡里按时间排成一列，左边起止时间，色条对应课表里的课程色。 */
 @Composable
-internal fun TodayTimeline(rows: List<TimelineRow>) {
+internal fun TodayTimeline(rows: List<TimelineRow>, customTintHex: String = "") {
     val dark = MiuixTheme.colorScheme.background.luminanceIsDark()
     GroupCard {
         rows.forEachIndexed { index, row ->
             // 分隔线从课名那一列起：行内边距 + 时间列 + 色条两侧间距 + 色条。
             if (index > 0) RowDivider(start = Inset.page + TimeCol + Space.m * 2 + AccentBar)
-            TimelineItem(row, accent = lessonAccent(row.accentKey, dark))
+            TimelineItem(row, accent = lessonAccent(row.accentKey, dark, customTintHex))
         }
     }
 }
@@ -458,18 +452,12 @@ private fun GroupCard(content: @Composable () -> Unit) {
 
 @Composable
 private fun RowDivider(start: Dp) {
-    Box(
-        Modifier
-            .padding(start = start, end = Inset.page)
-            .fillMaxWidth()
-            .height(Hairline)
-            .background(MiuixTheme.colorScheme.outline.copy(alpha = 0.35f)),
-    )
+    HairlineDivider(modifier = Modifier.padding(end = Inset.page), startIndent = start)
 }
 
 @Composable
 private fun Chevron() {
-    Text("›", style = MiuixTheme.textStyles.title3, color = Tone.muted().copy(alpha = 0.6f))
+    RowChevron()
 }
 
 // 顺序和课表的浅色块调色板一致（蓝、绿、橙、紫、红、青、靛、黄、粉、草绿），
@@ -484,7 +472,20 @@ private val AccentsDark = listOf(
     Color(0xFF4FCADF), Color(0xFF8592FF), Color(0xFFF2C440), Color(0xFFFF82AE), Color(0xFF79C96A),
 )
 
-private fun lessonAccent(key: String, dark: Boolean): Color {
+private fun parseAccentHex(hex: String): Color? {
+    val raw = hex.trim().removePrefix("#").trim()
+    if (raw.length != 6 && raw.length != 8) return null
+    if (!raw.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }) return null
+    val value = raw.toLongOrNull(16) ?: return null
+    return if (raw.length == 6) Color(0xFF000000L or value) else Color(value).copy(alpha = 1f)
+}
+
+private fun lessonAccent(key: String, dark: Boolean, customHex: String = ""): Color {
+    if (customHex.isNotBlank()) {
+        parseAccentHex(customHex)?.let { base ->
+            return if (dark) lerp(base, Color.White, 0.22f) else lerp(base, Color.Black, 0.16f)
+        }
+    }
     // 与课表 courseTint 相同的哈希取色方式。
     val hash = key.hashCode().let { if (it == Int.MIN_VALUE) 0 else kotlin.math.abs(it) }
     val palette = if (dark) AccentsDark else AccentsLight

@@ -23,29 +23,28 @@ import android.util.SizeF
 import android.util.TypedValue
 import android.widget.RemoteViews
 import cn.edu.gzus.qingke.MainActivity
-import cn.edu.gzus.qingke.data.periodStartOf
+import cn.edu.gzus.qingke.data.adjustDayLabel
+import cn.edu.gzus.qingke.data.cellNeedsLightInk
 import cn.edu.gzus.qingke.data.readSnapshotStore
-import cn.edu.gzus.qingke.data.periodEndOf
 import cn.edu.gzus.qingke.data.clockKnown
 import cn.edu.gzus.qingke.data.clockRangeOf
-import cn.edu.gzus.qingke.data.ResolvedSchool
+import cn.edu.gzus.qingke.data.compactRoomName
 import cn.edu.gzus.qingke.data.AppSnapshot
 import cn.edu.gzus.qingke.data.LessonSlot
+import cn.edu.gzus.qingke.data.PeriodBlock
 import cn.edu.gzus.qingke.data.WeekdayNames
 import cn.edu.gzus.qingke.data.resolved
 import cn.edu.gzus.qingke.data.forDate
-import cn.edu.gzus.qingke.data.isAdjustOff
 import cn.edu.gzus.qingke.data.occupiesBlock
 import cn.edu.gzus.qingke.data.lookup
 import cn.edu.gzus.qingke.data.mondayOfTeachingWeek
-import cn.edu.gzus.qingke.data.combineMillis
 import cn.edu.gzus.qingke.data.nextLiveLesson
+import cn.edu.gzus.qingke.data.nextWidgetBoundaryMillis
 import cn.edu.gzus.qingke.data.nowDateTime
-import cn.edu.gzus.qingke.data.periodEnd
-import cn.edu.gzus.qingke.data.periodStart
-import cn.edu.gzus.qingke.data.periodClockRange
+import cn.edu.gzus.qingke.data.periodStartOf
 import cn.edu.gzus.qingke.data.resolvedCurrentWeek
 import cn.edu.gzus.qingke.data.shortCourseName
+import cn.edu.gzus.qingke.data.visibleTimetableDays
 import cn.edu.gzus.qingke.data.weekDateLabel
 import cn.edu.gzus.qingke.data.weekdayIndex
 import cn.edu.gzus.qingke.shared.R
@@ -122,12 +121,12 @@ object QingkeWidgets {
 
     /**
      * 系统给小组件的自动刷新最快也就半小时一次，"上课中 / 下一节"会一直挂着过期的状态。
-     * 所以自己在下一个上下课点再叫醒一次。用非精确闹钟，不要额外权限。
+     * 所以自己在当天实际有课的上下课点再叫醒一次；当天无课则排到明天 00:05。用非精确闹钟，不要额外权限。
      */
     fun scheduleNextTick(context: Context, snap: AppSnapshot = snapshot(context)) {
         runCatching {
             val alarms = context.getSystemService(AlarmManager::class.java) ?: return
-            val at = nextBoundaryMillis(snap.resolved()) ?: return
+            val at = nextWidgetBoundaryMillis(snap, System.currentTimeMillis()) ?: return
             val intent = Intent(context, WidgetTickReceiver::class.java)
                 .setAction(ACTION_TICK)
             val pending = PendingIntent.getBroadcast(
@@ -138,27 +137,6 @@ object QingkeWidgets {
             )
             alarms.set(AlarmManager.RTC, at, pending)
         }
-    }
-
-    /** 今天下一个上课或下课的时刻；今天都过完了就等明天零点过五分。 */
-    private fun nextBoundaryMillis(school: ResolvedSchool): Long? {
-        val now = nowDateTime()
-        val nowMs = System.currentTimeMillis()
-        val today = now.date
-        // 只遍历学校真实的节次块。以前硬探 1..16，广生态（只有 1-12 节）
-        // 会多出 13-16 四个内置广软时刻，白排 4 次无意义唤醒。
-        val next = if (school.hasPeriodClock) {
-            school.periodBlocks
-                .flatMap { listOf(it.start, it.end) }
-                .filter { it.isNotBlank() }
-                .mapNotNull { combineMillis(today, it).takeIf { ms -> ms > nowMs } }
-                .minOrNull()
-        } else {
-            null
-        }
-        if (next != null) return next + 5_000
-        return combineMillis(today.plus(DatePeriod(days = 1)), "00:05")
-            .takeIf { it > nowMs }
     }
 
     fun update(
@@ -262,8 +240,9 @@ object QingkeWidgets {
             range == WidgetRange.Day -> if (week >= 1) "$weekdayLabel · 第${week}周" else weekdayLabel
             range == WidgetRange.Week -> {
                 val monday = mondayOfTeachingWeek(week.coerceAtLeast(1), snap.settings, today)
-                val sunday = monday.plus(DatePeriod(days = 6))
-                "${monday.monthNumber}/${monday.dayOfMonth} – ${sunday.monthNumber}/${sunday.dayOfMonth}"
+                val visibleDays = visibleTimetableDays(snap.settings.showWeekend)
+                val endDay = monday.plus(DatePeriod(days = visibleDays.last - 1))
+                "${monday.monthNumber}/${monday.dayOfMonth} – ${endDay.monthNumber}/${endDay.dayOfMonth}"
             }
             range == WidgetRange.Month -> {
                 val first = LocalDate(today.year, today.monthNumber, 1)
@@ -375,13 +354,18 @@ object QingkeWidgets {
         dark: Boolean,
         context: Context,
     ) {
-        val slots = snap.slots.forDate(today, snap.settings, today, snap.scheduleAdjust)
+        val school = snap.resolved()
+        val hasClock = school.hasPeriodClock
+        val rawSlots = snap.slots.forDate(today, snap.settings, today, snap.scheduleAdjust)
+        val slots = if (hasClock) {
+            rawSlots.sortedBy { widgetClockMinutes(school.periodStartOf(it.period)) ?: Int.MAX_VALUE }
+        } else {
+            rawSlots
+        }
         if (slots.isEmpty()) {
             drawCentered(canvas, "今天没有课", box.centerX(), box.centerY(), paint(context, muted(dark), EMPTY_SP, false))
             return
         }
-        val school = snap.resolved()
-        val hasClock = school.hasPeriodClock
         val now = nowDateTime()
         val live = if (hasClock) {
             nextLiveLesson(snap.slots, today, snap.settings, today, now.time, snap.scheduleAdjust, school.periodBlocks)
@@ -397,8 +381,8 @@ object QingkeWidgets {
         val side = minOf(box.width(), box.height())
         val large = side >= dp(context, 140f)
         val eyebrow = when {
-            live?.inClass == true -> "上课中"
-            live != null -> "下一节"
+            live?.inClass == true -> "上课中 · ${live.minutesToEnd.coerceAtLeast(1)}分"
+            live != null -> "下一节 · ${live.minutesToStart.coerceAtLeast(1)}分"
             slots.size > 1 -> "今天 ${slots.size} 节"
             else -> "今天的课"
         }
@@ -419,7 +403,8 @@ object QingkeWidgets {
         y += dp(context, 4f)
         val meta = paint(context, muted(dark), if (large) 13f else 11f, false)
         val clock = if (hasClock) school.clockRangeOf(focus.period).replace("-", "–") else ""
-        val detail = listOf(periodText(focus), clock, focus.room).filter { it.isNotBlank() }
+        val room = compactRoomName(focus.room, snap.settings.roomAliases)
+        val detail = listOf(periodText(focus), clock, room).filter { it.isNotBlank() }
         detail.take(if (large) 3 else 2).forEach { line ->
             if (y > box.bottom) return@forEach
             canvas.drawText(fitText(meta, line, box.width()), box.left, y, meta)
@@ -442,7 +427,15 @@ object QingkeWidgets {
         dark: Boolean,
         context: Context,
     ) {
-        val slots = snap.slots.forDate(today, snap.settings, today, snap.scheduleAdjust)
+        val now = nowDateTime()
+        val school = snap.resolved()
+        val hasClock = school.hasPeriodClock
+        val rawSlots = snap.slots.forDate(today, snap.settings, today, snap.scheduleAdjust)
+        val slots = if (hasClock) {
+            rawSlots.sortedBy { widgetClockMinutes(school.periodStartOf(it.period)) ?: Int.MAX_VALUE }
+        } else {
+            rawSlots
+        }
         if (slots.isEmpty()) {
             drawCentered(
                 canvas,
@@ -453,9 +446,6 @@ object QingkeWidgets {
             )
             return
         }
-        val now = nowDateTime()
-        val school = snap.resolved()
-        val hasClock = school.hasPeriodClock
         val live = if (hasClock) {
             nextLiveLesson(snap.slots, today, snap.settings, today, now.time, snap.scheduleAdjust, school.periodBlocks)
         } else {
@@ -468,18 +458,20 @@ object QingkeWidgets {
             twoLine -> 6
             else -> 8
         }
-        val shown = slots.take(maxRows)
-        val rowH = box.height() / shown.size
+        val overflow = slots.size > maxRows && maxRows >= 2
+        val shown = if (overflow) slots.take(maxRows - 1) else slots.take(maxRows)
+        val totalRows = shown.size + if (overflow) 1 else 0
+        val rowH = box.height() / totalRows
         val gap = dp(context, 3f)
         // 已经上完的课压淡，视线自然落到「上课中 / 下一节」上。
         // 有作息才判：算不出下一节且每节都有时间 = 今天全上完了；否则排在下一节前面的都算上完。
-        val liveIndex = live?.let { l -> shown.indexOfFirst { sameLesson(l.slot, it) } } ?: -1
+        val liveIndex = live?.let { l -> slots.indexOfFirst { sameLesson(l.slot, it) } } ?: -1
         val allDone = hasClock && live == null && slots.all { school.clockKnown(it.period) }
         shown.forEachIndexed { index, slot ->
             val done = allDone || (liveIndex > 0 && index < liveIndex)
             val row = RectF(box.left, box.top + index * rowH + gap, box.right, box.top + (index + 1) * rowH - gap)
             if (row.height() < 8f) return@forEachIndexed
-            val tint = courseColor(slot.courseId.ifBlank { slot.courseName }, dark)
+            val tint = courseColor(slot.courseId.ifBlank { slot.courseName }, dark, snap.settings.courseTintHex)
             val nowClass = live?.inClass == true && sameLesson(live.slot, slot)
             val nextClass = live?.inClass == false && sameLesson(live.slot, slot)
             val card = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -515,11 +507,26 @@ object QingkeWidgets {
             val textW = row.width() - dp(context, 18f)
             val period = periodText(slot)
             val clock = if (hasClock) school.clockRangeOf(slot.period).replace("-", "–") else ""
-            val name = paint(context, if (done) muted(dark) else ink(dark), if (threeLine) 13f else 12f, true)
-            val meta = paint(context, if (done) fade(muted(dark), 0x66) else muted(dark), 10f, false)
+            val room = snap.settings.roomAliases[slot.room.trim()]?.trim()?.takeIf { it.isNotBlank() } ?: slot.room
+            val lightCellInk = !done && !nowClass && cellNeedsLightInk(card.color, dark)
+            val nameColor = when {
+                done -> muted(dark)
+                nowClass -> ink(dark)
+                lightCellInk -> if (dark) ink(true) else 0xFFF6F6F6.toInt()
+                else -> if (!dark) ink(false) else 0xFF1A1A1A.toInt()
+            }
+            val metaColor = when {
+                done -> fade(muted(dark), 0x66)
+                nowClass -> muted(dark)
+                lightCellInk -> if (dark) muted(true) else 0xCCF6F6F6.toInt()
+                else -> if (!dark) muted(false) else 0x99303030.toInt()
+            }
+            val name = paint(context, nameColor, if (threeLine) 13f else 12f, true)
+            val meta = paint(context, metaColor, 10f, false)
             val badge = if (nowClass) "上课中" else if (nextClass) "下一节" else ""
+            val lightBadgeBg = nextClass && lightCellInk && !dark
             if (threeLine) {
-                drawDayTitle(canvas, slot.courseName, badge, textLeft, row.top + row.height() * 0.30f, textW, name, context, dark)
+                drawDayTitle(canvas, slot.courseName, badge, textLeft, row.top + row.height() * 0.30f, textW, name, context, dark, lightBadgeBg)
                 canvas.drawText(
                     fitText(meta, listOf(period, clock).filter { it.isNotBlank() }.joinToString("  "), textW),
                     textLeft,
@@ -527,15 +534,15 @@ object QingkeWidgets {
                     meta,
                 )
                 canvas.drawText(
-                    fitText(meta, listOf(slot.room, slot.teacher).filter { it.isNotBlank() }.joinToString(" · "), textW),
+                    fitText(meta, listOf(room, slot.teacher).filter { it.isNotBlank() }.joinToString(" · "), textW),
                     textLeft,
                     row.top + row.height() * 0.82f,
                     meta,
                 )
             } else if (twoLine) {
-                drawDayTitle(canvas, slot.courseName, badge, textLeft, row.top + row.height() * 0.38f, textW, name, context, dark)
+                drawDayTitle(canvas, slot.courseName, badge, textLeft, row.top + row.height() * 0.38f, textW, name, context, dark, lightBadgeBg)
                 canvas.drawText(
-                    fitText(meta, listOf(period, clock, slot.room).filter { it.isNotBlank() }.joinToString(" · "), textW),
+                    fitText(meta, listOf(period, clock, room).filter { it.isNotBlank() }.joinToString(" · "), textW),
                     textLeft,
                     row.top + row.height() * 0.74f,
                     meta,
@@ -549,6 +556,11 @@ object QingkeWidgets {
                 )
             }
         }
+        if (overflow) {
+            val moreRow = RectF(box.left, box.top + shown.size * rowH + gap, box.right, box.bottom - gap)
+            val morePaint = paint(context, muted(dark), 10f, true)
+            drawCentered(canvas, "还有 ${slots.size - shown.size} 节课 · 点开查看全部", moreRow.centerX(), moreRow.centerY(), morePaint)
+        }
     }
 
     private fun drawDayTitle(
@@ -561,6 +573,7 @@ object QingkeWidgets {
         name: Paint,
         context: Context,
         dark: Boolean,
+        lightBadgeBg: Boolean = false,
     ) {
         if (badge.isBlank()) {
             canvas.drawText(fitText(name, course, maxWidth), left, baseline, name)
@@ -578,8 +591,33 @@ object QingkeWidgets {
             tagLeft + tagW,
             baseline + fm.descent + dp(context, 1f),
         )
-        canvas.drawRoundRect(pill, dp(context, 8f), dp(context, 8f), Paint(Paint.ANTI_ALIAS_FLAG).apply { color = accentWash(dark) })
+        canvas.drawRoundRect(
+            pill,
+            dp(context, 8f),
+            dp(context, 8f),
+            Paint(Paint.ANTI_ALIAS_FLAG).apply { color = if (lightBadgeBg) 0xE6FFFFFF.toInt() else accentWash(dark) },
+        )
         canvas.drawText(badge, tagLeft + dp(context, 5f), baseline, tag)
+    }
+
+    private class WidgetDayRun(val startRow: Int, val span: Int, val slots: List<LessonSlot>)
+
+    private fun widgetRunsForDay(daySlots: List<LessonSlot>, blocks: List<PeriodBlock>): List<WidgetDayRun> {
+        val cells = blocks.map { block -> daySlots.filter { it.occupiesBlock(block) } }
+        val keys = cells.map { cell -> cell.map { it.courseId.ifBlank { it.courseName } }.sorted() }
+        val runs = mutableListOf<WidgetDayRun>()
+        var i = 0
+        while (i < cells.size) {
+            var j = i
+            if (keys[i].isNotEmpty() && keys[i].all { it.isNotBlank() }) {
+                while (j + 1 < cells.size && keys[j + 1] == keys[i]) j++
+            }
+            if (cells[i].isNotEmpty()) {
+                runs += WidgetDayRun(startRow = i, span = j - i + 1, slots = cells[i])
+            }
+            i = j + 1
+        }
+        return runs
     }
 
     private fun drawWeek(
@@ -593,7 +631,8 @@ object QingkeWidgets {
     ) {
         val periodBlocks = snap.resolved().periodBlocks
         val monday = mondayOfTeachingWeek(week.coerceAtLeast(1), snap.settings, today)
-        val byDay = (1..7).map { day ->
+        val visibleDays = visibleTimetableDays(snap.settings.showWeekend)
+        val byDay = visibleDays.map { day ->
             snap.slots.forDate(
                 monday.plus(DatePeriod(days = day - 1)),
                 snap.settings,
@@ -604,7 +643,7 @@ object QingkeWidgets {
         val blocks = periodBlocks.filter { block ->
             byDay.any { day -> day.any { it.occupiesBlock(block) } }
         }.ifEmpty { periodBlocks.take(6) }
-        val cols = 8
+        val cols = 1 + visibleDays.count()
         val rows = 1 + blocks.size
         val cw = box.width() / cols
         val rh = box.height() / rows
@@ -612,13 +651,13 @@ object QingkeWidgets {
         val dayPaint = paint(context, muted(dark), 9f, false)
         val mark = paint(context, muted(dark), 8f, true)
         val label = paint(context, muted(dark), 9f, false)
-        val todayIndex = (1..7).firstOrNull { monday.plus(DatePeriod(days = it - 1)) == today }
+        val todayIndex = visibleDays.firstOrNull { monday.plus(DatePeriod(days = it - 1)) == today }
         if (todayIndex != null) {
             val wash = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = accentWash(dark) }
             val x0 = box.left + todayIndex * cw
             canvas.drawRoundRect(RectF(x0, box.top, x0 + cw, box.bottom), dp(context, 10f), dp(context, 10f), wash)
         }
-        WeekdayNames.forEachIndexed { i, name ->
+        WeekdayNames.take(visibleDays.last).forEachIndexed { i, name ->
             val date = monday.plus(DatePeriod(days = i))
             val cx = box.left + (i + 1) * cw + cw / 2f
             val todayCol = date == today
@@ -627,12 +666,14 @@ object QingkeWidgets {
             drawCentered(canvas, name, cx, box.top + rh * 0.28f, head)
             drawCentered(canvas, weekDateLabel(date, monday), cx, box.top + rh * 0.58f, dayPaint)
             val holiday = snap.holidays.lookup(date)
+            val adjust = adjustDayLabel(date, snap.settings, snap.scheduleAdjust, today)
             if (holiday != null) {
                 mark.color = if (holiday.off) accent(dark) else warning(dark)
                 drawCentered(canvas, if (holiday.off) "休" else "班", cx, box.top + rh * 0.84f, mark)
-            } else if (isAdjustOff(date, snap.settings, snap.scheduleAdjust)) {
-                mark.color = accent(dark)
-                drawCentered(canvas, "假", cx, box.top + rh * 0.84f, mark)
+            } else if (adjust.isNotBlank()) {
+                val isOff = adjust == "放假"
+                mark.color = if (isOff) accent(dark) else warning(dark)
+                drawCentered(canvas, if (isOff) "假" else "调", cx, box.top + rh * 0.84f, mark)
             }
         }
         val twoLine = rh >= dp(context, 30f)
@@ -645,24 +686,40 @@ object QingkeWidgets {
                 y0 + rh / 2f,
                 label,
             )
-            for (day in 1..7) {
-                val cell = byDay[day - 1].firstOrNull { it.occupiesBlock(block) } ?: continue
-                // 格子间距按 dp 算，高分屏上不至于挤成一片。
-                val inset = dp(context, 1.5f)
-                val x0 = box.left + day * cw + inset
-                val cellRect = RectF(x0, y0 + inset, x0 + cw - inset * 2, y0 + rh - inset)
+        }
+        val inset = dp(context, 1.5f)
+        for (day in visibleDays) {
+            val x0 = box.left + day * cw + inset
+            for (run in widgetRunsForDay(byDay[day - 1], blocks)) {
+                val cell = run.slots.firstOrNull() ?: continue
+                val y0 = box.top + (run.startRow + 1) * rh + inset
+                val y1 = box.top + (run.startRow + run.span + 1) * rh - inset
+                val cellRect = RectF(x0, y0, x0 + cw - inset * 2, y1)
                 val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = courseColor(cell.courseId.ifBlank { cell.courseName }, dark)
+                    color = courseColor(cell.courseId.ifBlank { cell.courseName }, dark, snap.settings.courseTintHex)
                 }
                 canvas.drawRoundRect(cellRect, dp(context, 7f), dp(context, 7f), fill)
-                val fg = paint(context, if (dark) 0xFFF6F6F6.toInt() else 0xFF1A1A1A.toInt(), if (twoLine) 9f else 8f, true)
+                val lightInk = cellNeedsLightInk(fill.color, dark)
+                val fg = paint(context, if (lightInk) 0xFFF6F6F6.toInt() else 0xFF1A1A1A.toInt(), if (twoLine) 9f else 8f, true)
                 val alias = shortCourseName(cell.courseName, if (twoLine) 5 else 4, snap.settings.courseAliases, cell.courseId)
-                if (twoLine && cell.room.isNotBlank()) {
-                    val roomPaint = paint(context, if (dark) 0xCCF6F6F6.toInt() else 0x991A1A1A.toInt(), 8f, false)
+                val room = compactRoomName(cell.room, snap.settings.roomAliases)
+                val showRoom = (twoLine || run.span > 1) && room.isNotBlank()
+                if (showRoom) {
+                    val roomPaint = paint(context, if (lightInk) 0xCCF6F6F6.toInt() else 0x991A1A1A.toInt(), 8f, false)
                     drawCentered(canvas, fitText(fg, alias, cellRect.width() - 6f), cellRect.centerX(), cellRect.centerY() - dp(context, 5f), fg)
-                    drawCentered(canvas, fitText(roomPaint, cell.room, cellRect.width() - 6f), cellRect.centerX(), cellRect.centerY() + dp(context, 7f), roomPaint)
+                    drawCentered(canvas, fitText(roomPaint, room, cellRect.width() - 6f), cellRect.centerX(), cellRect.centerY() + dp(context, 7f), roomPaint)
                 } else {
                     drawCentered(canvas, fitText(fg, alias, cellRect.width() - 6f), cellRect.centerX(), cellRect.centerY(), fg)
+                }
+                val more = run.slots.distinctBy { it.courseId.ifBlank { it.courseName } }.size - 1
+                if (more > 0) {
+                    val badgePaint = paint(context, fg.color, 7.5f, true)
+                    val badgeText = "+$more"
+                    val bw = badgePaint.measureText(badgeText) + dp(context, 5f)
+                    val bh = dp(context, 11f)
+                    val badgeRect = RectF(cellRect.right - bw - dp(context, 2f), cellRect.top + dp(context, 2f), cellRect.right - dp(context, 2f), cellRect.top + dp(context, 2f) + bh)
+                    canvas.drawRoundRect(badgeRect, dp(context, 5f), dp(context, 5f), Paint(Paint.ANTI_ALIAS_FLAG).apply { color = fade(fg.color, 0x28) })
+                    drawCentered(canvas, badgeText, badgeRect.centerX(), badgeRect.centerY(), badgePaint)
                 }
             }
         }
@@ -722,7 +779,7 @@ object QingkeWidgets {
             drawCentered(canvas, date.dayOfMonth.toString(), cx, y + rh * 0.36f, dayPaint)
             if (inMonth) {
                 val dots = snap.slots.forDate(date, snap.settings, today, snap.scheduleAdjust)
-                    .map { courseColor(it.courseId.ifBlank { it.courseName }, dark) }
+                    .map { courseColor(it.courseId.ifBlank { it.courseName }, dark, snap.settings.courseTintHex) }
                     .distinct()
                     .take(3)
                 // 半径按 dp 算：以前写的是像素，高分屏上几乎看不见；浅色粉彩再压暗一点才分得清。
@@ -736,11 +793,35 @@ object QingkeWidgets {
         }
     }
 
-    private fun courseColor(key: String, dark: Boolean): Int {
-        val light = intArrayOf(0xFFD7E6FF.toInt(), 0xFFD4F3E3.toInt(), 0xFFFFE4C4.toInt(), 0xFFE8DCFF.toInt(), 0xFFFFD6D2.toInt(), 0xFFCDEFF3.toInt())
-        val night = intArrayOf(0xFF2E4A78.toInt(), 0xFF2C5743.toInt(), 0xFF6E4E2C.toInt(), 0xFF4E3C6C.toInt(), 0xFF6C3C3A.toInt(), 0xFF2C555A.toInt())
+    private fun parseHexColorInt(hex: String): Int? {
+        val raw = hex.trim().removePrefix("#").trim()
+        if (raw.length != 6 && raw.length != 8) return null
+        if (!raw.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }) return null
+        val value = raw.toLongOrNull(16) ?: return null
+        return if (raw.length == 6) (0xFF000000L or value).toInt() else value.toInt()
+    }
+
+    private fun widgetClockMinutes(clock: String): Int? {
+        val h = clock.substringBefore(":").trim().toIntOrNull() ?: return null
+        val m = clock.substringAfter(":", "").trim().toIntOrNull() ?: return null
+        return h * 60 + m
+    }
+
+    /** 与应用内 TimetableScreen 保持一致的 10 色调色板，并支持自定义课程色块底色。 */
+    private fun courseColor(key: String, dark: Boolean, customHex: String = ""): Int {
+        if (customHex.isNotBlank()) {
+            parseHexColorInt(customHex)?.let { return it }
+        }
+        val light = intArrayOf(
+            0xFFDCE9FF.toInt(), 0xFFD8F3E4.toInt(), 0xFFFFE6CC.toInt(), 0xFFEADBFF.toInt(), 0xFFFFD9D6.toInt(),
+            0xFFD4F1F6.toInt(), 0xFFDDE1FF.toInt(), 0xFFFFF1C7.toInt(), 0xFFFFDCEA.toInt(), 0xFFD8F0D4.toInt(),
+        )
+        val night = intArrayOf(
+            0xFF2B4570.toInt(), 0xFF2A5340.toInt(), 0xFF6A4A28.toInt(), 0xFF4A3868.toInt(), 0xFF6A3836.toInt(),
+            0xFF2A5358.toInt(), 0xFF3A4070.toInt(), 0xFF6A5A28.toInt(), 0xFF6A3A50.toInt(), 0xFF3A5336.toInt(),
+        )
         val hash = key.hashCode().let { if (it == Int.MIN_VALUE) 0 else kotlin.math.abs(it) }
-        return (if (dark) night else light)[hash % 6]
+        return (if (dark) night else light)[hash % 10]
     }
 
     private fun sameLesson(left: LessonSlot, right: LessonSlot): Boolean =

@@ -112,6 +112,24 @@ fun AppSettings.currentTermKey(): Pair<Int, Int>? {
 fun List<GradeItem>.inTerm(current: Pair<Int, Int>?): List<GradeItem> =
     if (current == null) this else filter { grade -> gradeTermKey(grade.term)?.let { it == current } ?: true }
 
+/**
+ * 判断一条成绩是否属于某门课：优先按 courseId 精确匹配；
+ * 当强智系学校（生态、中山学院或仲恺目录未命中）课表的 courseId 是通知单号/课程名、
+ * 而成绩表是课程编号时，回退按非空课程名匹配。
+ */
+fun GradeItem.matchesCourse(courseId: String, courseName: String): Boolean {
+    if (courseId.isNotBlank() && this.courseId == courseId) return true
+    return courseName.isNotBlank() && this.courseName == courseName
+}
+
+fun AppSnapshot.bestGradeForCourse(courseId: String): GradeItem? {
+    val name = slots.firstOrNull { it.courseId == courseId }?.courseName
+        ?: grades.firstOrNull { it.courseId == courseId }?.courseName
+        ?: courseId
+    return grades.filter { it.matchesCourse(courseId, name) }
+        .maxByOrNull { it.resolvedGpa() ?: -1.0 }
+}
+
 fun formatGpa(value: Double): String {
     val scaled = kotlin.math.round(value * 100.0).toInt()
     return "${scaled / 100}.${(scaled % 100).toString().padStart(2, '0')}"

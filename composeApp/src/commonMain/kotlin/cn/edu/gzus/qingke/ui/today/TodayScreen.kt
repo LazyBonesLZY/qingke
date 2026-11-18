@@ -172,6 +172,7 @@ fun TodayScreen(
             hero != null -> {
                 val clockRange = if (hasClock) school.clockRangeOf(hero.period) else ""
                 val minutes = timing?.remainingMinutes?.toInt() ?: remain
+                val heroRoom = snapshot.settings.roomAliases[hero.room.trim()]?.trim()?.takeIf { it.isNotBlank() } ?: hero.room
                 NextLessonHero(
                     model = HeroModel(
                         title = hero.courseName,
@@ -183,7 +184,7 @@ fun TodayScreen(
                         periodLine = listOf(periodText(hero.period, hero.periodLabel), clockRange.replace("-", "–"))
                             .filter { it.isNotBlank() }
                             .joinToString(" · "),
-                        facts = listOf("地点" to hero.room, "老师" to hero.teacher),
+                        facts = listOf("地点" to heroRoom, "老师" to hero.teacher),
                         countdown = if (remain == null || minutes == null) emptyList() else countdownParts(minutes),
                         countdownSuffix = if (inClass) "后下课" else "后上课",
                         progress = if (inClass) progress else null,
@@ -191,7 +192,7 @@ fun TodayScreen(
                         endClock = clockRange.substringAfter("-", ""),
                         inClass = inClass,
                     ),
-                    onClick = { nav.open(Route.Course(hero.courseId)) },
+                    onClick = { nav.open(Route.Course(hero.courseId.ifBlank { hero.courseName })) },
                 )
             }
             todaySlots.isNotEmpty() -> EmptyState(
@@ -202,7 +203,7 @@ fun TodayScreen(
             )
             snapshot.hasTimetable && week < 1 -> {
                 val daysToStart = snapshot.settings.termStartMonday()
-                    ?.let { (it.toEpochDays() - now.date.toEpochDays()).toInt() }
+                    ?.let { it.toEpochDays() - now.date.toEpochDays() }
                     ?.takeIf { it > 0 }
                 EmptyState(
                     title = "学期还没开始",
@@ -265,15 +266,17 @@ fun TodayScreen(
             SmallTitle(text = "今天的课 · ${todaySlots.size} 节")
             val nowMinutes = now.hour * 60 + now.minute
             TodayTimeline(
+                customTintHex = snapshot.settings.courseTintHex,
                 rows = todaySlots.map { slot ->
                     val range = if (hasClock) school.clockRangeOf(slot.period) else ""
                     val endMinutes = range.substringAfter("-", "").let(::clockToMinutes)
                     val isHero = hero != null && slot.courseId == hero.courseId && slot.period == hero.period
+                    val room = snapshot.settings.roomAliases[slot.room.trim()]?.trim()?.takeIf { it.isNotBlank() } ?: slot.room
                     TimelineRow(
                         title = slot.courseName,
                         detail = listOf(
                             if (range.isNotBlank()) periodText(slot.period, slot.periodLabel) else "",
-                            slot.room,
+                            room,
                             slot.teacher,
                         ).filter { it.isNotBlank() }.joinToString(" · "),
                         startClock = range.substringBefore("-", "").ifBlank { periodText(slot.period, slot.periodLabel) },
@@ -285,7 +288,7 @@ fun TodayScreen(
                             else -> LessonState.Later
                         },
                         accentKey = slot.courseId.ifBlank { slot.courseName },
-                        onClick = { nav.open(Route.Course(slot.courseId)) },
+                        onClick = { nav.open(Route.Course(slot.courseId.ifBlank { slot.courseName })) },
                     )
                 },
             )
